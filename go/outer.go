@@ -2,10 +2,10 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/json"
+	"encoding/binary"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -47,14 +47,7 @@ var (
 	}
 )
 
-// 🚀 UPGRADED: 16 MB chunk limiter for high-speed PHP servers
-const MaxChunkSize = 16 * 1024 * 1024 
-
-type OpenReq struct {
-	Conn string `json:"conn"`
-	Host string `json:"host"`
-	Port int    `json:"port"`
-}
+const MaxChunkSize = 16 * 1024 * 1024
 
 func relayClose(connID string) {
 	req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=close&conn=%s", *relayURL, connID), nil)
@@ -101,7 +94,6 @@ func openTCP(connID, host string, port int) {
 			eofLock.Unlock()
 		}()
 
-		// 🚀 UPGRADED: 256 KB TCP read buffer for faster internet slurping
 		buf := make([]byte, 256*1024)
 		for {
 			n, err := conn.Read(buf)
@@ -120,91 +112,108 @@ func openTCP(connID, host string, port int) {
 	}()
 }
 
-// ⚡ FULL-DUPLEX: Dedicated Receiver Loop
+// ⚡ BINARY + LONG-POLLING RECEIVER
 func receiver() {
 	for {
-		hasActivity := false
 		req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=sync&dir=up", *relayURL), nil)
 		req.Header.Set("X-API-KEY", *apiKey)
 
-		if resp, err := httpClient.Do(req); err == nil {
-			var data struct {
-				Chunks map[string][]string `json:"chunks"`
-				Opens[]OpenReq           `json:"opens"`
-			}
-			if json.NewDecoder(resp.Body).Decode(&data) == nil {
-				for _, o := range data.Opens {
-					if _, exists := seen.Load(o.Conn); !exists {
-						seen.Store(o.Conn, true)
-						if o.Host != "" && o.Port != 0 {
-							log.Printf("[FR] 🔔 New Request: %s → %s:%d", o.Conn, o.Host, o.Port)
-							go openTCP(o.Conn, o.Host, o.Port)
-						}
-					}
-				}
-				if len(data.Chunks) > 0 {
-					hasActivity = true
-					for connID, chunks := range data.Chunks {
-						for _, b64 := range chunks {
-							if b64 == "EOF" {
-								log.Printf("[FR] 🏁 Remote EOF %s", connID)
-								if val, ok := sockets.Load(connID); ok {
-									val.(net.Conn).Close()
-								}
-								sockets.Delete(connID)
-								seen.Delete(connID)
-								relayClose(connID)
-								continue
-							}
-							if buf, err := base64.StdEncoding.DecodeString(b64); err == nil {
-								var conn net.Conn
-								upBuffer.Lock()
-								if val, ok := sockets.Load(connID); ok {
-									conn = val.(net.Conn)
-								} else if _, isSeen := seen.Load(connID); isSeen {
-									upBuffer.m[connID] = append(upBuffer.m[connID], buf)
-								}
-								upBuffer.Unlock()
-								if conn != nil {
-									conn.Write(buf)
-								}
-							}
-						}
-					}
-				}
-			}
-			resp.Body.Close()
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			time.Sleep(1 * time.Second)
+			continue
 		}
 
-		if hasActivity {
-			time.Sleep(1 * time.Millisecond)
+		if resp.StatusCode == 200 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			buf := bytes.NewReader(body)
+
+			for buf.Len() > 0 {
+				t, _ := buf.ReadByte()
+				cLen, _ := buf.ReadByte()
+				connBytes := make([]byte, cLen)
+				buf.Read(connBytes)
+				connID := string(connBytes)
+
+				if t == 0 { // Data Frame
+					var dLen uint32
+					binary.Read(buf, binary.BigEndian, &dLen)
+					data := make([]byte, dLen)
+					buf.Read(data)
+
+					var conn net.Conn
+					upBuffer.Lock()
+					if val, ok := sockets.Load(connID); ok {
+						conn = val.(net.Conn)
+					} else if _, isSeen := seen.Load(connID); isSeen {
+						upBuffer.m[connID] = append(upBuffer.m[connID], data)
+					}
+					upBuffer.Unlock()
+
+					if conn != nil {
+						conn.Write(data)
+					}
+
+				} else if t == 1 { // EOF Frame
+					log.Printf("[FR] 🏁 Remote EOF %s", connID)
+					if val, ok := sockets.Load(connID); ok {
+						val.(net.Conn).Close()
+					}
+					sockets.Delete(connID)
+					seen.Delete(connID)
+					relayClose(connID)
+
+				} else if t == 2 { // Open Request Frame
+					hLen, _ := buf.ReadByte()
+					hBytes := make([]byte, hLen)
+					buf.Read(hBytes)
+					var port uint16
+					binary.Read(buf, binary.BigEndian, &port)
+
+					if _, exists := seen.Load(connID); !exists {
+						seen.Store(connID, true)
+						log.Printf("[FR] 🔔 New Request: %s → %s:%d", connID, string(hBytes), port)
+						go openTCP(connID, string(hBytes), int(port))
+					}
+				}
+			}
+			// No sleep, loop instantly because data is flowing
 		} else {
-			time.Sleep(10 * time.Millisecond)
+			resp.Body.Close()
+			// 204 No Content -> Long poll timed out cleanly. Loop instantly.
 		}
 	}
 }
 
-// ⚡ FULL-DUPLEX: Dedicated Sender Loop
+// ⚡ BINARY SENDER
 func sender() {
 	for {
-		hasActivity := false
-		sendBuffer.Lock()
-		payload := make(map[string]string)
+		var outBuf bytes.Buffer
 
-		if len(sendBuffer.m) > 0 {
-			for connID, bufs := range sendBuffer.m {
-				var flat[]byte
-				for _, b := range bufs {
-					flat = append(flat, b...)
-				}
-				// 🚀 UPGRADED: Chunk Limiter to 16MB
-				if len(flat) > MaxChunkSize {
-					payload[connID] = base64.StdEncoding.EncodeToString(flat[:MaxChunkSize])
-					sendBuffer.m[connID] = [][]byte{flat[MaxChunkSize:]} // Keep remainder
-				} else {
-					payload[connID] = base64.StdEncoding.EncodeToString(flat)
-					delete(sendBuffer.m, connID)
-				}
+		sendBuffer.Lock()
+		for connID, bufs := range sendBuffer.m {
+			var flat[]byte
+			for _, b := range bufs {
+				flat = append(flat, b...)
+			}
+			
+			if len(flat) > MaxChunkSize {
+				chunk := flat[:MaxChunkSize]
+				sendBuffer.m[connID] = [][]byte{flat[MaxChunkSize:]}
+				
+				outBuf.WriteByte(0)
+				outBuf.WriteByte(byte(len(connID)))
+				outBuf.WriteString(connID)
+				binary.Write(&outBuf, binary.BigEndian, uint32(len(chunk)))
+				outBuf.Write(chunk)
+			} else {
+				outBuf.WriteByte(0)
+				outBuf.WriteByte(byte(len(connID)))
+				outBuf.WriteString(connID)
+				binary.Write(&outBuf, binary.BigEndian, uint32(len(flat)))
+				outBuf.Write(flat)
+				delete(sendBuffer.m, connID)
 			}
 		}
 		sendBuffer.Unlock()
@@ -213,38 +222,38 @@ func sender() {
 		if len(eofSends) > 0 {
 			var nextEof[]string
 			for _, connID := range eofSends {
-				if _, ok := payload[connID]; !ok {
-					payload[connID] = "EOF"
+				sendBuffer.Lock()
+				_, hasPending := sendBuffer.m[connID]
+				sendBuffer.Unlock()
+
+				if hasPending {
+					nextEof = append(nextEof, connID)
 				} else {
-					nextEof = append(nextEof, connID) // wait until data is cleared
+					outBuf.WriteByte(1)
+					outBuf.WriteByte(byte(len(connID)))
+					outBuf.WriteString(connID)
 				}
 			}
 			eofSends = nextEof
 		}
 		eofLock.Unlock()
 
-		if len(payload) > 0 {
-			hasActivity = true
-			jsonData, _ := json.Marshal(payload)
-			req, _ := http.NewRequest("POST", fmt.Sprintf("%s?action=send_batch&dir=down", *relayURL), bytes.NewBuffer(jsonData))
+		if outBuf.Len() > 0 {
+			req, _ := http.NewRequest("POST", fmt.Sprintf("%s?action=send_batch&dir=down", *relayURL), &outBuf)
 			req.Header.Set("X-API-KEY", *apiKey)
-			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Type", "application/octet-stream")
 			if resp, err := httpClient.Do(req); err == nil {
 				resp.Body.Close()
 			}
-		}
-
-		if hasActivity {
-			time.Sleep(1 * time.Millisecond)
 		} else {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond) // local idle wait
 		}
 	}
 }
 
 func main() {
 	flag.Parse()
-	log.Println("🚀 FURO (FRANCE) EXIT NODE RUNNING")
+	log.Println("🚀 FURO (FRANCE) EXIT NODE RUNNING [BINARY + LONG POLL]")
 
 	go func() {
 		for {
@@ -255,10 +264,7 @@ func main() {
 		}
 	}()
 
-	// Start concurrent processing
 	go receiver()
 	go sender()
-
-	// Block main thread forever
 	select {}
 }
