@@ -2,7 +2,6 @@
 // ================= CONFIG =================
 $API_KEY = 'my_super_secret_123456789';
 $STORAGE_DIR = __DIR__ . '/storage';
-$MAX_CHUNK_SIZE = 1024 * 32; // 32KB
 $CONNECTION_TTL = 300; // seconds
 
 if (!is_dir($STORAGE_DIR)) {
@@ -30,106 +29,144 @@ function clean($str) {
 
 // ================= AUTH =================
 auth($API_KEY);
-
-// ================= INPUT =================
 $action = $_GET['action'] ?? null;
-$conn   = clean($_GET['conn'] ?? '');
-$dir    = $_GET['dir'] ?? null; // up / down
+if (!$action) respond(['error' => 'Missing action'], 400);
 
-if (!$action || !$conn) {
-    respond(['error' => 'Missing parameters'], 400);
-}
-
-if ($dir && !in_array($dir, ['up', 'down'])) {
-    respond(['error' => 'Invalid direction'], 400);
-}
-
-$metaFile = "$STORAGE_DIR/{$conn}.meta";
-$queueFile = $dir ? "$STORAGE_DIR/{$conn}_{$dir}.queue" : null;
-
-// ================= CREATE =================
+// ================= ACTION: OPEN =================
 if ($action === 'open') {
-    $meta = [
+    $conn = clean($_GET['conn'] ?? '');
+    if (!$conn) respond(['error' => 'Missing conn'], 400);
+    
+    $meta =[
         'created' => time(),
         'updated' => time(),
-        'status'  => 'open'
+        'status'  => 'open',
+        'host'    => $_GET['host'] ?? '',
+        'port'    => (int)($_GET['port'] ?? 0),
+        'fetched' => false // outer.go will toggle this to true when processing
     ];
-    file_put_contents($metaFile, json_encode($meta));
+    file_put_contents("$STORAGE_DIR/{$conn}.meta", json_encode($meta), LOCK_EX);
     respond(['status' => 'opened']);
 }
 
-// ================= CLOSE =================
+// ================= ACTION: CLOSE =================
 if ($action === 'close') {
+    $conn = clean($_GET['conn'] ?? '');
+    if (!$conn) respond(['error' => 'Missing conn'], 400);
+
     @unlink("$STORAGE_DIR/{$conn}_up.queue");
     @unlink("$STORAGE_DIR/{$conn}_down.queue");
-    @unlink($metaFile);
+    @unlink("$STORAGE_DIR/{$conn}.meta");
     respond(['status' => 'closed']);
 }
 
-// ================= SEND =================
-if ($action === 'send') {
-    if (!$dir) respond(['error' => 'Missing direction'], 400);
+// ================= ACTION: SEND BATCH =================
+if ($action === 'send_batch') {
+    $dir = $_GET['dir'] ?? null;
+    if (!in_array($dir, ['up', 'down'])) respond(['error' => 'Invalid direction'], 400);
 
-    $data = file_get_contents('php://input');
-    if (!$data || strlen($data) > $MAX_CHUNK_SIZE) {
-        respond(['error' => 'Invalid chunk'], 400);
+    $json = file_get_contents('php://input');
+    $payload = json_decode($json, true);
+    
+    if (is_array($payload)) {
+        foreach ($payload as $connID => $b64data) {
+            $connID = clean($connID);
+            $queueFile = "$STORAGE_DIR/{$connID}_{$dir}.queue";
+            
+            // Append Base64 payload block safely
+            $fp = fopen($queueFile, 'a');
+            if ($fp) {
+                flock($fp, LOCK_EX);
+                fwrite($fp, $b64data . "\n");
+                flock($fp, LOCK_UN);
+                fclose($fp);
+            }
+            
+            // Update timestamp
+            $metaFile = "$STORAGE_DIR/{$connID}.meta";
+            if (file_exists($metaFile)) {
+                $meta = json_decode(file_get_contents($metaFile), true);
+                if ($meta) {
+                    $meta['updated'] = time();
+                    file_put_contents($metaFile, json_encode($meta), LOCK_EX);
+                }
+            }
+        }
     }
-
-    $fp = fopen($queueFile, 'a');
-    if (!$fp) respond(['error' => 'Storage error'], 500);
-
-    flock($fp, LOCK_EX);
-    fwrite($fp, base64_encode($data) . "\n");
-    flock($fp, LOCK_UN);
-    fclose($fp);
-
-    touch($metaFile);
     respond(['status' => 'ok']);
 }
 
-// ================= RECEIVE =================
-if ($action === 'receive') {
-    if (!$dir) respond(['error' => 'Missing direction'], 400);
+// ================= ACTION: SYNC =================
+if ($action === 'sync') {
+    $dir = $_GET['dir'] ?? null;
+    if (!in_array($dir, ['up', 'down'])) respond(['error' => 'Invalid direction'], 400);
 
-    if (!file_exists($queueFile)) {
-        respond(['chunks' => []]);
-    }
-
-    $fp = fopen($queueFile, 'c+');
-    if (!$fp) respond(['error' => 'Storage error'], 500);
-
-    flock($fp, LOCK_EX);
-
-    $lines = file($queueFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    file_put_contents($queueFile, '');
-
-    flock($fp, LOCK_UN);
-    fclose($fp);
-
-    $chunks = array_map(fn($l) => base64_decode($l), $lines);
-
-    touch($metaFile);
-    respond(['chunks' => $chunks]);
-}
-
-// ================= CLEANUP =================
-if ($action === 'cleanup') {
-    $files = glob("$STORAGE_DIR/*.meta");
-
-    foreach ($files as $file) {
-        $meta = json_decode(file_get_contents($file), true);
-        if (!$meta) continue;
-
-        if (time() - $meta['updated'] > $CONNECTION_TTL) {
-            $id = basename($file, '.meta');
-            @unlink("$STORAGE_DIR/{$id}_up.queue");
-            @unlink("$STORAGE_DIR/{$id}_down.queue");
-            @unlink($file);
+    $response = ['chunks' => []];
+    
+    // Pass newly opened connections to outer.go
+    if ($dir === 'up') {
+        $response['opens'] =[];
+        $files = glob("$STORAGE_DIR/*.meta");
+        if ($files !== false) {
+            foreach ($files as $file) {
+                $meta = json_decode(file_get_contents($file), true);
+                if ($meta && empty($meta['fetched'])) {
+                    $connID = basename($file, '.meta');
+                    $response['opens'][] =[
+                        'conn' => $connID,
+                        'host' => $meta['host'],
+                        'port' => (int)$meta['port']
+                    ];
+                    $meta['fetched'] = true;
+                    $meta['updated'] = time();
+                    file_put_contents($file, json_encode($meta), LOCK_EX);
+                }
+            }
         }
     }
 
+    // Process queued arrays securely
+    $queueFiles = glob("$STORAGE_DIR/*_{$dir}.queue");
+    if ($queueFiles !== false) {
+        foreach ($queueFiles as $qFile) {
+            $connID = str_replace("_{$dir}.queue", '', basename($qFile));
+            
+            $fp = fopen($qFile, 'c+');
+            if ($fp) {
+                flock($fp, LOCK_EX);
+                $content = stream_get_contents($fp);
+                ftruncate($fp, 0); // Clear immediately
+                flock($fp, LOCK_UN);
+                fclose($fp);
+                
+                if (!empty($content)) {
+                    $lines = array_filter(explode("\n", trim($content)), 'strlen');
+                    if (!empty($lines)) {
+                        $response['chunks'][$connID] = array_values($lines);
+                    }
+                }
+            }
+        }
+    }
+
+    respond($response);
+}
+
+// ================= ACTION: CLEANUP =================
+if ($action === 'cleanup') {
+    $files = glob("$STORAGE_DIR/*.meta");
+    if ($files !== false) {
+        foreach ($files as $file) {
+            $meta = json_decode(file_get_contents($file), true);
+            if ($meta && (time() - $meta['updated'] > $CONNECTION_TTL)) {
+                $id = basename($file, '.meta');
+                @unlink("$STORAGE_DIR/{$id}_up.queue");
+                @unlink("$STORAGE_DIR/{$id}_down.queue");
+                @unlink($file);
+            }
+        }
+    }
     respond(['status' => 'cleaned']);
 }
 
-// ================= DEFAULT =================
 respond(['error' => 'Invalid action'], 400);
