@@ -1,0 +1,41 @@
+2026/04/24 15:35:42.827811 [OUT] startup agent_listen=0.0.0.0:28081 dial_timeout=10s
+2026/04/24 15:36:37.585941 [OUT] conn=sock_1777044997234_1 open_ok relay_remote=5.144.130.6:44630 target=api.ipify.org:443 dur_ms=15
+2026/04/24 15:36:38.036633 [OUT] conn=sock_1777044997234_1 closed target=api.ipify.org:443
+2026/04/24 15:36:42.435487 [OUT] conn=sock_1777045001859_2 open_ok relay_remote=5.144.130.6:48752 target=www.googleapis.com:443 dur_ms=307
+2026/04/24 15:36:43.714287 [OUT] conn=sock_1777045003417_3 open_ok relay_remote=5.144.130.6:48754 target=cachefly.cachefly.net:443 dur_ms=16
+2026/04/24 15:36:44.026260 [OUT] conn=sock_1777045003417_3 closed target=cachefly.cachefly.net:443
+2026/04/24 15:36:44.293669 [OUT] conn=sock_1777045004018_4 open_ok relay_remote=5.144.130.6:48770 target=cachefly.cachefly.net:443 dur_ms=15
+2026/04/24 15:36:53.507459 [OUT] conn=sock_1777045004018_4 closed target=cachefly.cachefly.net:443
+2026/04/24 15:37:00.802992 [OUT] conn=sock_1777045020534_5 open_ok relay_remote=5.144.130.6:36044 target=149.154.167.91:80 dur_ms=10
+2026/04/24 15:37:00.832603 [OUT] conn=sock_1777045020534_6 open_ok relay_remote=5.144.130.6:36048 target=149.154.167.91:443 dur_ms=14
+2026/04/24 15:37:01.052175 [OUT] conn=sock_1777045020679_7 open_ok relay_remote=5.144.130.6:36060 target=alive.github.com:443 dur_ms=91
+2026/04/24 15:37:01.099009 [OUT] conn=sock_1777045020812_8 open_ok relay_remote=5.144.130.6:36076 target=149.154.167.91:443 dur_ms=14
+2026/04/24 15:37:01.141509 [OUT] conn=sock_1777045020843_9 open_ok relay_remote=5.144.130.6:36088 target=149.154.167.91:80 dur_ms=11
+2026/04/24 15:37:01.147902 [OUT] conn=sock_1777045020862_11 open_ok relay_remote=5.144.130.6:36110 target=149.154.167.91:443 dur_ms=10
+2026/04/24 15:37:01.177472 [OUT] conn=sock_1777045020881_12 open_ok relay_remote=5.144.130.6:36118 target=149.154.167.91:80 dur_ms=14
+2026/04/24 15:37:01.213020 [OUT] conn=sock_1777045020856_10 open_ok relay_remote=5.144.130.6:36104 target=alive.github.com:443 dur_ms=90
+2026/04/24 15:37:01.461350 [OUT] conn=sock_1777045020888_13 open_ok relay_remote=5.144.130.6:36132 target=mtalk.google.com:5228 dur_ms=307
+2026/04/24 15:37:44.313429 [OUT] conn=sock_1777045001859_2 closed target=www.googleapis.com:443
+2026/04/24 15:37:44.740004 [OUT] conn=sock_1777045054339_78 open_ok relay_remote=5.144.130.6:51008 target=clients4.google.com:443 dur_ms=309
+2026/04/24 15:38:01.860172 [OUT] conn=sock_1777045020888_13 closed target=mtalk.google.com:5228
+2026/04/24 15:38:01.978603 [OUT] conn=sock_1777045067925_108 open_ok relay_remote=5.144.130.6:40288 target=185.250.41.30:22 dur_ms=0
+2026/04/24 15:38:02.065736 [OUT] conn=sock_1777045020534_5 closed target=149.154.167.91:80
+2026/04/24 15:38:02.131547 [OUT] conn=sock_1777045020534_6 closed target=149.154.167.91:443
+2026/04/24 15:38:02.255214 [OUT] conn=sock_1777045072714_110 open_ok relay_remote=5.144.130.6:40302 target=149.154.167.43:443 dur_ms=8
+2026/04/24 15:38:02.442818 [OUT] conn=sock_1777045020843_9 closed target=149.154.167.91:80
+2026/04/24 15:38:02.462082 [OUT] conn=sock_1777045020881_12 closed target=149.154.167.91:80
+2026/04/24 15:38:02.488063 [OUT] conn=sock_1777045070013_109 open_ok relay_remote=5.144.130.6:40298 target=connectivitycheck.gstatic.com:80 dur_ms=306
+2026/04/24 15:38:02.536846 [OUT] conn=sock_1777045020862_11 closed target=149.154.167.91:443
+2026/04/24 15:38:02.553988 [OUT] conn=sock_1777045072717_111 open_ok relay_remote=5.144.130.6:40310 target=149.154.167.43:443 dur_ms=12
+2026/04/24 15:38:02.571894 [OUT] conn=sock_1777045072718_112 open_ok relay_remote=5.144.130.6:40312 target=149.154.167.43:443 dur_ms=11
+2026/04/24 15:38:02.664759 [OUT] conn=sock_1777045072719_113 open_ok relay_remote=5.144.130.6:40326 target=149.154.167.43:80 dur_ms=12
+2026/04/24 15:38:15.988903 [OUT] conn=sock_1777045067925_108 closed target=185.250.41.30:22
+2026/04/24 15:38:15.989011 [OUT] conn=sock_1777045020856_10 closed target=alive.github.com:443
+2026/04/24 15:38:15.989385 [OUT] conn=sock_1777045072719_113 closed target=149.154.167.43:80
+2026/04/24 15:38:15.990028 [OUT] conn=sock_1777045020812_8 closed target=149.154.167.91:443
+2026/04/24 15:38:15.990050 [OUT] conn=sock_1777045072714_110 closed target=149.154.167.43:443
+2026/04/24 15:38:15.990055 [OUT] conn=sock_1777045072717_111 closed target=149.154.167.43:443
+2026/04/24 15:38:15.990060 [OUT] conn=sock_1777045072718_112 closed target=149.154.167.43:443
+2026/04/24 15:38:15.990064 [OUT] conn=sock_1777045020679_7 closed target=alive.github.com:443
+2026/04/24 15:38:15.990552 [OUT] conn=sock_1777045054339_78 closed target=clients4.google.com:443
+2026/04/24 15:38:15.990716 [OUT] conn=sock_1777045070013_109 closed target=connectivitycheck.gstatic.com:80

@@ -1,0 +1,25 @@
+2026/04/24 20:07:54.066500 [IR] startup relay=https://hidaco.site/tools/rel/soc/index.php listen=0.0.0.0:18713 agent=0.0.0.0:28080 public=37.32.14.205:28080 outer=185.250.41.30:28081 max_relays=6 open_timeout=45s
+2026/04/24 20:07:54.111130 [IR] conn=sock_1777061274111_1 relay_slot wait_ms=0 active=0
+2026/04/24 20:07:54.111400 [IR] conn=sock_1777061274111_1 new_tunnel target=149.154.167.43:80 active=1
+2026/04/24 20:07:54.124776 [IR] conn=sock_1777061274124_2 relay_slot wait_ms=0 active=1
+2026/04/24 20:07:54.124821 [IR] conn=sock_1777061274124_2 new_tunnel target=91.108.56.129:80 active=2
+2026/04/24 20:07:54.130664 [IR] conn=sock_1777061274130_3 relay_slot wait_ms=0 active=2
+2026/04/24 20:07:54.132109 [IR] conn=sock_1777061274130_3 new_tunnel target=149.154.167.91:80 active=3
+2026/04/24 20:07:54.158873 [IR] attach ok conn=sock_1777061274130_3 remote=5.144.130.6:42486 active=3
+2026/04/24 20:07:54.165412 [IR] conn=sock_1777061274165_4 relay_slot wait_ms=0 active=3
+2026/04/24 20:07:54.165463 [IR] conn=sock_1777061274165_4 new_tunnel target=149.154.167.91:80 active=4
+2026/04/24 20:07:54.173167 [IR] attach ok conn=sock_1777061274124_2 remote=5.144.130.6:42502 active=4
+2026/04/24 20:07:54.173394 [IR] attach ok conn=sock_1777061274111_1 remote=5.144.130.6:42516 active=4
+2026/04/24 20:07:54.182941 [IR] attach ok conn=sock_1777061274165_4 remote=5.144.130.6:42520 active=4
+2026/04/24 20:07:54.374037 [IR] conn=sock_1777061274111_1 relay_open_headers status=200 target=149.154.167.43:80 dur_ms=262
+2026/04/24 20:07:54.384832 [IR] conn=sock_1777061274130_3 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=252
+2026/04/24 20:07:54.410305 [IR] conn=sock_1777061274165_4 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=244
+2026/04/24 20:07:54.593478 [IR] conn=sock_1777061274124_2 relay_open_headers status=200 target=91.108.56.129:80 dur_ms=468
+2026/04/24 20:07:54.603243 [IR] conn=sock_1777061274603_5 relay_slot wait_ms=0 active=4
+2026/04/24 20:07:54.603301 [IR] conn=sock_1777061274603_5 new_tunnel target=149.154.167.91:80 active=5
+2026/04/24 20:07:54.620719 [IR] conn=sock_1777061274620_6 relay_slot wait_ms=0 active=5
+2026/04/24 20:07:54.620791 [IR] conn=sock_1777061274620_6 new_tunnel target=149.154.167.91:80 active=6
+2026/04/24 20:07:54.624809 [IR] attach ok conn=sock_1777061274603_5 remote=5.144.130.6:42530 active=6
+2026/04/24 20:07:54.638275 [IR] attach ok conn=sock_1777061274620_6 remote=5.144.130.6:42534 active=6
+2026/04/24 20:07:54.837384 [IR] conn=sock_1777061274620_6 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=216
+2026/04/24 20:07:54.856469 [IR] conn=sock_1777061274603_5 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=253

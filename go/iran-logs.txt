@@ -1,0 +1,539 @@
+2026/04/24 15:36:34.345821 [IR] startup relay=https://hidaco.site/tools/rel/soc/index.php listen=0.0.0.0:18713 agent=0.0.0.0:28080 public=37.32.14.205:28080 outer=185.250.41.30:28081 max_relays=48 open_timeout=15s
+2026/04/24 15:36:37.234114 [IR] conn=sock_1777044997234_1 new_tunnel target=api.ipify.org:443 active=1
+2026/04/24 15:36:37.234269 [IR] conn=sock_1777044997234_1 relay_slot wait_ms=0 active=1
+2026/04/24 15:36:37.296995 [IR] attach ok conn=sock_1777044997234_1 remote=5.144.130.6:51214 active=1
+2026/04/24 15:36:37.543316 [IR] conn=sock_1777044997234_1 relay_open_headers status=200 target=api.ipify.org:443 dur_ms=308
+2026/04/24 15:36:37.992733 [IR] conn=sock_1777044997234_1 cleanup active=0
+2026/04/24 15:36:37.992768 [IR] conn=sock_1777044997234_1 close relay_attached=true
+2026/04/24 15:36:37.995050 [IR] conn=sock_1777044997234_1 relay_body_closed
+2026/04/24 15:36:41.859654 [IR] conn=sock_1777045001859_2 new_tunnel target=www.googleapis.com:443 active=1
+2026/04/24 15:36:41.859737 [IR] conn=sock_1777045001859_2 relay_slot wait_ms=0 active=1
+2026/04/24 15:36:41.865512 [IR] attach ok conn=sock_1777045001859_2 remote=5.144.130.6:40992 active=1
+2026/04/24 15:36:42.382326 [IR] conn=sock_1777045001859_2 relay_open_headers status=200 target=www.googleapis.com:443 dur_ms=522
+2026/04/24 15:36:43.417499 [IR] conn=sock_1777045003417_3 new_tunnel target=cachefly.cachefly.net:443 active=2
+2026/04/24 15:36:43.417570 [IR] conn=sock_1777045003417_3 relay_slot wait_ms=0 active=2
+2026/04/24 15:36:43.435273 [IR] attach ok conn=sock_1777045003417_3 remote=5.144.130.6:40994 active=2
+2026/04/24 15:36:43.659742 [IR] conn=sock_1777045003417_3 relay_open_headers status=200 target=cachefly.cachefly.net:443 dur_ms=242
+2026/04/24 15:36:43.973391 [IR] conn=sock_1777045003417_3 relay_body_closed
+2026/04/24 15:36:43.973436 [IR] conn=sock_1777045003417_3 fail err=EOF
+2026/04/24 15:36:43.973450 [IR] conn=sock_1777045003417_3 cleanup active=1
+2026/04/24 15:36:44.018460 [IR] conn=sock_1777045004018_4 new_tunnel target=cachefly.cachefly.net:443 active=2
+2026/04/24 15:36:44.018565 [IR] conn=sock_1777045004018_4 relay_slot wait_ms=0 active=2
+2026/04/24 15:36:44.024414 [IR] attach ok conn=sock_1777045004018_4 remote=5.144.130.6:40998 active=2
+2026/04/24 15:36:44.232496 [IR] conn=sock_1777045004018_4 relay_open_headers status=200 target=cachefly.cachefly.net:443 dur_ms=213
+2026/04/24 15:36:44.974748 [IR] conn=sock_1777045003417_3 cleanup active=2
+2026/04/24 15:36:44.974789 [IR] conn=sock_1777045003417_3 close relay_attached=true
+2026/04/24 15:36:53.347433 [IR] conn=sock_1777045004018_4 cleanup active=1
+2026/04/24 15:36:53.347487 [IR] conn=sock_1777045004018_4 close relay_attached=true
+2026/04/24 15:36:53.351370 [IR] conn=sock_1777045004018_4 relay_body_closed
+2026/04/24 15:37:00.534207 [IR] conn=sock_1777045020534_5 new_tunnel target=149.154.167.91:80 active=3
+2026/04/24 15:37:00.534251 [IR] conn=sock_1777045020534_6 new_tunnel target=149.154.167.91:443 active=3
+2026/04/24 15:37:00.534299 [IR] conn=sock_1777045020534_5 relay_slot wait_ms=0 active=3
+2026/04/24 15:37:00.534333 [IR] conn=sock_1777045020534_6 relay_slot wait_ms=0 active=3
+2026/04/24 15:37:00.539975 [IR] attach ok conn=sock_1777045020534_5 remote=5.144.130.6:38762 active=3
+2026/04/24 15:37:00.549168 [IR] attach ok conn=sock_1777045020534_6 remote=5.144.130.6:38768 active=3
+2026/04/24 15:37:00.679432 [IR] conn=sock_1777045020679_7 new_tunnel target=alive.github.com:443 active=4
+2026/04/24 15:37:00.679540 [IR] conn=sock_1777045020679_7 relay_slot wait_ms=0 active=4
+2026/04/24 15:37:00.693243 [IR] attach ok conn=sock_1777045020679_7 remote=5.144.130.6:38784 active=4
+2026/04/24 15:37:00.739474 [IR] conn=sock_1777045020534_5 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=205
+2026/04/24 15:37:00.784943 [IR] conn=sock_1777045020534_6 relay_open_headers status=200 target=149.154.167.91:443 dur_ms=250
+2026/04/24 15:37:00.812712 [IR] conn=sock_1777045020812_8 new_tunnel target=149.154.167.91:443 active=5
+2026/04/24 15:37:00.812853 [IR] conn=sock_1777045020812_8 relay_slot wait_ms=0 active=5
+2026/04/24 15:37:00.835893 [IR] attach ok conn=sock_1777045020812_8 remote=5.144.130.6:38796 active=5
+2026/04/24 15:37:00.843701 [IR] conn=sock_1777045020843_9 new_tunnel target=149.154.167.91:80 active=6
+2026/04/24 15:37:00.843778 [IR] conn=sock_1777045020843_9 relay_slot wait_ms=0 active=6
+2026/04/24 15:37:00.856714 [IR] conn=sock_1777045020856_10 new_tunnel target=alive.github.com:443 active=7
+2026/04/24 15:37:00.856786 [IR] conn=sock_1777045020856_10 relay_slot wait_ms=0 active=7
+2026/04/24 15:37:00.862834 [IR] conn=sock_1777045020862_11 new_tunnel target=149.154.167.91:443 active=8
+2026/04/24 15:37:00.862928 [IR] conn=sock_1777045020862_11 relay_slot wait_ms=0 active=8
+2026/04/24 15:37:00.864379 [IR] attach ok conn=sock_1777045020843_9 remote=5.144.130.6:38810 active=8
+2026/04/24 15:37:00.876123 [IR] attach ok conn=sock_1777045020856_10 remote=5.144.130.6:38814 active=8
+2026/04/24 15:37:00.881245 [IR] conn=sock_1777045020881_12 new_tunnel target=149.154.167.91:80 active=9
+2026/04/24 15:37:00.881358 [IR] conn=sock_1777045020881_12 relay_slot wait_ms=0 active=9
+2026/04/24 15:37:00.884496 [IR] attach ok conn=sock_1777045020862_11 remote=5.144.130.6:38830 active=9
+2026/04/24 15:37:00.888100 [IR] conn=sock_1777045020888_13 new_tunnel target=mtalk.google.com:5228 active=10
+2026/04/24 15:37:00.888164 [IR] conn=sock_1777045020888_13 relay_slot wait_ms=0 active=10
+2026/04/24 15:37:00.899182 [IR] attach ok conn=sock_1777045020881_12 remote=5.144.130.6:38844 active=10
+2026/04/24 15:37:00.904946 [IR] attach ok conn=sock_1777045020888_13 remote=5.144.130.6:38860 active=10
+2026/04/24 15:37:01.002917 [IR] conn=sock_1777045020679_7 relay_open_headers status=200 target=alive.github.com:443 dur_ms=323
+2026/04/24 15:37:01.029553 [IR] conn=sock_1777045020812_8 relay_open_headers status=200 target=149.154.167.91:443 dur_ms=216
+2026/04/24 15:37:01.082539 [IR] conn=sock_1777045020862_11 relay_open_headers status=200 target=149.154.167.91:443 dur_ms=219
+2026/04/24 15:37:01.091028 [IR] conn=sock_1777045020843_9 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=247
+2026/04/24 15:37:01.125458 [IR] conn=sock_1777045020881_12 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=244
+2026/04/24 15:37:01.143424 [IR] conn=sock_1777045020856_10 relay_open_headers status=200 target=alive.github.com:443 dur_ms=286
+2026/04/24 15:37:01.368056 [IR] conn=sock_1777045021367_14 new_tunnel target=www.googleapis.com:443 active=11
+2026/04/24 15:37:01.368128 [IR] conn=sock_1777045021367_14 relay_slot wait_ms=0 active=11
+2026/04/24 15:37:01.393005 [IR] conn=sock_1777045020888_13 relay_open_headers status=200 target=mtalk.google.com:5228 dur_ms=504
+2026/04/24 15:37:01.786055 [IR] conn=sock_1777045021786_15 new_tunnel target=185.250.41.30:22 active=12
+2026/04/24 15:37:01.786192 [IR] conn=sock_1777045021786_15 relay_slot wait_ms=0 active=12
+2026/04/24 15:37:05.652541 [IR] conn=sock_1777045025652_16 new_tunnel target=149.154.167.43:443 active=13
+2026/04/24 15:37:05.652697 [IR] conn=sock_1777045025652_16 relay_slot wait_ms=0 active=13
+2026/04/24 15:37:05.652910 [IR] conn=sock_1777045025652_17 new_tunnel target=149.154.167.43:443 active=14
+2026/04/24 15:37:05.652957 [IR] conn=sock_1777045025652_17 relay_slot wait_ms=0 active=14
+2026/04/24 15:37:05.653314 [IR] conn=sock_1777045025653_18 new_tunnel target=149.154.167.43:443 active=15
+2026/04/24 15:37:05.653374 [IR] conn=sock_1777045025653_18 relay_slot wait_ms=0 active=15
+2026/04/24 15:37:05.654493 [IR] conn=sock_1777045025654_19 new_tunnel target=149.154.167.43:80 active=16
+2026/04/24 15:37:05.654615 [IR] conn=sock_1777045025654_19 relay_slot wait_ms=0 active=16
+2026/04/24 15:37:05.655151 [IR] conn=sock_1777045025655_20 new_tunnel target=149.154.167.43:443 active=17
+2026/04/24 15:37:05.655300 [IR] conn=sock_1777045025655_20 relay_slot wait_ms=0 active=17
+2026/04/24 15:37:05.655495 [IR] conn=sock_1777045025655_21 new_tunnel target=149.154.167.43:80 active=18
+2026/04/24 15:37:05.655662 [IR] conn=sock_1777045025655_21 relay_slot wait_ms=0 active=18
+2026/04/24 15:37:05.655735 [IR] conn=sock_1777045025655_22 new_tunnel target=149.154.167.43:80 active=19
+2026/04/24 15:37:05.655815 [IR] conn=sock_1777045025655_22 relay_slot wait_ms=0 active=19
+2026/04/24 15:37:05.658166 [IR] conn=sock_1777045025657_23 new_tunnel target=149.154.167.43:80 active=20
+2026/04/24 15:37:05.658255 [IR] conn=sock_1777045025657_23 relay_slot wait_ms=0 active=20
+2026/04/24 15:37:06.633168 [IR] conn=sock_1777045026633_24 new_tunnel target=149.154.167.43:443 active=21
+2026/04/24 15:37:06.633302 [IR] conn=sock_1777045026633_24 relay_slot wait_ms=0 active=21
+2026/04/24 15:37:06.637956 [IR] conn=sock_1777045026637_25 new_tunnel target=149.154.167.43:443 active=22
+2026/04/24 15:37:06.638022 [IR] conn=sock_1777045026637_25 relay_slot wait_ms=0 active=22
+2026/04/24 15:37:06.638057 [IR] conn=sock_1777045026638_26 new_tunnel target=149.154.167.43:80 active=23
+2026/04/24 15:37:06.638208 [IR] conn=sock_1777045026638_26 relay_slot wait_ms=0 active=23
+2026/04/24 15:37:06.638326 [IR] conn=sock_1777045026638_27 new_tunnel target=149.154.167.43:443 active=24
+2026/04/24 15:37:06.638380 [IR] conn=sock_1777045026638_27 relay_slot wait_ms=0 active=24
+2026/04/24 15:37:06.638856 [IR] conn=sock_1777045026638_28 new_tunnel target=149.154.167.43:80 active=25
+2026/04/24 15:37:06.638903 [IR] conn=sock_1777045026638_28 relay_slot wait_ms=0 active=25
+2026/04/24 15:37:06.654458 [IR] conn=sock_1777045026654_29 new_tunnel target=149.154.167.43:443 active=26
+2026/04/24 15:37:06.654674 [IR] conn=sock_1777045026654_29 relay_slot wait_ms=0 active=26
+2026/04/24 15:37:06.654760 [IR] conn=sock_1777045026654_30 new_tunnel target=149.154.167.43:80 active=27
+2026/04/24 15:37:06.654857 [IR] conn=sock_1777045026654_31 new_tunnel target=149.154.167.43:80 active=28
+2026/04/24 15:37:06.654899 [IR] conn=sock_1777045026654_30 relay_slot wait_ms=0 active=28
+2026/04/24 15:37:06.655003 [IR] conn=sock_1777045026654_31 relay_slot wait_ms=0 active=28
+2026/04/24 15:37:08.642113 [IR] conn=sock_1777045028642_32 new_tunnel target=149.154.167.43:443 active=29
+2026/04/24 15:37:08.642204 [IR] conn=sock_1777045028642_32 relay_slot wait_ms=0 active=29
+2026/04/24 15:37:08.642231 [IR] conn=sock_1777045028642_33 new_tunnel target=149.154.167.43:443 active=30
+2026/04/24 15:37:08.642345 [IR] conn=sock_1777045028642_34 new_tunnel target=149.154.167.43:443 active=31
+2026/04/24 15:37:08.642398 [IR] conn=sock_1777045028642_33 relay_slot wait_ms=0 active=31
+2026/04/24 15:37:08.642451 [IR] conn=sock_1777045028642_34 relay_slot wait_ms=0 active=31
+2026/04/24 15:37:08.647420 [IR] conn=sock_1777045028647_35 new_tunnel target=149.154.167.43:80 active=32
+2026/04/24 15:37:08.647524 [IR] conn=sock_1777045028647_35 relay_slot wait_ms=0 active=32
+2026/04/24 15:37:08.648584 [IR] conn=sock_1777045028648_36 new_tunnel target=149.154.167.43:80 active=33
+2026/04/24 15:37:08.649295 [IR] conn=sock_1777045028648_36 relay_slot wait_ms=0 active=33
+2026/04/24 15:37:08.649872 [IR] conn=sock_1777045028649_37 new_tunnel target=149.154.167.43:80 active=34
+2026/04/24 15:37:08.650164 [IR] conn=sock_1777045028649_37 relay_slot wait_ms=0 active=34
+2026/04/24 15:37:08.651618 [IR] conn=sock_1777045028651_38 new_tunnel target=149.154.167.43:80 active=35
+2026/04/24 15:37:08.651695 [IR] conn=sock_1777045028651_38 relay_slot wait_ms=0 active=35
+2026/04/24 15:37:08.651947 [IR] conn=sock_1777045028651_39 new_tunnel target=149.154.167.43:443 active=36
+2026/04/24 15:37:08.652042 [IR] conn=sock_1777045028651_39 relay_slot wait_ms=0 active=36
+2026/04/24 15:37:11.897113 [IR] conn=sock_1777045031897_40 new_tunnel target=www.googleapis.com:443 active=37
+2026/04/24 15:37:11.897185 [IR] conn=sock_1777045031897_40 relay_slot wait_ms=0 active=37
+2026/04/24 15:37:15.066276 [IR] conn=sock_1777045035066_41 new_tunnel target=149.154.167.43:80 active=38
+2026/04/24 15:37:15.066397 [IR] conn=sock_1777045035066_41 relay_slot wait_ms=0 active=38
+2026/04/24 15:37:15.066888 [IR] conn=sock_1777045035066_42 new_tunnel target=149.154.167.43:80 active=39
+2026/04/24 15:37:15.066969 [IR] conn=sock_1777045035066_42 relay_slot wait_ms=0 active=39
+2026/04/24 15:37:15.075344 [IR] conn=sock_1777045035075_43 new_tunnel target=149.154.167.43:443 active=42
+2026/04/24 15:37:15.075503 [IR] conn=sock_1777045035075_44 new_tunnel target=149.154.167.43:80 active=42
+2026/04/24 15:37:15.075614 [IR] conn=sock_1777045035075_43 relay_slot wait_ms=0 active=42
+2026/04/24 15:37:15.075691 [IR] conn=sock_1777045035075_45 new_tunnel target=149.154.167.43:443 active=42
+2026/04/24 15:37:15.075850 [IR] conn=sock_1777045035075_45 relay_slot wait_ms=0 active=42
+2026/04/24 15:37:15.076106 [IR] conn=sock_1777045035075_44 relay_slot wait_ms=0 active=42
+2026/04/24 15:37:15.076618 [IR] conn=sock_1777045035076_46 new_tunnel target=149.154.167.43:80 active=43
+2026/04/24 15:37:15.076686 [IR] conn=sock_1777045035076_46 relay_slot wait_ms=0 active=45
+2026/04/24 15:37:15.076836 [IR] conn=sock_1777045035076_47 new_tunnel target=149.154.167.43:443 active=45
+2026/04/24 15:37:15.076894 [IR] conn=sock_1777045035076_47 relay_slot wait_ms=0 active=45
+2026/04/24 15:37:15.077005 [IR] conn=sock_1777045035076_48 new_tunnel target=149.154.167.43:443 active=45
+2026/04/24 15:37:15.077070 [IR] conn=sock_1777045035076_48 relay_slot wait_ms=0 active=45
+2026/04/24 15:37:16.369098 [IR] conn=sock_1777045021367_14 relay_open_failed target=www.googleapis.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045021367_14&host=www.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:16.369186 [IR] conn=sock_1777045021367_14 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045021367_14&host=www.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:16.369194 [IR] conn=sock_1777045021367_14 cleanup active=44
+2026/04/24 15:37:16.369218 [IR] conn=sock_1777045021367_14 cleanup active=44
+2026/04/24 15:37:16.369221 [IR] conn=sock_1777045021367_14 close relay_attached=false
+2026/04/24 15:37:16.787645 [IR] conn=sock_1777045021786_15 relay_open_failed target=185.250.41.30:22 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045021786_15&host=185.250.41.30&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=22": http2: timeout awaiting response headers
+2026/04/24 15:37:16.787749 [IR] conn=sock_1777045021786_15 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045021786_15&host=185.250.41.30&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=22": http2: timeout awaiting response headers
+2026/04/24 15:37:16.787758 [IR] conn=sock_1777045021786_15 cleanup active=43
+2026/04/24 15:37:16.787774 [IR] conn=sock_1777045021786_15 cleanup active=43
+2026/04/24 15:37:16.787777 [IR] conn=sock_1777045021786_15 close relay_attached=false
+2026/04/24 15:37:19.311424 [IR] conn=sock_1777045039311_49 new_tunnel target=www.google.com:443 active=44
+2026/04/24 15:37:19.311504 [IR] conn=sock_1777045039311_49 relay_slot wait_ms=0 active=44
+2026/04/24 15:37:19.993715 [IR] conn=sock_1777045039993_50 new_tunnel target=optimizationguide-pa.googleapis.com:443 active=45
+2026/04/24 15:37:19.993776 [IR] conn=sock_1777045039993_50 relay_slot wait_ms=0 active=45
+2026/04/24 15:37:20.085152 [IR] conn=sock_1777045040085_51 new_tunnel target=fonts.googleapis.com:443 active=46
+2026/04/24 15:37:20.085283 [IR] conn=sock_1777045040085_51 relay_slot wait_ms=0 active=46
+2026/04/24 15:37:20.093329 [IR] conn=sock_1777045040093_52 new_tunnel target=www.youtube.com:443 active=47
+2026/04/24 15:37:20.093380 [IR] conn=sock_1777045040093_52 relay_slot wait_ms=0 active=47
+2026/04/24 15:37:20.653209 [IR] conn=sock_1777045025652_16 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025652_16&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.653298 [IR] conn=sock_1777045025652_16 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025652_16&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.653332 [IR] conn=sock_1777045025652_16 cleanup active=46
+2026/04/24 15:37:20.653349 [IR] conn=sock_1777045025652_16 cleanup active=46
+2026/04/24 15:37:20.653352 [IR] conn=sock_1777045025652_16 close relay_attached=false
+2026/04/24 15:37:20.653618 [IR] conn=sock_1777045025652_17 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025652_17&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.653713 [IR] conn=sock_1777045025652_17 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025652_17&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.653726 [IR] conn=sock_1777045025652_17 cleanup active=45
+2026/04/24 15:37:20.653786 [IR] conn=sock_1777045025653_18 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025653_18&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.653802 [IR] conn=sock_1777045025653_18 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025653_18&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.653805 [IR] conn=sock_1777045025653_18 cleanup active=44
+2026/04/24 15:37:20.653821 [IR] conn=sock_1777045025653_18 cleanup active=44
+2026/04/24 15:37:20.653823 [IR] conn=sock_1777045025653_18 close relay_attached=false
+2026/04/24 15:37:20.654178 [IR] conn=sock_1777045025652_17 cleanup active=44
+2026/04/24 15:37:20.654193 [IR] conn=sock_1777045025652_17 close relay_attached=false
+2026/04/24 15:37:20.655677 [IR] conn=sock_1777045025655_20 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025655_20&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.655702 [IR] conn=sock_1777045025654_19 relay_open_failed target=149.154.167.43:80 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025654_19&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.655738 [IR] conn=sock_1777045025654_19 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025654_19&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.655745 [IR] conn=sock_1777045025654_19 cleanup active=42
+2026/04/24 15:37:20.655760 [IR] conn=sock_1777045025654_19 cleanup active=42
+2026/04/24 15:37:20.655765 [IR] conn=sock_1777045025654_19 close relay_attached=false
+2026/04/24 15:37:20.655807 [IR] conn=sock_1777045025655_20 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025655_20&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:20.655830 [IR] conn=sock_1777045025655_20 cleanup active=42
+2026/04/24 15:37:20.655835 [IR] conn=sock_1777045025655_20 cleanup active=43
+2026/04/24 15:37:20.655837 [IR] conn=sock_1777045025655_20 close relay_attached=false
+2026/04/24 15:37:20.656013 [IR] conn=sock_1777045025655_22 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025655_22&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.656039 [IR] conn=sock_1777045025655_22 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025655_22&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.656045 [IR] conn=sock_1777045025655_22 cleanup active=41
+2026/04/24 15:37:20.656056 [IR] conn=sock_1777045025655_22 cleanup active=41
+2026/04/24 15:37:20.656060 [IR] conn=sock_1777045025655_22 close relay_attached=false
+2026/04/24 15:37:20.656246 [IR] conn=sock_1777045025655_21 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025655_21&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.656451 [IR] conn=sock_1777045025655_21 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025655_21&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.656459 [IR] conn=sock_1777045025655_21 cleanup active=40
+2026/04/24 15:37:20.656470 [IR] conn=sock_1777045025655_21 cleanup active=40
+2026/04/24 15:37:20.656475 [IR] conn=sock_1777045025655_21 close relay_attached=false
+2026/04/24 15:37:20.658778 [IR] conn=sock_1777045025657_23 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025657_23&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.658811 [IR] conn=sock_1777045025657_23 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045025657_23&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:20.658816 [IR] conn=sock_1777045025657_23 cleanup active=39
+2026/04/24 15:37:20.658825 [IR] conn=sock_1777045025657_23 cleanup active=39
+2026/04/24 15:37:20.658828 [IR] conn=sock_1777045025657_23 close relay_attached=false
+2026/04/24 15:37:20.675430 [IR] conn=sock_1777045040675_53 new_tunnel target=149.154.167.43:443 active=40
+2026/04/24 15:37:20.675592 [IR] conn=sock_1777045040675_53 relay_slot wait_ms=0 active=40
+2026/04/24 15:37:20.679112 [IR] conn=sock_1777045040679_54 new_tunnel target=149.154.167.43:80 active=41
+2026/04/24 15:37:20.679273 [IR] conn=sock_1777045040679_54 relay_slot wait_ms=0 active=41
+2026/04/24 15:37:20.680357 [IR] conn=sock_1777045040680_55 new_tunnel target=149.154.167.43:80 active=42
+2026/04/24 15:37:20.680419 [IR] conn=sock_1777045040680_55 relay_slot wait_ms=0 active=42
+2026/04/24 15:37:20.680974 [IR] conn=sock_1777045040680_56 new_tunnel target=149.154.167.43:443 active=43
+2026/04/24 15:37:20.681030 [IR] conn=sock_1777045040680_56 relay_slot wait_ms=0 active=43
+2026/04/24 15:37:20.681851 [IR] conn=sock_1777045040681_57 new_tunnel target=149.154.167.43:80 active=44
+2026/04/24 15:37:20.681908 [IR] conn=sock_1777045040681_57 relay_slot wait_ms=0 active=44
+2026/04/24 15:37:20.682630 [IR] conn=sock_1777045040682_58 new_tunnel target=149.154.167.43:443 active=45
+2026/04/24 15:37:20.682727 [IR] conn=sock_1777045040682_58 relay_slot wait_ms=0 active=45
+2026/04/24 15:37:20.682829 [IR] conn=sock_1777045040682_59 new_tunnel target=149.154.167.43:443 active=46
+2026/04/24 15:37:20.682890 [IR] conn=sock_1777045040682_59 relay_slot wait_ms=0 active=46
+2026/04/24 15:37:20.687707 [IR] conn=sock_1777045040687_60 new_tunnel target=149.154.167.43:80 active=47
+2026/04/24 15:37:20.687782 [IR] conn=sock_1777045040687_60 relay_slot wait_ms=0 active=47
+2026/04/24 15:37:21.633890 [IR] conn=sock_1777045026633_24 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026633_24&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.633972 [IR] conn=sock_1777045026633_24 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026633_24&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.633978 [IR] conn=sock_1777045026633_24 cleanup active=46
+2026/04/24 15:37:21.633995 [IR] conn=sock_1777045026633_24 cleanup active=46
+2026/04/24 15:37:21.633998 [IR] conn=sock_1777045026633_24 close relay_attached=false
+2026/04/24 15:37:21.639123 [IR] conn=sock_1777045026638_27 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026638_27&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639198 [IR] conn=sock_1777045026638_27 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026638_27&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639205 [IR] conn=sock_1777045026638_27 cleanup active=45
+2026/04/24 15:37:21.639219 [IR] conn=sock_1777045026638_28 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026638_28&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639248 [IR] conn=sock_1777045026638_28 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026638_28&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639269 [IR] conn=sock_1777045026638_28 cleanup active=44
+2026/04/24 15:37:21.639274 [IR] conn=sock_1777045026638_27 cleanup active=45
+2026/04/24 15:37:21.639277 [IR] conn=sock_1777045026638_27 close relay_attached=false
+2026/04/24 15:37:21.639280 [IR] conn=sock_1777045026638_28 cleanup active=44
+2026/04/24 15:37:21.639293 [IR] conn=sock_1777045026638_28 close relay_attached=false
+2026/04/24 15:37:21.639351 [IR] conn=sock_1777045026637_25 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026637_25&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639397 [IR] conn=sock_1777045026637_25 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026637_25&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639404 [IR] conn=sock_1777045026637_25 cleanup active=43
+2026/04/24 15:37:21.639414 [IR] conn=sock_1777045026637_25 cleanup active=43
+2026/04/24 15:37:21.639443 [IR] conn=sock_1777045026637_25 close relay_attached=false
+2026/04/24 15:37:21.639453 [IR] conn=sock_1777045026638_26 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026638_26&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639480 [IR] conn=sock_1777045026638_26 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026638_26&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.639486 [IR] conn=sock_1777045026638_26 cleanup active=42
+2026/04/24 15:37:21.639498 [IR] conn=sock_1777045026638_26 cleanup active=42
+2026/04/24 15:37:21.639505 [IR] conn=sock_1777045026638_26 close relay_attached=false
+2026/04/24 15:37:21.655901 [IR] conn=sock_1777045026654_31 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026654_31&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.655957 [IR] conn=sock_1777045026654_31 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026654_31&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.655964 [IR] conn=sock_1777045026654_31 cleanup active=41
+2026/04/24 15:37:21.655988 [IR] conn=sock_1777045026654_31 cleanup active=41
+2026/04/24 15:37:21.655990 [IR] conn=sock_1777045026654_31 close relay_attached=false
+2026/04/24 15:37:21.656127 [IR] conn=sock_1777045026654_29 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026654_29&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.656150 [IR] conn=sock_1777045026654_29 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026654_29&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:21.656154 [IR] conn=sock_1777045026654_29 cleanup active=40
+2026/04/24 15:37:21.656162 [IR] conn=sock_1777045026654_29 cleanup active=40
+2026/04/24 15:37:21.656164 [IR] conn=sock_1777045026654_29 close relay_attached=false
+2026/04/24 15:37:21.656211 [IR] conn=sock_1777045026654_30 relay_open_failed target=149.154.167.43:80 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026654_30&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.656268 [IR] conn=sock_1777045026654_30 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045026654_30&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:21.656366 [IR] conn=sock_1777045026654_30 cleanup active=39
+2026/04/24 15:37:21.656466 [IR] conn=sock_1777045026654_30 cleanup active=39
+2026/04/24 15:37:21.656477 [IR] conn=sock_1777045026654_30 close relay_attached=false
+2026/04/24 15:37:22.850556 [IR] conn=sock_1777045042850_61 new_tunnel target=185.250.41.30:22 active=40
+2026/04/24 15:37:22.850728 [IR] conn=sock_1777045042850_61 relay_slot wait_ms=0 active=40
+2026/04/24 15:37:23.643601 [IR] conn=sock_1777045028642_32 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028642_32&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.643691 [IR] conn=sock_1777045028642_32 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028642_32&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.643703 [IR] conn=sock_1777045028642_32 cleanup active=39
+2026/04/24 15:37:23.643711 [IR] conn=sock_1777045028642_33 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028642_33&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.643731 [IR] conn=sock_1777045028642_33 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028642_33&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.643736 [IR] conn=sock_1777045028642_33 cleanup active=38
+2026/04/24 15:37:23.643750 [IR] conn=sock_1777045028642_32 cleanup active=38
+2026/04/24 15:37:23.643775 [IR] conn=sock_1777045028642_32 close relay_attached=false
+2026/04/24 15:37:23.643802 [IR] conn=sock_1777045028642_34 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028642_34&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.643830 [IR] conn=sock_1777045028642_34 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028642_34&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.643836 [IR] conn=sock_1777045028642_34 cleanup active=37
+2026/04/24 15:37:23.643846 [IR] conn=sock_1777045028642_34 cleanup active=37
+2026/04/24 15:37:23.643850 [IR] conn=sock_1777045028642_34 close relay_attached=false
+2026/04/24 15:37:23.643872 [IR] conn=sock_1777045028642_33 cleanup active=38
+2026/04/24 15:37:23.643881 [IR] conn=sock_1777045028642_33 close relay_attached=false
+2026/04/24 15:37:23.648514 [IR] conn=sock_1777045028647_35 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028647_35&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.648608 [IR] conn=sock_1777045028647_35 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028647_35&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.648618 [IR] conn=sock_1777045028647_35 cleanup active=36
+2026/04/24 15:37:23.648637 [IR] conn=sock_1777045028647_35 cleanup active=36
+2026/04/24 15:37:23.648642 [IR] conn=sock_1777045028647_35 close relay_attached=false
+2026/04/24 15:37:23.650892 [IR] conn=sock_1777045028648_36 relay_open_failed target=149.154.167.43:80 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028648_36&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.650932 [IR] conn=sock_1777045028648_36 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028648_36&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.650956 [IR] conn=sock_1777045028648_36 cleanup active=35
+2026/04/24 15:37:23.650965 [IR] conn=sock_1777045028649_37 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028649_37&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.650981 [IR] conn=sock_1777045028648_36 cleanup active=35
+2026/04/24 15:37:23.650996 [IR] conn=sock_1777045028648_36 close relay_attached=false
+2026/04/24 15:37:23.651029 [IR] conn=sock_1777045028649_37 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028649_37&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.651038 [IR] conn=sock_1777045028649_37 cleanup active=34
+2026/04/24 15:37:23.651052 [IR] conn=sock_1777045028649_37 cleanup active=34
+2026/04/24 15:37:23.651056 [IR] conn=sock_1777045028649_37 close relay_attached=false
+2026/04/24 15:37:23.652214 [IR] conn=sock_1777045028651_38 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028651_38&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.652297 [IR] conn=sock_1777045028651_38 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028651_38&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:23.652307 [IR] conn=sock_1777045028651_38 cleanup active=33
+2026/04/24 15:37:23.652323 [IR] conn=sock_1777045028651_38 cleanup active=33
+2026/04/24 15:37:23.652327 [IR] conn=sock_1777045028651_38 close relay_attached=false
+2026/04/24 15:37:23.652368 [IR] conn=sock_1777045028651_39 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028651_39&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.652395 [IR] conn=sock_1777045028651_39 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045028651_39&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:23.652400 [IR] conn=sock_1777045028651_39 cleanup active=32
+2026/04/24 15:37:23.652408 [IR] conn=sock_1777045028651_39 cleanup active=32
+2026/04/24 15:37:23.652410 [IR] conn=sock_1777045028651_39 close relay_attached=false
+2026/04/24 15:37:26.422398 [IR] conn=sock_1777045046422_62 new_tunnel target=www.google.com:443 active=33
+2026/04/24 15:37:26.422507 [IR] conn=sock_1777045046422_62 relay_slot wait_ms=0 active=33
+2026/04/24 15:37:26.687879 [IR] conn=sock_1777045046687_63 new_tunnel target=www.google.com:443 active=34
+2026/04/24 15:37:26.687958 [IR] conn=sock_1777045046687_63 relay_slot wait_ms=0 active=34
+2026/04/24 15:37:26.695161 [IR] conn=sock_1777045046695_64 new_tunnel target=www.google.com:443 active=35
+2026/04/24 15:37:26.695284 [IR] conn=sock_1777045046695_64 relay_slot wait_ms=0 active=35
+2026/04/24 15:37:26.898215 [IR] conn=sock_1777045031897_40 relay_open_failed target=www.googleapis.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045031897_40&host=www.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:26.898324 [IR] conn=sock_1777045031897_40 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045031897_40&host=www.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:26.898332 [IR] conn=sock_1777045031897_40 cleanup active=34
+2026/04/24 15:37:26.898347 [IR] conn=sock_1777045031897_40 cleanup active=34
+2026/04/24 15:37:26.898349 [IR] conn=sock_1777045031897_40 close relay_attached=false
+2026/04/24 15:37:27.079936 [IR] conn=sock_1777045047079_65 new_tunnel target=www.google.com:443 active=36
+2026/04/24 15:37:27.080113 [IR] conn=sock_1777045047079_66 new_tunnel target=www.google.com:443 active=36
+2026/04/24 15:37:27.080201 [IR] conn=sock_1777045047079_66 relay_slot wait_ms=0 active=36
+2026/04/24 15:37:27.080523 [IR] conn=sock_1777045047079_65 relay_slot wait_ms=0 active=36
+2026/04/24 15:37:27.311616 [IR] conn=sock_1777045047311_67 new_tunnel target=fonts.gstatic.com:443 active=37
+2026/04/24 15:37:27.311675 [IR] conn=sock_1777045047311_67 relay_slot wait_ms=0 active=37
+2026/04/24 15:37:27.483403 [IR] conn=sock_1777045047483_68 new_tunnel target=www.google.com:443 active=38
+2026/04/24 15:37:27.483482 [IR] conn=sock_1777045047483_68 relay_slot wait_ms=0 active=38
+2026/04/24 15:37:27.485280 [IR] conn=sock_1777045047485_69 new_tunnel target=optimizationguide-pa.googleapis.com:443 active=39
+2026/04/24 15:37:27.485361 [IR] conn=sock_1777045047485_69 relay_slot wait_ms=0 active=39
+2026/04/24 15:37:28.728848 [IR] conn=sock_1777045048728_70 new_tunnel target=149.154.167.43:443 active=40
+2026/04/24 15:37:28.728934 [IR] conn=sock_1777045048728_70 relay_slot wait_ms=0 active=40
+2026/04/24 15:37:28.745525 [IR] conn=sock_1777045048745_71 new_tunnel target=149.154.167.43:443 active=41
+2026/04/24 15:37:28.745574 [IR] conn=sock_1777045048745_71 relay_slot wait_ms=0 active=41
+2026/04/24 15:37:28.745878 [IR] conn=sock_1777045048745_72 new_tunnel target=149.154.167.43:443 active=42
+2026/04/24 15:37:28.745923 [IR] conn=sock_1777045048745_72 relay_slot wait_ms=0 active=42
+2026/04/24 15:37:28.749790 [IR] conn=sock_1777045048749_73 new_tunnel target=149.154.167.43:443 active=43
+2026/04/24 15:37:28.749852 [IR] conn=sock_1777045048749_73 relay_slot wait_ms=0 active=43
+2026/04/24 15:37:28.750520 [IR] conn=sock_1777045048750_74 new_tunnel target=149.154.167.43:80 active=44
+2026/04/24 15:37:28.750565 [IR] conn=sock_1777045048750_74 relay_slot wait_ms=0 active=44
+2026/04/24 15:37:28.752186 [IR] conn=sock_1777045048752_75 new_tunnel target=149.154.167.43:80 active=45
+2026/04/24 15:37:28.752232 [IR] conn=sock_1777045048752_75 relay_slot wait_ms=0 active=45
+2026/04/24 15:37:28.771855 [IR] conn=sock_1777045048771_76 new_tunnel target=149.154.167.43:80 active=46
+2026/04/24 15:37:28.771929 [IR] conn=sock_1777045048771_76 relay_slot wait_ms=0 active=46
+2026/04/24 15:37:28.772170 [IR] conn=sock_1777045048772_77 new_tunnel target=149.154.167.43:80 active=47
+2026/04/24 15:37:28.772330 [IR] conn=sock_1777045048772_77 relay_slot wait_ms=0 active=47
+2026/04/24 15:37:30.067833 [IR] conn=sock_1777045035066_42 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035066_42&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.067915 [IR] conn=sock_1777045035066_42 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035066_42&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.067922 [IR] conn=sock_1777045035066_42 cleanup active=46
+2026/04/24 15:37:30.067938 [IR] conn=sock_1777045035066_42 cleanup active=46
+2026/04/24 15:37:30.067941 [IR] conn=sock_1777045035066_42 close relay_attached=false
+2026/04/24 15:37:30.068183 [IR] conn=sock_1777045035066_41 relay_open_failed target=149.154.167.43:80 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035066_41&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.068251 [IR] conn=sock_1777045035066_41 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035066_41&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.068263 [IR] conn=sock_1777045035066_41 cleanup active=45
+2026/04/24 15:37:30.068278 [IR] conn=sock_1777045035066_41 cleanup active=45
+2026/04/24 15:37:30.068283 [IR] conn=sock_1777045035066_41 close relay_attached=false
+2026/04/24 15:37:30.076590 [IR] conn=sock_1777045035075_44 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035075_44&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.076631 [IR] conn=sock_1777045035075_44 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035075_44&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.076636 [IR] conn=sock_1777045035075_44 cleanup active=44
+2026/04/24 15:37:30.076647 [IR] conn=sock_1777045035075_44 cleanup active=44
+2026/04/24 15:37:30.076650 [IR] conn=sock_1777045035075_44 close relay_attached=false
+2026/04/24 15:37:30.076881 [IR] conn=sock_1777045035076_46 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035076_46&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.076898 [IR] conn=sock_1777045035076_46 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035076_46&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:30.076901 [IR] conn=sock_1777045035076_46 cleanup active=43
+2026/04/24 15:37:30.076908 [IR] conn=sock_1777045035076_46 cleanup active=43
+2026/04/24 15:37:30.076910 [IR] conn=sock_1777045035076_46 close relay_attached=false
+2026/04/24 15:37:30.077013 [IR] conn=sock_1777045035075_43 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035075_43&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077049 [IR] conn=sock_1777045035075_43 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035075_43&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077053 [IR] conn=sock_1777045035075_43 cleanup active=42
+2026/04/24 15:37:30.077150 [IR] conn=sock_1777045035076_47 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035076_47&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077171 [IR] conn=sock_1777045035076_47 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035076_47&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077190 [IR] conn=sock_1777045035076_47 cleanup active=41
+2026/04/24 15:37:30.077198 [IR] conn=sock_1777045035076_47 cleanup active=41
+2026/04/24 15:37:30.077207 [IR] conn=sock_1777045035076_47 close relay_attached=false
+2026/04/24 15:37:30.077232 [IR] conn=sock_1777045035075_45 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035075_45&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077258 [IR] conn=sock_1777045035075_45 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035075_45&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077263 [IR] conn=sock_1777045035075_45 cleanup active=40
+2026/04/24 15:37:30.077273 [IR] conn=sock_1777045035075_45 cleanup active=40
+2026/04/24 15:37:30.077275 [IR] conn=sock_1777045035075_45 close relay_attached=false
+2026/04/24 15:37:30.077347 [IR] conn=sock_1777045035075_43 cleanup active=40
+2026/04/24 15:37:30.077352 [IR] conn=sock_1777045035075_43 close relay_attached=false
+2026/04/24 15:37:30.077418 [IR] conn=sock_1777045035076_48 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035076_48&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077446 [IR] conn=sock_1777045035076_48 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045035076_48&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:30.077450 [IR] conn=sock_1777045035076_48 cleanup active=39
+2026/04/24 15:37:30.077460 [IR] conn=sock_1777045035076_48 cleanup active=39
+2026/04/24 15:37:30.077462 [IR] conn=sock_1777045035076_48 close relay_attached=false
+2026/04/24 15:37:34.312327 [IR] conn=sock_1777045039311_49 relay_open_failed target=www.google.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045039311_49&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:34.312412 [IR] conn=sock_1777045039311_49 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045039311_49&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:34.312420 [IR] conn=sock_1777045039311_49 cleanup active=38
+2026/04/24 15:37:34.312440 [IR] conn=sock_1777045039311_49 cleanup active=38
+2026/04/24 15:37:34.312442 [IR] conn=sock_1777045039311_49 close relay_attached=false
+2026/04/24 15:37:34.339444 [IR] conn=sock_1777045054339_78 new_tunnel target=clients4.google.com:443 active=39
+2026/04/24 15:37:34.339600 [IR] conn=sock_1777045054339_78 relay_slot wait_ms=0 active=39
+2026/04/24 15:37:34.994626 [IR] conn=sock_1777045039993_50 relay_open_failed target=optimizationguide-pa.googleapis.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045039993_50&host=optimizationguide-pa.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:34.994687 [IR] conn=sock_1777045039993_50 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045039993_50&host=optimizationguide-pa.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:34.994710 [IR] conn=sock_1777045039993_50 cleanup active=38
+2026/04/24 15:37:34.994726 [IR] conn=sock_1777045039993_50 cleanup active=38
+2026/04/24 15:37:34.994728 [IR] conn=sock_1777045039993_50 close relay_attached=false
+2026/04/24 15:37:35.086787 [IR] conn=sock_1777045040085_51 relay_open_failed target=fonts.googleapis.com:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040085_51&host=fonts.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.086870 [IR] conn=sock_1777045040085_51 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040085_51&host=fonts.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.086882 [IR] conn=sock_1777045040085_51 cleanup active=37
+2026/04/24 15:37:35.086904 [IR] conn=sock_1777045040085_51 cleanup active=37
+2026/04/24 15:37:35.086910 [IR] conn=sock_1777045040085_51 close relay_attached=false
+2026/04/24 15:37:35.094230 [IR] conn=sock_1777045040093_52 relay_open_failed target=www.youtube.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040093_52&host=www.youtube.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.094277 [IR] conn=sock_1777045040093_52 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040093_52&host=www.youtube.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.094282 [IR] conn=sock_1777045040093_52 cleanup active=36
+2026/04/24 15:37:35.094295 [IR] conn=sock_1777045040093_52 cleanup active=36
+2026/04/24 15:37:35.094297 [IR] conn=sock_1777045040093_52 close relay_attached=false
+2026/04/24 15:37:35.676200 [IR] conn=sock_1777045040675_53 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040675_53&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.676270 [IR] conn=sock_1777045040675_53 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040675_53&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.676277 [IR] conn=sock_1777045040675_53 cleanup active=35
+2026/04/24 15:37:35.676293 [IR] conn=sock_1777045040675_53 cleanup active=35
+2026/04/24 15:37:35.676295 [IR] conn=sock_1777045040675_53 close relay_attached=false
+2026/04/24 15:37:35.679758 [IR] conn=sock_1777045040679_54 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040679_54&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.679815 [IR] conn=sock_1777045040679_54 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040679_54&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.679822 [IR] conn=sock_1777045040679_54 cleanup active=34
+2026/04/24 15:37:35.679837 [IR] conn=sock_1777045040679_54 cleanup active=34
+2026/04/24 15:37:35.679857 [IR] conn=sock_1777045040679_54 close relay_attached=false
+2026/04/24 15:37:35.680853 [IR] conn=sock_1777045040680_55 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040680_55&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.680901 [IR] conn=sock_1777045040680_55 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040680_55&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.680906 [IR] conn=sock_1777045040680_55 cleanup active=33
+2026/04/24 15:37:35.680914 [IR] conn=sock_1777045040680_55 cleanup active=33
+2026/04/24 15:37:35.680917 [IR] conn=sock_1777045040680_55 close relay_attached=false
+2026/04/24 15:37:35.681829 [IR] conn=sock_1777045040680_56 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040680_56&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.681874 [IR] conn=sock_1777045040680_56 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040680_56&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.681879 [IR] conn=sock_1777045040680_56 cleanup active=32
+2026/04/24 15:37:35.681888 [IR] conn=sock_1777045040680_56 cleanup active=32
+2026/04/24 15:37:35.681890 [IR] conn=sock_1777045040680_56 close relay_attached=false
+2026/04/24 15:37:35.682962 [IR] conn=sock_1777045040682_58 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040682_58&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.683023 [IR] conn=sock_1777045040682_58 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040682_58&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.683034 [IR] conn=sock_1777045040682_58 cleanup active=31
+2026/04/24 15:37:35.683043 [IR] conn=sock_1777045040682_58 cleanup active=31
+2026/04/24 15:37:35.683045 [IR] conn=sock_1777045040682_58 close relay_attached=false
+2026/04/24 15:37:35.683161 [IR] conn=sock_1777045040682_59 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040682_59&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.683183 [IR] conn=sock_1777045040682_59 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040682_59&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:35.683186 [IR] conn=sock_1777045040682_59 cleanup active=30
+2026/04/24 15:37:35.683197 [IR] conn=sock_1777045040682_59 cleanup active=30
+2026/04/24 15:37:35.683200 [IR] conn=sock_1777045040682_59 close relay_attached=false
+2026/04/24 15:37:35.683321 [IR] conn=sock_1777045040681_57 relay_open_failed target=149.154.167.43:80 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040681_57&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.683349 [IR] conn=sock_1777045040681_57 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040681_57&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.683353 [IR] conn=sock_1777045040681_57 cleanup active=29
+2026/04/24 15:37:35.683361 [IR] conn=sock_1777045040681_57 cleanup active=29
+2026/04/24 15:37:35.683363 [IR] conn=sock_1777045040681_57 close relay_attached=false
+2026/04/24 15:37:35.689471 [IR] conn=sock_1777045040687_60 relay_open_failed target=149.154.167.43:80 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040687_60&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.689526 [IR] conn=sock_1777045040687_60 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045040687_60&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:35.689535 [IR] conn=sock_1777045040687_60 cleanup active=28
+2026/04/24 15:37:35.689547 [IR] conn=sock_1777045040687_60 cleanup active=28
+2026/04/24 15:37:35.689549 [IR] conn=sock_1777045040687_60 close relay_attached=false
+2026/04/24 15:37:36.362720 [IR] conn=sock_1777045056362_79 new_tunnel target=www.google.com:443 active=29
+2026/04/24 15:37:36.362795 [IR] conn=sock_1777045056362_79 relay_slot wait_ms=0 active=29
+2026/04/24 15:37:36.693781 [IR] conn=sock_1777045056693_80 new_tunnel target=149.154.167.43:443 active=30
+2026/04/24 15:37:36.693875 [IR] conn=sock_1777045056693_80 relay_slot wait_ms=0 active=30
+2026/04/24 15:37:36.695188 [IR] conn=sock_1777045056695_81 new_tunnel target=149.154.167.43:443 active=31
+2026/04/24 15:37:36.695278 [IR] conn=sock_1777045056695_81 relay_slot wait_ms=0 active=31
+2026/04/24 15:37:36.706209 [IR] conn=sock_1777045056706_82 new_tunnel target=149.154.167.43:443 active=32
+2026/04/24 15:37:36.706254 [IR] conn=sock_1777045056706_82 relay_slot wait_ms=0 active=32
+2026/04/24 15:37:36.706973 [IR] conn=sock_1777045056706_83 new_tunnel target=149.154.167.43:443 active=33
+2026/04/24 15:37:36.707111 [IR] conn=sock_1777045056706_83 relay_slot wait_ms=0 active=33
+2026/04/24 15:37:36.707625 [IR] conn=sock_1777045056707_84 new_tunnel target=149.154.167.43:80 active=34
+2026/04/24 15:37:36.707672 [IR] conn=sock_1777045056707_84 relay_slot wait_ms=0 active=34
+2026/04/24 15:37:36.709721 [IR] conn=sock_1777045056709_85 new_tunnel target=149.154.167.43:80 active=35
+2026/04/24 15:37:36.709770 [IR] conn=sock_1777045056709_85 relay_slot wait_ms=0 active=35
+2026/04/24 15:37:36.727348 [IR] conn=sock_1777045056727_86 new_tunnel target=149.154.167.43:80 active=36
+2026/04/24 15:37:36.727473 [IR] conn=sock_1777045056727_86 relay_slot wait_ms=0 active=36
+2026/04/24 15:37:36.730885 [IR] conn=sock_1777045056730_87 new_tunnel target=149.154.167.43:80 active=37
+2026/04/24 15:37:36.730952 [IR] conn=sock_1777045056730_87 relay_slot wait_ms=0 active=37
+2026/04/24 15:37:37.065835 [IR] conn=sock_1777045057065_88 new_tunnel target=optimizationguide-pa.googleapis.com:443 active=38
+2026/04/24 15:37:37.065917 [IR] conn=sock_1777045057065_88 relay_slot wait_ms=0 active=38
+2026/04/24 15:37:37.140887 [IR] conn=sock_1777045057140_89 new_tunnel target=fonts.googleapis.com:443 active=39
+2026/04/24 15:37:37.140961 [IR] conn=sock_1777045057140_89 relay_slot wait_ms=0 active=39
+2026/04/24 15:37:37.142628 [IR] conn=sock_1777045057142_90 new_tunnel target=www.youtube.com:443 active=40
+2026/04/24 15:37:37.142721 [IR] conn=sock_1777045057142_90 relay_slot wait_ms=0 active=40
+2026/04/24 15:37:37.851475 [IR] conn=sock_1777045042850_61 relay_open_failed target=185.250.41.30:22 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045042850_61&host=185.250.41.30&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=22": http2: timeout awaiting response headers
+2026/04/24 15:37:37.851628 [IR] conn=sock_1777045042850_61 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045042850_61&host=185.250.41.30&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=22": http2: timeout awaiting response headers
+2026/04/24 15:37:37.851638 [IR] conn=sock_1777045042850_61 cleanup active=39
+2026/04/24 15:37:37.851659 [IR] conn=sock_1777045042850_61 cleanup active=39
+2026/04/24 15:37:37.851664 [IR] conn=sock_1777045042850_61 close relay_attached=false
+2026/04/24 15:37:41.423012 [IR] conn=sock_1777045046422_62 relay_open_failed target=www.google.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045046422_62&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:41.423149 [IR] conn=sock_1777045046422_62 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045046422_62&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:41.423162 [IR] conn=sock_1777045046422_62 cleanup active=38
+2026/04/24 15:37:41.423179 [IR] conn=sock_1777045046422_62 cleanup active=38
+2026/04/24 15:37:41.423182 [IR] conn=sock_1777045046422_62 close relay_attached=false
+2026/04/24 15:37:41.689476 [IR] conn=sock_1777045046687_63 relay_open_failed target=www.google.com:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045046687_63&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:41.689565 [IR] conn=sock_1777045046687_63 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045046687_63&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:41.689573 [IR] conn=sock_1777045046687_63 cleanup active=37
+2026/04/24 15:37:41.689588 [IR] conn=sock_1777045046687_63 cleanup active=37
+2026/04/24 15:37:41.689590 [IR] conn=sock_1777045046687_63 close relay_attached=false
+2026/04/24 15:37:41.696155 [IR] conn=sock_1777045046695_64 relay_open_failed target=www.google.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045046695_64&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:41.696245 [IR] conn=sock_1777045046695_64 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045046695_64&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:41.696256 [IR] conn=sock_1777045046695_64 cleanup active=36
+2026/04/24 15:37:41.696274 [IR] conn=sock_1777045046695_64 cleanup active=36
+2026/04/24 15:37:41.696279 [IR] conn=sock_1777045046695_64 close relay_attached=false
+2026/04/24 15:37:42.081303 [IR] conn=sock_1777045047079_66 relay_open_failed target=www.google.com:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047079_66&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.081419 [IR] conn=sock_1777045047079_66 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047079_66&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.081442 [IR] conn=sock_1777045047079_66 cleanup active=35
+2026/04/24 15:37:42.081458 [IR] conn=sock_1777045047079_66 cleanup active=35
+2026/04/24 15:37:42.081460 [IR] conn=sock_1777045047079_66 close relay_attached=false
+2026/04/24 15:37:42.081640 [IR] conn=sock_1777045047079_65 relay_open_failed target=www.google.com:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047079_65&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.081710 [IR] conn=sock_1777045047079_65 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047079_65&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.081717 [IR] conn=sock_1777045047079_65 cleanup active=34
+2026/04/24 15:37:42.081730 [IR] conn=sock_1777045047079_65 cleanup active=34
+2026/04/24 15:37:42.081732 [IR] conn=sock_1777045047079_65 close relay_attached=false
+2026/04/24 15:37:42.312830 [IR] conn=sock_1777045047311_67 relay_open_failed target=fonts.gstatic.com:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047311_67&host=fonts.gstatic.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.312899 [IR] conn=sock_1777045047311_67 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047311_67&host=fonts.gstatic.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.312906 [IR] conn=sock_1777045047311_67 cleanup active=33
+2026/04/24 15:37:42.312921 [IR] conn=sock_1777045047311_67 cleanup active=33
+2026/04/24 15:37:42.312923 [IR] conn=sock_1777045047311_67 close relay_attached=false
+2026/04/24 15:37:42.484729 [IR] conn=sock_1777045047483_68 relay_open_failed target=www.google.com:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047483_68&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.484803 [IR] conn=sock_1777045047483_68 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047483_68&host=www.google.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.484815 [IR] conn=sock_1777045047483_68 cleanup active=32
+2026/04/24 15:37:42.484837 [IR] conn=sock_1777045047483_68 cleanup active=32
+2026/04/24 15:37:42.484842 [IR] conn=sock_1777045047483_68 close relay_attached=false
+2026/04/24 15:37:42.486055 [IR] conn=sock_1777045047485_69 relay_open_failed target=optimizationguide-pa.googleapis.com:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047485_69&host=optimizationguide-pa.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.486122 [IR] conn=sock_1777045047485_69 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045047485_69&host=optimizationguide-pa.googleapis.com&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:42.486128 [IR] conn=sock_1777045047485_69 cleanup active=31
+2026/04/24 15:37:42.486139 [IR] conn=sock_1777045047485_69 cleanup active=31
+2026/04/24 15:37:42.486157 [IR] conn=sock_1777045047485_69 close relay_attached=false
+2026/04/24 15:37:43.729511 [IR] conn=sock_1777045048728_70 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048728_70&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.729563 [IR] conn=sock_1777045048728_70 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048728_70&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.729570 [IR] conn=sock_1777045048728_70 cleanup active=30
+2026/04/24 15:37:43.729583 [IR] conn=sock_1777045048728_70 cleanup active=30
+2026/04/24 15:37:43.729585 [IR] conn=sock_1777045048728_70 close relay_attached=false
+2026/04/24 15:37:43.729820 [IR] conn=sock_1777045063729_91 new_tunnel target=www.google.com:443 active=31
+2026/04/24 15:37:43.729904 [IR] conn=sock_1777045063729_91 relay_slot wait_ms=0 active=31
+2026/04/24 15:37:43.736010 [IR] conn=sock_1777045063735_92 new_tunnel target=www.google.com:443 active=32
+2026/04/24 15:37:43.736052 [IR] conn=sock_1777045063735_92 relay_slot wait_ms=0 active=32
+2026/04/24 15:37:43.746936 [IR] conn=sock_1777045048745_71 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048745_71&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.747002 [IR] conn=sock_1777045048745_71 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048745_71&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.747010 [IR] conn=sock_1777045048745_71 cleanup active=31
+2026/04/24 15:37:43.747021 [IR] conn=sock_1777045048745_71 cleanup active=31
+2026/04/24 15:37:43.747023 [IR] conn=sock_1777045048745_71 close relay_attached=false
+2026/04/24 15:37:43.747181 [IR] conn=sock_1777045048745_72 relay_open_failed target=149.154.167.43:443 dur_ms=15001 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048745_72&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.747206 [IR] conn=sock_1777045048745_72 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048745_72&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.747210 [IR] conn=sock_1777045048745_72 cleanup active=30
+2026/04/24 15:37:43.747217 [IR] conn=sock_1777045048745_72 cleanup active=30
+2026/04/24 15:37:43.747219 [IR] conn=sock_1777045048745_72 close relay_attached=false
+2026/04/24 15:37:43.750013 [IR] conn=sock_1777045048749_73 relay_open_failed target=149.154.167.43:443 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048749_73&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.750046 [IR] conn=sock_1777045048749_73 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048749_73&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=443": http2: timeout awaiting response headers
+2026/04/24 15:37:43.750051 [IR] conn=sock_1777045048749_73 cleanup active=29
+2026/04/24 15:37:43.750058 [IR] conn=sock_1777045048749_73 cleanup active=29
+2026/04/24 15:37:43.750087 [IR] conn=sock_1777045048749_73 close relay_attached=false
+2026/04/24 15:37:43.750230 [IR] conn=sock_1777045063750_93 new_tunnel target=www.google.com:443 active=30
+2026/04/24 15:37:43.750265 [IR] conn=sock_1777045063750_93 relay_slot wait_ms=0 active=30
+2026/04/24 15:37:43.751413 [IR] conn=sock_1777045048750_74 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048750_74&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:43.751490 [IR] conn=sock_1777045048750_74 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048750_74&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:43.751497 [IR] conn=sock_1777045048750_74 cleanup active=29
+2026/04/24 15:37:43.751507 [IR] conn=sock_1777045048750_74 cleanup active=29
+2026/04/24 15:37:43.751509 [IR] conn=sock_1777045048750_74 close relay_attached=false
+2026/04/24 15:37:43.753113 [IR] conn=sock_1777045048752_75 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048752_75&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:43.753165 [IR] conn=sock_1777045048752_75 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048752_75&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:43.753171 [IR] conn=sock_1777045048752_75 cleanup active=28
+2026/04/24 15:37:43.753179 [IR] conn=sock_1777045048752_75 cleanup active=28
+2026/04/24 15:37:43.753181 [IR] conn=sock_1777045048752_75 close relay_attached=false
+2026/04/24 15:37:43.772274 [IR] conn=sock_1777045048771_76 relay_open_failed target=149.154.167.43:80 dur_ms=15000 err=Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048771_76&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:43.772357 [IR] conn=sock_1777045048771_76 fail err=relay open failed: Get "https://hidaco.site/tools/rel/soc/index.php?action=open&conn=sock_1777045048771_76&host=149.154.167.43&iran_host=37.32.14.205&iran_port=28080&outer_host=185.250.41.30&outer_port=28081&port=80": http2: timeout awaiting response headers
+2026/04/24 15:37:43.772369 [IR] conn=sock_1777045048771_76 cleanup active=27
+2026/04/24 15:37:43.772385 [IR] conn=sock_1777045048771_76 cleanup active=27
+2026/04/24 15:37:43.772390 [IR] conn=sock_1777045048771_76 close relay_attached=false
