@@ -49,6 +49,7 @@ var (
 	outerPort       = flag.Int("outer-port", 28081, "Outer agent public TCP port")
 	openTimeout     = flag.Duration("open-timeout", 15*time.Second, "HTTP setup timeout for session request")
 	keepalivePeriod = flag.Duration("keepalive", 30*time.Second, "TCP keepalive period")
+	sessionCount    = flag.Int("session-count", 1, "Number of multiplexed PHP sessions to maintain")
 	maxRelays       = flag.Int("max-relays", 0, "Compatibility flag; ignored in multiplex mode")
 	logFilePath     = flag.String("log-file", "logs.txt", "Path to debug log file")
 )
@@ -60,8 +61,8 @@ var (
 	httpClient = &http.Client{
 		Transport: &http.Transport{
 			MaxIdleConns:          64,
-			MaxIdleConnsPerHost:   8,
-			MaxConnsPerHost:       8,
+			MaxIdleConnsPerHost:   16,
+			MaxConnsPerHost:       16,
 			IdleConnTimeout:       30 * time.Second,
 			DisableCompression:    true,
 			DisableKeepAlives:     false,
@@ -89,24 +90,17 @@ func (preserveFQDNRewriter) Rewrite(ctx xcontext.Context, request *socks5.Reques
 	if dest == nil || dest.FQDN == "" {
 		return ctx, dest
 	}
-
-	return ctx, &socks5.AddrSpec{
-		FQDN: dest.FQDN,
-		Port: dest.Port,
-	}
+	return ctx, &socks5.AddrSpec{FQDN: dest.FQDN, Port: dest.Port}
 }
 
 func newUpstreamResolver() *upstreamResolver {
-	return &upstreamResolver{
-		fallback: &net.Resolver{PreferGo: true},
-	}
+	return &upstreamResolver{fallback: &net.Resolver{PreferGo: true}}
 }
 
 func (r *upstreamResolver) Resolve(ctx xcontext.Context, name string) (xcontext.Context, net.IP, error) {
 	if ip := net.ParseIP(name); ip != nil {
 		return ctx, ip, nil
 	}
-
 	ipAddrs, err := r.fallback.LookupIPAddr(ctx, name)
 	if err != nil {
 		return ctx, net.IPv4zero, nil
@@ -150,6 +144,11 @@ func readLine(conn net.Conn, limit int) (string, error) {
 		}
 	}
 	return "", errors.New("line too long")
+}
+
+func writeString(conn net.Conn, s string) error {
+	_, err := io.WriteString(conn, s)
+	return err
 }
 
 type frame struct {
@@ -202,9 +201,17 @@ func encodeOpenPayload(host string, port uint16) []byte {
 	return payload
 }
 
+func parsePort(value string) (uint16, error) {
+	var port int
+	if _, err := fmt.Sscanf(value, "%d", &port); err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("invalid port: %s", value)
+	}
+	return uint16(port), nil
+}
+
 type MuxConn struct {
-	id  uint32
-	mgr *SessionManager
+	id      uint32
+	session *MuxSession
 
 	mu           sync.Mutex
 	cond         *sync.Cond
@@ -216,8 +223,8 @@ type MuxConn struct {
 	remoteClosed bool
 }
 
-func newMuxConn(mgr *SessionManager, id uint32) *MuxConn {
-	c := &MuxConn{id: id, mgr: mgr}
+func newMuxConn(session *MuxSession, id uint32) *MuxConn {
+	c := &MuxConn{id: id, session: session}
 	c.cond = sync.NewCond(&c.mu)
 	return c
 }
@@ -258,7 +265,7 @@ func (c *MuxConn) markOpenReady() {
 
 func (c *MuxConn) markOpenErr(err error) {
 	c.mu.Lock()
-	if c.openErr == nil && !c.openReady && !c.closed {
+	if !c.closed && c.openErr == nil {
 		c.openErr = err
 		c.cond.Broadcast()
 	}
@@ -288,7 +295,7 @@ func (c *MuxConn) markRemoteClosed() {
 
 func (c *MuxConn) fail(err error) {
 	c.mu.Lock()
-	if c.openErr == nil && !c.closed {
+	if !c.closed && c.openErr == nil {
 		c.openErr = err
 	}
 	c.cond.Broadcast()
@@ -338,7 +345,7 @@ func (c *MuxConn) Write(b []byte) (int, error) {
 		if chunkLen > maxFramePayload {
 			chunkLen = maxFramePayload
 		}
-		if err := c.mgr.sendFrame(frameData, c.id, b[:chunkLen]); err != nil {
+		if err := c.session.sendFrame(frameData, c.id, b[:chunkLen]); err != nil {
 			c.fail(err)
 			return total, err
 		}
@@ -358,8 +365,8 @@ func (c *MuxConn) Close() error {
 	c.cond.Broadcast()
 	c.mu.Unlock()
 
-	c.mgr.removeStream(c.id)
-	_ = c.mgr.sendFrame(frameClose, c.id, nil)
+	c.session.removeStream(c.id)
+	_ = c.session.sendFrame(frameClose, c.id, nil)
 	return nil
 }
 
@@ -369,57 +376,62 @@ func (c *MuxConn) SetDeadline(time.Time) error      { return nil }
 func (c *MuxConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *MuxConn) SetWriteDeadline(time.Time) error { return nil }
 
-type SessionManager struct {
+type MuxSession struct {
+	pool *SessionPool
+	sid  string
+	idx  int
+
 	mu             sync.Mutex
 	writerMu       sync.Mutex
 	conn           net.Conn
 	ready          bool
+	requestRunning bool
 	streams        map[uint32]*MuxConn
 	nextStreamID   uint32
 	sessionGen     uint64
-	requestRunning bool
 }
 
-func newSessionManager() *SessionManager {
-	return &SessionManager{
-		streams:      make(map[uint32]*MuxConn),
-		nextStreamID: 1,
+func newMuxSession(pool *SessionPool, idx int, sid string) *MuxSession {
+	return &MuxSession{
+		pool:   pool,
+		idx:    idx,
+		sid:    sid,
+		streams: make(map[uint32]*MuxConn),
 	}
 }
 
-func (m *SessionManager) activeCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.streams)
+func (s *MuxSession) activeCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.streams)
 }
 
-func (m *SessionManager) waitReady(ctx context.Context) error {
-	for {
-		m.mu.Lock()
-		ready := m.ready && m.conn != nil
-		m.mu.Unlock()
-		if ready {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
+func (s *MuxSession) isReady() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ready && s.conn != nil
+}
+
+func (s *MuxSession) snapshotAndResetStreamsLocked() []*MuxConn {
+	streams := make([]*MuxConn, 0, len(s.streams))
+	for id, stream := range s.streams {
+		streams = append(streams, stream)
+		delete(s.streams, id)
 	}
+	return streams
 }
 
-func (m *SessionManager) setAcceptedConn(conn net.Conn) {
+func (s *MuxSession) attachConn(conn net.Conn) {
 	setTCPOptions(conn)
 
-	m.mu.Lock()
-	oldConn := m.conn
-	oldStreams := m.snapshotAndResetStreamsLocked()
-	m.conn = conn
-	m.ready = false
-	m.sessionGen++
-	gen := m.sessionGen
-	m.mu.Unlock()
+	s.mu.Lock()
+	oldConn := s.conn
+	oldStreams := s.snapshotAndResetStreamsLocked()
+	s.conn = conn
+	s.ready = false
+	s.sessionGen++
+	gen := s.sessionGen
+	s.mu.Unlock()
 
 	if oldConn != nil {
 		_ = oldConn.Close()
@@ -428,35 +440,26 @@ func (m *SessionManager) setAcceptedConn(conn net.Conn) {
 		stream.fail(errors.New("session replaced"))
 	}
 
-	logEvent("[IR] session accepted remote=%s", conn.RemoteAddr())
-	go m.readLoop(gen, conn)
-	if err := m.sendHello(gen); err != nil {
-		logEvent("[IR] session hello_failed err=%v", err)
-		m.closeSession(gen, err)
+	logEvent("[IR] session=%s accepted remote=%s", s.sid, conn.RemoteAddr())
+	go s.readLoop(gen, conn)
+	if err := s.sendHello(gen); err != nil {
+		logEvent("[IR] session=%s hello_failed err=%v", s.sid, err)
+		s.closeSession(gen, err)
 	}
 }
 
-func (m *SessionManager) snapshotAndResetStreamsLocked() []*MuxConn {
-	streams := make([]*MuxConn, 0, len(m.streams))
-	for id, stream := range m.streams {
-		streams = append(streams, stream)
-		delete(m.streams, id)
-	}
-	return streams
-}
-
-func (m *SessionManager) closeSession(gen uint64, err error) {
-	m.mu.Lock()
-	if gen != 0 && gen != m.sessionGen {
-		m.mu.Unlock()
+func (s *MuxSession) closeSession(gen uint64, err error) {
+	s.mu.Lock()
+	if gen != 0 && gen != s.sessionGen {
+		s.mu.Unlock()
 		return
 	}
-	conn := m.conn
-	streams := m.snapshotAndResetStreamsLocked()
-	m.conn = nil
-	m.ready = false
-	m.sessionGen++
-	m.mu.Unlock()
+	conn := s.conn
+	streams := s.snapshotAndResetStreamsLocked()
+	s.conn = nil
+	s.ready = false
+	s.sessionGen++
+	s.mu.Unlock()
 
 	if conn != nil {
 		_ = conn.Close()
@@ -464,28 +467,28 @@ func (m *SessionManager) closeSession(gen uint64, err error) {
 	for _, stream := range streams {
 		stream.fail(err)
 	}
-	logEvent("[IR] session closed err=%v", err)
+	logEvent("[IR] session=%s closed err=%v", s.sid, err)
 }
 
-func (m *SessionManager) sendHello(gen uint64) error {
-	m.mu.Lock()
-	if gen != m.sessionGen || m.conn == nil {
-		m.mu.Unlock()
+func (s *MuxSession) sendHello(gen uint64) error {
+	s.mu.Lock()
+	if gen != s.sessionGen || s.conn == nil {
+		s.mu.Unlock()
 		return errors.New("no live session")
 	}
-	conn := m.conn
-	m.mu.Unlock()
+	conn := s.conn
+	s.mu.Unlock()
 
-	m.writerMu.Lock()
-	defer m.writerMu.Unlock()
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
 	return writeFrame(conn, frameHello, 0, []byte(*apiKey))
 }
 
-func (m *SessionManager) sendFrame(typ byte, streamID uint32, payload []byte) error {
-	m.mu.Lock()
-	conn := m.conn
-	ready := m.ready
-	m.mu.Unlock()
+func (s *MuxSession) sendFrame(typ byte, streamID uint32, payload []byte) error {
+	s.mu.Lock()
+	conn := s.conn
+	ready := s.ready
+	s.mu.Unlock()
 
 	if conn == nil {
 		return errors.New("session not connected")
@@ -494,135 +497,124 @@ func (m *SessionManager) sendFrame(typ byte, streamID uint32, payload []byte) er
 		return errors.New("session not ready")
 	}
 
-	m.writerMu.Lock()
-	defer m.writerMu.Unlock()
+	s.writerMu.Lock()
+	defer s.writerMu.Unlock()
 	return writeFrame(conn, typ, streamID, payload)
 }
 
-func (m *SessionManager) nextStream() uint32 {
-	return atomic.AddUint32(&m.nextStreamID, 2)
+func (s *MuxSession) nextStream() uint32 {
+	return atomic.AddUint32(&s.nextStreamID, 2)
 }
 
-func (m *SessionManager) registerStream(stream *MuxConn) {
-	m.mu.Lock()
-	m.streams[stream.id] = stream
-	m.mu.Unlock()
+func (s *MuxSession) registerStream(stream *MuxConn) {
+	s.mu.Lock()
+	s.streams[stream.id] = stream
+	s.mu.Unlock()
 }
 
-func (m *SessionManager) removeStream(streamID uint32) {
-	m.mu.Lock()
-	delete(m.streams, streamID)
-	m.mu.Unlock()
+func (s *MuxSession) removeStream(streamID uint32) {
+	s.mu.Lock()
+	delete(s.streams, streamID)
+	s.mu.Unlock()
 }
 
-func (m *SessionManager) getStream(streamID uint32) *MuxConn {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.streams[streamID]
+func (s *MuxSession) getStream(streamID uint32) *MuxConn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.streams[streamID]
 }
 
-func (m *SessionManager) readLoop(gen uint64, conn net.Conn) {
+func (s *MuxSession) readLoop(gen uint64, conn net.Conn) {
 	for {
 		fr, err := readFrame(conn)
 		if err != nil {
-			m.closeSession(gen, err)
+			s.closeSession(gen, err)
 			return
 		}
 
 		switch fr.typ {
 		case frameHelloAck:
-			m.mu.Lock()
-			if gen == m.sessionGen && m.conn == conn {
-				m.ready = true
+			s.mu.Lock()
+			if gen == s.sessionGen && s.conn == conn {
+				s.ready = true
 			}
-			m.mu.Unlock()
-			logEvent("[IR] session ready")
+			s.mu.Unlock()
+			logEvent("[IR] session=%s ready", s.sid)
 		case frameOpenOK:
-			stream := m.getStream(fr.streamID)
+			stream := s.getStream(fr.streamID)
 			if stream != nil {
 				stream.markOpenReady()
-				logEvent("[IR] stream=%d open_ok active=%d", fr.streamID, m.activeCount())
+				logEvent("[IR] session=%s stream=%d open_ok active=%d", s.sid, fr.streamID, s.activeCount())
 			}
 		case frameOpenErr:
-			stream := m.getStream(fr.streamID)
+			stream := s.getStream(fr.streamID)
 			if stream != nil {
 				stream.markOpenErr(fmt.Errorf("open failed: %s", string(fr.payload)))
-				m.removeStream(fr.streamID)
-				logEvent("[IR] stream=%d open_err detail=%q", fr.streamID, string(fr.payload))
+				s.removeStream(fr.streamID)
+				logEvent("[IR] session=%s stream=%d open_err detail=%q", s.sid, fr.streamID, string(fr.payload))
 			}
 		case frameData:
-			stream := m.getStream(fr.streamID)
+			stream := s.getStream(fr.streamID)
 			if stream != nil {
 				stream.enqueueData(fr.payload)
 			}
 		case frameClose:
-			stream := m.getStream(fr.streamID)
+			stream := s.getStream(fr.streamID)
 			if stream != nil {
 				stream.markRemoteClosed()
-				m.removeStream(fr.streamID)
+				s.removeStream(fr.streamID)
 			}
 		default:
-			m.closeSession(gen, fmt.Errorf("unexpected frame type=%d", fr.typ))
+			s.closeSession(gen, fmt.Errorf("unexpected frame type=%d", fr.typ))
 			return
 		}
 	}
 }
 
-func (m *SessionManager) dialStream(ctx context.Context, host, port string) (net.Conn, error) {
-	if err := m.waitReady(ctx); err != nil {
-		return nil, err
-	}
-
+func (s *MuxSession) dialStream(ctx context.Context, host, port string) (net.Conn, error) {
 	portNum, err := parsePort(port)
 	if err != nil {
 		return nil, err
 	}
 
-	streamID := m.nextStream()
-	stream := newMuxConn(m, streamID)
-	m.registerStream(stream)
+	streamID := s.nextStream()
+	stream := newMuxConn(s, streamID)
+	s.registerStream(stream)
 
-	if err := m.sendFrame(frameOpen, streamID, encodeOpenPayload(host, portNum)); err != nil {
-		m.removeStream(streamID)
+	if err := s.sendFrame(frameOpen, streamID, encodeOpenPayload(host, portNum)); err != nil {
+		s.removeStream(streamID)
 		return nil, err
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, *openTimeout)
 	defer cancel()
 	if err := stream.waitForOpen(waitCtx); err != nil {
-		m.removeStream(streamID)
+		s.removeStream(streamID)
 		return nil, err
 	}
 
-	logEvent("[IR] stream=%d new_tunnel target=%s:%s active=%d", streamID, host, port, m.activeCount())
+	logEvent("[IR] session=%s stream=%d new_tunnel target=%s:%s active=%d", s.sid, streamID, host, port, s.activeCount())
 	return stream, nil
 }
 
-func parsePort(value string) (uint16, error) {
-	var port int
-	if _, err := fmt.Sscanf(value, "%d", &port); err != nil || port < 1 || port > 65535 {
-		return 0, fmt.Errorf("invalid port: %s", value)
-	}
-	return uint16(port), nil
-}
-
-func (m *SessionManager) requestSession() {
-	m.mu.Lock()
-	if m.requestRunning || m.conn != nil {
-		m.mu.Unlock()
+func (s *MuxSession) requestSession() {
+	s.mu.Lock()
+	if s.requestRunning || s.conn != nil {
+		s.mu.Unlock()
 		return
 	}
-	m.requestRunning = true
-	m.mu.Unlock()
+	s.requestRunning = true
+	s.mu.Unlock()
 
 	defer func() {
-		m.mu.Lock()
-		m.requestRunning = false
-		m.mu.Unlock()
+		s.mu.Lock()
+		s.requestRunning = false
+		s.mu.Unlock()
 	}()
 
 	values := url.Values{}
 	values.Set("action", "session")
+	values.Set("sid", s.sid)
 	values.Set("iran_host", *publicHost)
 	values.Set("iran_port", fmt.Sprintf("%d", *publicPort))
 	values.Set("outer_host", *outerHost)
@@ -630,7 +622,7 @@ func (m *SessionManager) requestSession() {
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, *relayURL+"?"+values.Encode(), nil)
 	if err != nil {
-		logEvent("[IR] session_request_build_failed err=%v", err)
+		logEvent("[IR] session=%s request_build_failed err=%v", s.sid, err)
 		return
 	}
 	req.Header.Set("X-API-KEY", *apiKey)
@@ -638,36 +630,149 @@ func (m *SessionManager) requestSession() {
 	start := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		logEvent("[IR] session_request_failed dur_ms=%d err=%v", time.Since(start).Milliseconds(), err)
+		logEvent("[IR] session=%s request_failed dur_ms=%d err=%v", s.sid, time.Since(start).Milliseconds(), err)
 		return
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		logEvent("[IR] session_request_rejected status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+		logEvent("[IR] session=%s request_rejected status=%d body=%q", s.sid, resp.StatusCode, strings.TrimSpace(string(body)))
 		return
 	}
 
-	logEvent("[IR] session_request_ok dur_ms=%d", time.Since(start).Milliseconds())
+	logEvent("[IR] session=%s request_ok dur_ms=%d", s.sid, time.Since(start).Milliseconds())
 	_, _ = io.Copy(io.Discard, resp.Body)
-	logEvent("[IR] session_request_body_closed")
+	logEvent("[IR] session=%s request_body_closed", s.sid)
 }
 
-func (m *SessionManager) sessionLoop() {
+func (s *MuxSession) loop() {
 	for {
-		m.mu.Lock()
-		connected := m.conn != nil
-		running := m.requestRunning
-		m.mu.Unlock()
+		s.mu.Lock()
+		connected := s.conn != nil
+		running := s.requestRunning
+		s.mu.Unlock()
 
 		if !connected && !running {
-			go m.requestSession()
+			go s.requestSession()
 		}
 		time.Sleep(sessionPollDelay)
 	}
 }
 
-func runAgentListener(mgr *SessionManager) error {
+type SessionPool struct {
+	sessions map[string]*MuxSession
+	order    []*MuxSession
+	rr       uint32
+}
+
+func newSessionPool(count int) *SessionPool {
+	p := &SessionPool{
+		sessions: make(map[string]*MuxSession, count),
+		order:    make([]*MuxSession, 0, count),
+	}
+	for i := 0; i < count; i++ {
+		sid := fmt.Sprintf("sess_%d", i+1)
+		s := newMuxSession(p, i, sid)
+		p.sessions[sid] = s
+		p.order = append(p.order, s)
+	}
+	return p
+}
+
+func (p *SessionPool) start() {
+	for _, s := range p.order {
+		go s.loop()
+	}
+}
+
+func (p *SessionPool) totalActive() int {
+	total := 0
+	for _, s := range p.order {
+		total += s.activeCount()
+	}
+	return total
+}
+
+func (p *SessionPool) getByID(sid string) *MuxSession {
+	return p.sessions[sid]
+}
+
+func (p *SessionPool) chooseReadySession(ctx context.Context) (*MuxSession, error) {
+	for {
+		var ready []*MuxSession
+		for _, s := range p.order {
+			if s.isReady() {
+				ready = append(ready, s)
+			}
+		}
+		if len(ready) > 0 {
+			idx := atomic.AddUint32(&p.rr, 1)
+			return ready[int(idx)%len(ready)], nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (p *SessionPool) dial(ctx context.Context, host, port string) (net.Conn, error) {
+	session, err := p.chooseReadySession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return session.dialStream(ctx, host, port)
+}
+
+func handleAgentConn(pool *SessionPool, conn net.Conn) {
+	defer func() {
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}()
+
+	setTCPOptions(conn)
+	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+
+	line, err := readLine(conn, 1024)
+	if err != nil {
+		logEvent("[IR] attach handshake_read_failed remote=%s err=%v", conn.RemoteAddr(), err)
+		return
+	}
+
+	parts := strings.Fields(line)
+	if len(parts) != 3 || parts[0] != "SESSION" {
+		_ = writeString(conn, "ERR bad-handshake\n")
+		logEvent("[IR] attach bad_handshake remote=%s line=%q", conn.RemoteAddr(), line)
+		return
+	}
+	if parts[1] != *apiKey {
+		_ = writeString(conn, "ERR unauthorized\n")
+		logEvent("[IR] attach unauthorized remote=%s", conn.RemoteAddr())
+		return
+	}
+
+	session := pool.getByID(parts[2])
+	if session == nil {
+		_ = writeString(conn, "ERR unknown-session\n")
+		logEvent("[IR] attach unknown_session sid=%s remote=%s", parts[2], conn.RemoteAddr())
+		return
+	}
+
+	_ = conn.SetDeadline(time.Time{})
+	if err := writeString(conn, "OK\n"); err != nil {
+		logEvent("[IR] attach ack_failed sid=%s err=%v", session.sid, err)
+		return
+	}
+
+	session.attachConn(conn)
+	conn = nil
+}
+
+func runAgentListener(pool *SessionPool) error {
 	ln, err := net.Listen("tcp", *agentListen)
 	if err != nil {
 		return err
@@ -681,7 +786,7 @@ func runAgentListener(mgr *SessionManager) error {
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		mgr.setAcceptedConn(conn)
+		go handleAgentConn(pool, conn)
 	}
 }
 
@@ -694,6 +799,9 @@ func main() {
 	if *outerHost == "" {
 		log.Fatal("--outer-host is required")
 	}
+	if *sessionCount < 1 {
+		log.Fatal("--session-count must be >= 1")
+	}
 
 	logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -703,15 +811,15 @@ func main() {
 	log.Printf("[IR-SOCK] debug log file: %s", *logFilePath)
 
 	httpClient.Transport.(*http.Transport).ResponseHeaderTimeout = *openTimeout
-	mgr := newSessionManager()
-	logEvent("[IR] startup relay=%s listen=%s:%s agent=%s public=%s:%d outer=%s:%d open_timeout=%s max_relays_compat=%d", *relayURL, *listenIP, *listenPort, *agentListen, *publicHost, *publicPort, *outerHost, *outerPort, openTimeout.String(), *maxRelays)
+	pool := newSessionPool(*sessionCount)
+	logEvent("[IR] startup relay=%s listen=%s:%s agent=%s public=%s:%d outer=%s:%d open_timeout=%s session_count=%d max_relays_compat=%d", *relayURL, *listenIP, *listenPort, *agentListen, *publicHost, *publicPort, *outerHost, *outerPort, openTimeout.String(), *sessionCount, *maxRelays)
 
 	go func() {
-		if err := runAgentListener(mgr); err != nil {
+		if err := runAgentListener(pool); err != nil {
 			log.Fatalf("[IR-SOCK] agent listener failed: %v", err)
 		}
 	}()
-	go mgr.sessionLoop()
+	pool.start()
 
 	conf := &socks5.Config{
 		Resolver: newUpstreamResolver(),
@@ -721,7 +829,7 @@ func main() {
 			if err != nil {
 				return nil, err
 			}
-			return mgr.dialStream(ctx, host, targetPort)
+			return pool.dial(ctx, host, targetPort)
 		},
 	}
 

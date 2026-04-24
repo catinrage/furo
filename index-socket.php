@@ -28,6 +28,11 @@ function failJson(string $message, int $code = 400, array $extra = []): void
     exit;
 }
 
+function cleanToken(string $value): string
+{
+    return preg_replace('/[^a-zA-Z0-9_\-\.]/', '', $value) ?? '';
+}
+
 function connectTcp(string $host, int $port, int $timeoutSec): Socket
 {
     $socket = @socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
@@ -55,6 +60,23 @@ function setSocketTimeout(Socket $socket, int $seconds): void
 {
     @socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => $seconds, 'usec' => 0]);
     @socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $seconds, 'usec' => 0]);
+}
+
+function socketReadLine(Socket $socket, int $limit = 2048): string
+{
+    $line = '';
+    while (strlen($line) < $limit) {
+        $chunk = @socket_read($socket, 1, PHP_BINARY_READ);
+        if ($chunk === false || $chunk === '') {
+            throw new RuntimeException('socket_read failed: ' . socket_strerror(socket_last_error($socket)));
+        }
+        if ($chunk === "\n") {
+            return rtrim($line, "\r");
+        }
+        $line .= $chunk;
+    }
+
+    throw new RuntimeException('line too long');
 }
 
 function shutdownWrite(Socket $socket): void
@@ -146,10 +168,11 @@ $iranHost = (string)($_GET['iran_host'] ?? '');
 $iranPort = (int)($_GET['iran_port'] ?? 0);
 $outerHost = (string)($_GET['outer_host'] ?? '');
 $outerPort = (int)($_GET['outer_port'] ?? 0);
+$sessionId = cleanToken((string)($_GET['sid'] ?? ''));
 
-if ($iranHost === '' || $iranPort < 1 || $iranPort > 65535 || $outerHost === '' || $outerPort < 1 || $outerPort > 65535) {
+if ($iranHost === '' || $iranPort < 1 || $iranPort > 65535 || $outerHost === '' || $outerPort < 1 || $outerPort > 65535 || $sessionId === '') {
     failJson('Missing or invalid parameters', 400, [
-        'required' => ['iran_host', 'iran_port', 'outer_host', 'outer_port'],
+        'required' => ['sid', 'iran_host', 'iran_port', 'outer_host', 'outer_port'],
     ]);
 }
 
@@ -158,7 +181,18 @@ $outerSocket = null;
 
 try {
     $iranSocket = connectTcp($iranHost, $iranPort, $CONNECT_TIMEOUT_SEC);
+    socket_write_all($iranSocket, sprintf("SESSION %s %s\n", $API_KEY, $sessionId));
+    $iranReply = socketReadLine($iranSocket);
+    if ($iranReply !== 'OK') {
+        throw new RuntimeException('Iran session attach failed: ' . $iranReply);
+    }
+
     $outerSocket = connectTcp($outerHost, $outerPort, $CONNECT_TIMEOUT_SEC);
+    socket_write_all($outerSocket, sprintf("SESSION %s %s\n", $API_KEY, $sessionId));
+    $outerReply = socketReadLine($outerSocket);
+    if ($outerReply !== 'OK') {
+        throw new RuntimeException('Outer session attach failed: ' . $outerReply);
+    }
 
     setSocketTimeout($iranSocket, 0);
     setSocketTimeout($outerSocket, 0);
