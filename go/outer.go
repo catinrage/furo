@@ -20,7 +20,7 @@ var (
 
 var (
 	sockets    = sync.Map{}
-	seen       = sync.Map{} // Tracks active connection lifecycles to prevent buffer leaks
+	seen       = sync.Map{}
 
 	upBuffer = struct {
 		sync.Mutex
@@ -38,14 +38,17 @@ var (
 	httpClient = &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-				MaxIdleConns:        500,
-				MaxIdleConnsPerHost: 500,
-				IdleConnTimeout:     120 * time.Second,
-				DisableKeepAlives:   false, // Explicitly force keep-alives
-				ForceAttemptHTTP2:   true,  // Use HTTP/2 multiplexing if your PHP host supports it
+			MaxIdleConns:        500,
+			MaxIdleConnsPerHost: 500,
+			IdleConnTimeout:     120 * time.Second,
+			DisableKeepAlives:   false,
+			ForceAttemptHTTP2:   true,
 		},
 	}
 )
+
+// 🚀 UPGRADED: 16 MB chunk limiter for high-speed PHP servers
+const MaxChunkSize = 16 * 1024 * 1024 
 
 type OpenReq struct {
 	Conn string `json:"conn"`
@@ -56,21 +59,18 @@ type OpenReq struct {
 func relayClose(connID string) {
 	req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=close&conn=%s", *relayURL, connID), nil)
 	req.Header.Set("X-API-KEY", *apiKey)
-	go httpClient.Do(req) // Async to prevent blocking main polling loop
+	go httpClient.Do(req)
 	log.Printf("[FR] 🛑 Relay Cleaned %s", connID)
 }
 
 func openTCP(connID, host string, port int) {
 	target := fmt.Sprintf("%s:%d", host, port)
-
 	conn, err := net.DialTimeout("tcp", target, 5*time.Second)
 	if err != nil {
 		log.Printf("[FR] ❌ FAILED %s → %s (%v)", connID, target, err)
-		
 		upBuffer.Lock()
 		delete(upBuffer.m, connID)
 		upBuffer.Unlock()
-
 		seen.Delete(connID)
 
 		eofLock.Lock()
@@ -82,7 +82,6 @@ func openTCP(connID, host string, port int) {
 	sockets.Store(connID, conn)
 	log.Printf("[FR] 🔗 CONNECTED %s → %s", connID, target)
 
-	// Flush queued handshake data that arrived before TCP connected
 	upBuffer.Lock()
 	if queued, exists := upBuffer.m[connID]; exists {
 		for _, buf := range queued {
@@ -97,14 +96,13 @@ func openTCP(connID, host string, port int) {
 			conn.Close()
 			sockets.Delete(connID)
 			seen.Delete(connID)
-
-			// Signal remote server that this proxy stream is dead
 			eofLock.Lock()
 			eofSends = append(eofSends, connID)
 			eofLock.Unlock()
 		}()
 
-		buf := make([]byte, 32768)
+		// 🚀 UPGRADED: 256 KB TCP read buffer for faster internet slurping
+		buf := make([]byte, 256*1024)
 		for {
 			n, err := conn.Read(buf)
 			if n > 0 {
@@ -122,24 +120,10 @@ func openTCP(connID, host string, port int) {
 	}()
 }
 
-func main() {
-	flag.Parse()
-	log.Println("🚀 FURO (FRANCE) EXIT NODE RUNNING")
-
-	// Cleanup cron
-	go func() {
-		for {
-			req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=cleanup", *relayURL), nil)
-			req.Header.Set("X-API-KEY", *apiKey)
-			httpClient.Do(req)
-			time.Sleep(1 * time.Minute)
-		}
-	}()
-
+// ⚡ FULL-DUPLEX: Dedicated Receiver Loop
+func receiver() {
 	for {
 		hasActivity := false
-
-		// --- RECEIVE (UP) ---
 		req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=sync&dir=up", *relayURL), nil)
 		req.Header.Set("X-API-KEY", *apiKey)
 
@@ -148,9 +132,7 @@ func main() {
 				Chunks map[string][]string `json:"chunks"`
 				Opens[]OpenReq           `json:"opens"`
 			}
-
 			if json.NewDecoder(resp.Body).Decode(&data) == nil {
-				// New connections
 				for _, o := range data.Opens {
 					if _, exists := seen.Load(o.Conn); !exists {
 						seen.Store(o.Conn, true)
@@ -160,8 +142,6 @@ func main() {
 						}
 					}
 				}
-
-				// Incoming chunks + Client EOFs
 				if len(data.Chunks) > 0 {
 					hasActivity = true
 					for connID, chunks := range data.Chunks {
@@ -176,18 +156,15 @@ func main() {
 								relayClose(connID)
 								continue
 							}
-
 							if buf, err := base64.StdEncoding.DecodeString(b64); err == nil {
 								var conn net.Conn
 								upBuffer.Lock()
 								if val, ok := sockets.Load(connID); ok {
 									conn = val.(net.Conn)
 								} else if _, isSeen := seen.Load(connID); isSeen {
-									// Lock buffer against Race Conditions (saves the payload)
 									upBuffer.m[connID] = append(upBuffer.m[connID], buf)
 								}
 								upBuffer.Unlock()
-
 								if conn != nil {
 									conn.Write(buf)
 								}
@@ -199,20 +176,36 @@ func main() {
 			resp.Body.Close()
 		}
 
-		// --- SEND (DOWN) ---
+		if hasActivity {
+			time.Sleep(1 * time.Millisecond)
+		} else {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// ⚡ FULL-DUPLEX: Dedicated Sender Loop
+func sender() {
+	for {
+		hasActivity := false
 		sendBuffer.Lock()
-		activeSends := len(sendBuffer.m)
 		payload := make(map[string]string)
 
-		if activeSends > 0 {
+		if len(sendBuffer.m) > 0 {
 			for connID, bufs := range sendBuffer.m {
 				var flat[]byte
 				for _, b := range bufs {
 					flat = append(flat, b...)
 				}
-				payload[connID] = base64.StdEncoding.EncodeToString(flat)
+				// 🚀 UPGRADED: Chunk Limiter to 16MB
+				if len(flat) > MaxChunkSize {
+					payload[connID] = base64.StdEncoding.EncodeToString(flat[:MaxChunkSize])
+					sendBuffer.m[connID] = [][]byte{flat[MaxChunkSize:]} // Keep remainder
+				} else {
+					payload[connID] = base64.StdEncoding.EncodeToString(flat)
+					delete(sendBuffer.m, connID)
+				}
 			}
-			sendBuffer.m = make(map[string][][]byte) 
 		}
 		sendBuffer.Unlock()
 
@@ -223,7 +216,7 @@ func main() {
 				if _, ok := payload[connID]; !ok {
 					payload[connID] = "EOF"
 				} else {
-					nextEof = append(nextEof, connID)
+					nextEof = append(nextEof, connID) // wait until data is cleared
 				}
 			}
 			eofSends = nextEof
@@ -241,11 +234,31 @@ func main() {
 			}
 		}
 
-		// Adaptive delay
 		if hasActivity {
-			time.Sleep(1)
+			time.Sleep(1 * time.Millisecond)
 		} else {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+}
+
+func main() {
+	flag.Parse()
+	log.Println("🚀 FURO (FRANCE) EXIT NODE RUNNING")
+
+	go func() {
+		for {
+			req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=cleanup", *relayURL), nil)
+			req.Header.Set("X-API-KEY", *apiKey)
+			httpClient.Do(req)
+			time.Sleep(1 * time.Minute)
+		}
+	}()
+
+	// Start concurrent processing
+	go receiver()
+	go sender()
+
+	// Block main thread forever
+	select {}
 }

@@ -29,7 +29,8 @@ var (
 	connCounter int64
 	connMutex   sync.Mutex
 	sockets     = sync.Map{}
-	sendBuffer  = struct {
+	
+	sendBuffer = struct {
 		sync.Mutex
 		m map[string][][]byte
 	}{m: make(map[string][][]byte)}
@@ -38,16 +39,19 @@ var (
 	eofSends[]string
 
 	httpClient = &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-					MaxIdleConns:        500,
-					MaxIdleConnsPerHost: 500,
-					IdleConnTimeout:     120 * time.Second,
-					DisableKeepAlives:   false, // Explicitly force keep-alives
-					ForceAttemptHTTP2:   true,  // Use HTTP/2 multiplexing if your PHP host supports it
-			},
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        500,
+			MaxIdleConnsPerHost: 500,
+			IdleConnTimeout:     120 * time.Second,
+			DisableKeepAlives:   false,
+			ForceAttemptHTTP2:   true,
+		},
 	}
 )
+
+// 🚀 UPGRADED: 16 MB chunk limiter for high-speed PHP servers
+const MaxChunkSize = 16 * 1024 * 1024 
 
 func genConnID() string {
 	connMutex.Lock()
@@ -87,7 +91,6 @@ func (c *TunnelConn) Read(b[]byte) (n int, err error) {
 		}
 		return n, nil
 	}
-
 	return 0, io.EOF
 }
 
@@ -111,7 +114,6 @@ func (c *TunnelConn) Write(b[]byte) (n int, err error) {
 
 func (c *TunnelConn) Close() error {
 	c.once.Do(func() {
-		// Stop any hanging curl reads instantly
 		c.cond.L.Lock()
 		c.closed = true
 		c.cond.Broadcast()
@@ -119,7 +121,6 @@ func (c *TunnelConn) Close() error {
 
 		sockets.Delete(c.id)
 
-		// Ask exit node to tear down TCP safely
 		eofLock.Lock()
 		eofSends = append(eofSends, c.id)
 		eofLock.Unlock()
@@ -144,6 +145,116 @@ func relayOpen(connID, host, port string) {
 	req, _ := http.NewRequest("GET", reqURL, nil)
 	req.Header.Set("X-API-KEY", *apiKey)
 	httpClient.Do(req)
+}
+
+// ⚡ FULL-DUPLEX: Dedicated Receiver Loop
+func receiver() {
+	for {
+		hasActivity := false
+		socketEmpty := true
+		sockets.Range(func(k, v interface{}) bool {
+			socketEmpty = false
+			return false
+		})
+
+		if !socketEmpty {
+			req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=sync&dir=down", *relayURL), nil)
+			req.Header.Set("X-API-KEY", *apiKey)
+			if resp, err := httpClient.Do(req); err == nil {
+				var data struct {
+					Chunks map[string][]string `json:"chunks"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&data) == nil {
+					if len(data.Chunks) > 0 {
+						hasActivity = true
+						for connID, chunks := range data.Chunks {
+							if val, ok := sockets.Load(connID); ok {
+								tConn := val.(*TunnelConn)
+								for _, b64 := range chunks {
+									if b64 == "EOF" {
+										log.Printf("[IR] 🏁 Remote EOF %s", connID)
+										tConn.Close()
+										continue
+									}
+									if buf, err := base64.StdEncoding.DecodeString(b64); err == nil {
+										tConn.cond.L.Lock()
+										tConn.rxBuf = append(tConn.rxBuf, buf...)
+										tConn.cond.Signal()
+										tConn.cond.L.Unlock()
+									}
+								}
+							}
+						}
+					}
+				}
+				resp.Body.Close()
+			}
+		}
+
+		if hasActivity {
+			time.Sleep(1 * time.Millisecond)
+		} else {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// ⚡ FULL-DUPLEX: Dedicated Sender Loop
+func sender() {
+	for {
+		hasActivity := false
+		sendBuffer.Lock()
+		payload := make(map[string]string)
+
+		if len(sendBuffer.m) > 0 {
+			for connID, bufs := range sendBuffer.m {
+				var flat[]byte
+				for _, b := range bufs {
+					flat = append(flat, b...)
+				}
+				// 🚀 UPGRADED: Chunk Limiter to 16MB
+				if len(flat) > MaxChunkSize {
+					payload[connID] = base64.StdEncoding.EncodeToString(flat[:MaxChunkSize])
+					sendBuffer.m[connID] = [][]byte{flat[MaxChunkSize:]} // Keep remainder
+				} else {
+					payload[connID] = base64.StdEncoding.EncodeToString(flat)
+					delete(sendBuffer.m, connID)
+				}
+			}
+		}
+		sendBuffer.Unlock()
+
+		eofLock.Lock()
+		if len(eofSends) > 0 {
+			var nextEof []string
+			for _, connID := range eofSends {
+				if _, ok := payload[connID]; !ok {
+					payload[connID] = "EOF"
+				} else {
+					nextEof = append(nextEof, connID)
+				}
+			}
+			eofSends = nextEof
+		}
+		eofLock.Unlock()
+
+		if len(payload) > 0 {
+			hasActivity = true
+			jsonData, _ := json.Marshal(payload)
+			req, _ := http.NewRequest("POST", fmt.Sprintf("%s?action=send_batch&dir=up", *relayURL), bytes.NewBuffer(jsonData))
+			req.Header.Set("X-API-KEY", *apiKey)
+			req.Header.Set("Content-Type", "application/json")
+			if resp, err := httpClient.Do(req); err == nil {
+				resp.Body.Close()
+			}
+		}
+
+		if hasActivity {
+			time.Sleep(1 * time.Millisecond)
+		} else {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
 }
 
 func main() {
@@ -180,97 +291,10 @@ func main() {
 		}
 	}()
 
-	for {
-		hasActivity := false
+	// Start concurrent processing
+	go receiver()
+	go sender()
 
-		// --- A. SEND BATCH (UP) ---
-		sendBuffer.Lock()
-		activeSends := len(sendBuffer.m)
-		payload := make(map[string]string)
-		if activeSends > 0 {
-			for connID, bufs := range sendBuffer.m {
-				var flat[]byte
-				for _, b := range bufs {
-					flat = append(flat, b...)
-				}
-				payload[connID] = base64.StdEncoding.EncodeToString(flat)
-			}
-			sendBuffer.m = make(map[string][][]byte)
-		}
-		sendBuffer.Unlock()
-
-		eofLock.Lock()
-		if len(eofSends) > 0 {
-			var nextEof []string
-			for _, connID := range eofSends {
-				if _, ok := payload[connID]; !ok {
-					payload[connID] = "EOF"
-				} else {
-					nextEof = append(nextEof, connID)
-				}
-			}
-			eofSends = nextEof
-		}
-		eofLock.Unlock()
-
-		if len(payload) > 0 {
-			hasActivity = true
-			jsonData, _ := json.Marshal(payload)
-			req, _ := http.NewRequest("POST", fmt.Sprintf("%s?action=send_batch&dir=up", *relayURL), bytes.NewBuffer(jsonData))
-			req.Header.Set("X-API-KEY", *apiKey)
-			req.Header.Set("Content-Type", "application/json")
-			if resp, err := httpClient.Do(req); err == nil {
-				resp.Body.Close()
-			}
-		}
-
-		// --- B. RECEIVE SYNC (DOWN) ---
-		socketEmpty := true
-		sockets.Range(func(k, v interface{}) bool {
-			socketEmpty = false
-			return false 
-		})
-
-		if !socketEmpty {
-			req, _ := http.NewRequest("GET", fmt.Sprintf("%s?action=sync&dir=down", *relayURL), nil)
-			req.Header.Set("X-API-KEY", *apiKey)
-			if resp, err := httpClient.Do(req); err == nil {
-				var data struct {
-					Chunks map[string][]string `json:"chunks"`
-				}
-				if json.NewDecoder(resp.Body).Decode(&data) == nil {
-					if len(data.Chunks) > 0 {
-						hasActivity = true
-						for connID, chunks := range data.Chunks {
-							if val, ok := sockets.Load(connID); ok {
-								tConn := val.(*TunnelConn)
-								
-								for _, b64 := range chunks {
-									if b64 == "EOF" {
-										log.Printf("[IR] 🏁 Remote EOF %s", connID)
-										tConn.Close()
-										continue
-									}
-
-									if buf, err := base64.StdEncoding.DecodeString(b64); err == nil {
-										tConn.cond.L.Lock()
-										tConn.rxBuf = append(tConn.rxBuf, buf...)
-										tConn.cond.Signal()
-										tConn.cond.L.Unlock()
-									}
-								}
-							}
-						}
-					}
-				}
-				resp.Body.Close()
-			}
-		}
-
-		if hasActivity {
-			time.Sleep(1 * time.Millisecond)
-		} else {
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
+	// Block main thread forever
+	select {}
 }
