@@ -102,6 +102,58 @@ Client on the Iran VPS:
 
 Deploy the PHP relay file as `furo-relay.php` on the relay host, then make sure `relay_url` in `config.client.json` matches the real URL.
 
+## Config values that must match
+
+These values are coupled across components.
+
+- `config.client.json -> api_key`
+- `config.server.json -> api_key`
+- `furo-relay.php -> $RELAY_API_KEY`
+
+All three must be identical.
+
+- `config.client.json -> session_count`
+- `config.server.json -> max_sessions`
+
+`max_sessions` should be greater than or equal to `session_count`.
+If `max_sessions` is lower, some client sessions will be rejected by the server.
+
+- `config.client.json -> public_host`
+- `config.client.json -> public_port`
+- `config.client.json -> agent_listen`
+
+These must describe the client agent endpoint that the PHP relay can actually reach.
+In practice:
+- `public_host:public_port` must route to the client process
+- the client process must be listening on `agent_listen`
+
+- `config.client.json -> server_host`
+- `config.client.json -> server_port`
+- `config.server.json -> agent_listen`
+
+These must describe the server agent endpoint that the PHP relay can actually reach.
+In practice:
+- `server_host:server_port` must route to the server process
+- the server process must be listening on `agent_listen`
+
+- `config.client.json -> relay_url`
+
+This must point to the deployed location of `furo-relay.php`.
+If the file is moved or renamed on the PHP host, update `relay_url`.
+
+Values that do **not** need to match exactly:
+
+- `open_timeout`
+- `dial_timeout`
+- `keepalive`
+- `log_file`
+- `$RELAY_CONNECT_TIMEOUT_SEC`
+- `$RELAY_IDLE_TIMEOUT_SEC`
+- `$RELAY_BUFFER_SIZE`
+- `$RELAY_ENABLE_LOGS`
+
+Those are local tuning or operational settings.
+
 ## Client config
 
 File: [config.client.json](/home/catinrage/projects/Host-Tun/config.client.json)
