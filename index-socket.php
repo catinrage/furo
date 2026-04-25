@@ -4,7 +4,7 @@ declare(strict_types=1);
 $API_KEY = 'my_super_secret_123456789';
 $CONNECT_TIMEOUT_SEC = 8;
 $READ_IDLE_TIMEOUT_SEC = 300;
-$BUFFER_SIZE = 262144;
+$BUFFER_SIZE = 1024 * 1024;
 
 ignore_user_abort(true);
 set_time_limit(0);
@@ -44,8 +44,8 @@ function connectTcp(string $host, int $port, int $timeoutSec): Socket
     @socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $timeoutSec, 'usec' => 0]);
     @socket_set_option($socket, SOL_TCP, TCP_NODELAY, 1);
     @socket_set_option($socket, SOL_SOCKET, SO_KEEPALIVE, 1);
-    @socket_set_option($socket, SOL_SOCKET, SO_RCVBUF, 262144);
-    @socket_set_option($socket, SOL_SOCKET, SO_SNDBUF, 262144);
+    @socket_set_option($socket, SOL_SOCKET, SO_RCVBUF, 1024 * 1024);
+    @socket_set_option($socket, SOL_SOCKET, SO_SNDBUF, 1024 * 1024);
 
     if (!@socket_connect($socket, $host, $port)) {
         $err = socket_strerror(socket_last_error($socket));

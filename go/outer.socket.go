@@ -27,7 +27,8 @@ const (
 
 const (
 	frameHeaderSize = 9
-	maxFramePayload = 64 * 1024
+	maxFramePayload = 256 * 1024
+	streamWriteQueueDepth = 32
 )
 
 var (
@@ -59,8 +60,8 @@ func setTCPOptions(conn net.Conn) {
 	_ = tcp.SetKeepAlive(true)
 	_ = tcp.SetKeepAlivePeriod(*keepalivePeriod)
 	_ = tcp.SetNoDelay(true)
-	_ = tcp.SetReadBuffer(256 * 1024)
-	_ = tcp.SetWriteBuffer(256 * 1024)
+	_ = tcp.SetReadBuffer(1024 * 1024)
+	_ = tcp.SetWriteBuffer(1024 * 1024)
 }
 
 func readLine(conn net.Conn, limit int) (string, error) {
@@ -158,12 +159,26 @@ type TargetStream struct {
 	id   uint32
 	conn net.Conn
 	once sync.Once
+	done chan struct{}
+	q    chan []byte
 }
 
 func (t *TargetStream) close() {
 	t.once.Do(func() {
+		close(t.done)
 		_ = t.conn.Close()
 	})
+}
+
+func (t *TargetStream) enqueue(payload []byte) error {
+	select {
+	case <-t.done:
+		return net.ErrClosed
+	case t.q <- payload:
+		return nil
+	case <-time.After(2 * time.Second):
+		return errors.New("stream write queue full")
+	}
 }
 
 type Session struct {
@@ -221,6 +236,17 @@ func (s *Session) removeStream(streamID uint32) *TargetStream {
 	stream := s.streams[streamID]
 	delete(s.streams, streamID)
 	return stream
+}
+
+func (s *Session) closeStream(streamID uint32, sendClose bool) {
+	stream := s.removeStream(streamID)
+	if stream == nil {
+		return
+	}
+	stream.close()
+	if sendClose {
+		_ = s.sendFrame(frameClose, streamID, nil)
+	}
 }
 
 func (s *Session) activeCount() int {
@@ -292,16 +318,12 @@ func (s *Session) readLoop() {
 				_ = s.sendFrame(frameClose, fr.streamID, nil)
 				continue
 			}
-			if err := writeAll(stream.conn, fr.payload); err != nil {
-				logEvent("[OUT] session=%s stream=%d write_target_failed err=%v", s.sid, fr.streamID, err)
-				stream.close()
-				s.removeStream(fr.streamID)
-				_ = s.sendFrame(frameClose, fr.streamID, nil)
+			if err := stream.enqueue(fr.payload); err != nil {
+				logEvent("[OUT] session=%s stream=%d enqueue_target_failed err=%v", s.sid, fr.streamID, err)
+				s.closeStream(fr.streamID, true)
 			}
 		case frameClose:
-			if stream := s.removeStream(fr.streamID); stream != nil {
-				stream.close()
-			}
+			s.closeStream(fr.streamID, false)
 		default:
 			logEvent("[OUT] session=%s unexpected_frame type=%d", s.sid, fr.typ)
 			return
@@ -327,7 +349,12 @@ func (s *Session) handleOpen(streamID uint32, payload []byte) {
 	}
 	setTCPOptions(targetConn)
 
-	stream := &TargetStream{id: streamID, conn: targetConn}
+	stream := &TargetStream{
+		id:   streamID,
+		conn: targetConn,
+		done: make(chan struct{}),
+		q:    make(chan []byte, streamWriteQueueDepth),
+	}
 	s.addStream(stream)
 	if err := s.sendFrame(frameOpenOK, streamID, nil); err != nil {
 		stream.close()
@@ -336,6 +363,7 @@ func (s *Session) handleOpen(streamID uint32, payload []byte) {
 	}
 
 	logEvent("[OUT] session=%s stream=%d open_ok target=%s dur_ms=%d active=%d", s.sid, streamID, targetAddr, time.Since(start).Milliseconds(), s.activeCount())
+	go s.pumpToTarget(stream, targetAddr)
 	go s.pumpTarget(stream, targetAddr)
 }
 
@@ -359,10 +387,23 @@ func (s *Session) pumpTarget(stream *TargetStream, targetAddr string) {
 		}
 	}
 
-	stream.close()
-	s.removeStream(stream.id)
-	_ = s.sendFrame(frameClose, stream.id, nil)
+	s.closeStream(stream.id, true)
 	logEvent("[OUT] session=%s stream=%d closed target=%s active=%d", s.sid, stream.id, targetAddr, s.activeCount())
+}
+
+func (s *Session) pumpToTarget(stream *TargetStream, targetAddr string) {
+	for {
+		select {
+		case <-stream.done:
+			return
+		case payload := <-stream.q:
+			if err := writeAll(stream.conn, payload); err != nil {
+				logEvent("[OUT] session=%s stream=%d write_target_failed target=%s err=%v", s.sid, stream.id, targetAddr, err)
+				s.closeStream(stream.id, true)
+				return
+			}
+		}
+	}
 }
 
 func handleRelayConn(conn net.Conn) {

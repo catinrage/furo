@@ -33,7 +33,7 @@ const (
 
 const (
 	frameHeaderSize  = 9
-	maxFramePayload  = 64 * 1024
+	maxFramePayload  = 256 * 1024
 	sessionPollDelay = 1200 * time.Millisecond
 )
 
@@ -124,8 +124,8 @@ func setTCPOptions(conn net.Conn) {
 	_ = tcp.SetKeepAlive(true)
 	_ = tcp.SetKeepAlivePeriod(*keepalivePeriod)
 	_ = tcp.SetNoDelay(true)
-	_ = tcp.SetReadBuffer(256 * 1024)
-	_ = tcp.SetWriteBuffer(256 * 1024)
+	_ = tcp.SetReadBuffer(1024 * 1024)
+	_ = tcp.SetWriteBuffer(1024 * 1024)
 }
 
 func readLine(conn net.Conn, limit int) (string, error) {
