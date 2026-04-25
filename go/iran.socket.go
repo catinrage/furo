@@ -35,6 +35,9 @@ const (
 	frameHeaderSize  = 9
 	maxFramePayload  = 256 * 1024
 	sessionPollDelay = 1200 * time.Millisecond
+	streamWriteQueueDepth = 32
+	slowWriteThreshold = 200 * time.Millisecond
+	sessionStatsInterval = 15 * time.Second
 )
 
 var (
@@ -151,10 +154,45 @@ func writeString(conn net.Conn, s string) error {
 	return err
 }
 
+func writeFull(w io.Writer, buf []byte) error {
+	for len(buf) > 0 {
+		n, err := w.Write(buf)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		buf = buf[n:]
+	}
+	return nil
+}
+
 type frame struct {
 	typ      byte
 	streamID uint32
 	payload  []byte
+}
+
+func frameTypeName(typ byte) string {
+	switch typ {
+	case frameHello:
+		return "hello"
+	case frameHelloAck:
+		return "hello_ack"
+	case frameOpen:
+		return "open"
+	case frameOpenOK:
+		return "open_ok"
+	case frameOpenErr:
+		return "open_err"
+	case frameData:
+		return "data"
+	case frameClose:
+		return "close"
+	default:
+		return fmt.Sprintf("unknown_%d", typ)
+	}
 }
 
 func writeFrame(w io.Writer, typ byte, streamID uint32, payload []byte) error {
@@ -162,14 +200,13 @@ func writeFrame(w io.Writer, typ byte, streamID uint32, payload []byte) error {
 	header[0] = typ
 	binary.BigEndian.PutUint32(header[1:5], streamID)
 	binary.BigEndian.PutUint32(header[5:9], uint32(len(payload)))
-	if _, err := w.Write(header); err != nil {
+	if err := writeFull(w, header); err != nil {
 		return err
 	}
 	if len(payload) == 0 {
 		return nil
 	}
-	_, err := w.Write(payload)
-	return err
+	return writeFull(w, payload)
 }
 
 func readFrame(r io.Reader) (frame, error) {
@@ -221,11 +258,23 @@ type MuxConn struct {
 	readBuf      []byte
 	closed       bool
 	remoteClosed bool
+	done         chan struct{}
+	writeQ       chan []byte
+	closeOnce    sync.Once
+	summaryOnce  sync.Once
+	startedAt    time.Time
+	bytesFromClient uint64
+	bytesFromOuter  uint64
+	framesToOuter   uint64
+	framesFromOuter uint64
 }
 
 func newMuxConn(session *MuxSession, id uint32) *MuxConn {
 	c := &MuxConn{id: id, session: session}
 	c.cond = sync.NewCond(&c.mu)
+	c.done = make(chan struct{})
+	c.writeQ = make(chan []byte, streamWriteQueueDepth)
+	c.startedAt = time.Now()
 	return c
 }
 
@@ -278,10 +327,15 @@ func (c *MuxConn) enqueueData(payload []byte) {
 	}
 	buf := make([]byte, len(payload))
 	copy(buf, payload)
+	atomic.AddUint64(&c.bytesFromOuter, uint64(len(buf)))
+	atomic.AddUint64(&c.framesFromOuter, 1)
 	c.mu.Lock()
 	if !c.closed {
 		c.readQ = append(c.readQ, buf)
 		c.cond.Broadcast()
+		if depth := len(c.readQ); depth >= streamWriteQueueDepth/2 && (depth == streamWriteQueueDepth/2 || depth == streamWriteQueueDepth) {
+			logEvent("[IR] session=%s stream=%d readq_depth=%d bytes_from_outer=%d", c.session.sid, c.id, depth, atomic.LoadUint64(&c.bytesFromOuter))
+		}
 	}
 	c.mu.Unlock()
 }
@@ -291,6 +345,8 @@ func (c *MuxConn) markRemoteClosed() {
 	c.remoteClosed = true
 	c.cond.Broadcast()
 	c.mu.Unlock()
+	c.closeOnce.Do(func() { close(c.done) })
+	c.logSummary("remote-close")
 }
 
 func (c *MuxConn) fail(err error) {
@@ -300,6 +356,9 @@ func (c *MuxConn) fail(err error) {
 	}
 	c.cond.Broadcast()
 	c.mu.Unlock()
+	c.closeOnce.Do(func() { close(c.done) })
+	logEvent("[IR] session=%s stream=%d fail err=%v", c.session.sid, c.id, err)
+	c.logSummary("fail")
 }
 
 func (c *MuxConn) Read(b []byte) (int, error) {
@@ -345,10 +404,14 @@ func (c *MuxConn) Write(b []byte) (int, error) {
 		if chunkLen > maxFramePayload {
 			chunkLen = maxFramePayload
 		}
-		if err := c.session.sendFrame(frameData, c.id, b[:chunkLen]); err != nil {
+		payload := make([]byte, chunkLen)
+		copy(payload, b[:chunkLen])
+		if err := c.enqueueWrite(payload); err != nil {
 			c.fail(err)
 			return total, err
 		}
+		atomic.AddUint64(&c.bytesFromClient, uint64(chunkLen))
+		atomic.AddUint64(&c.framesToOuter, 1)
 		total += chunkLen
 		b = b[chunkLen:]
 	}
@@ -365,9 +428,55 @@ func (c *MuxConn) Close() error {
 	c.cond.Broadcast()
 	c.mu.Unlock()
 
+	c.closeOnce.Do(func() { close(c.done) })
 	c.session.removeStream(c.id)
 	_ = c.session.sendFrame(frameClose, c.id, nil)
+	c.logSummary("local-close")
 	return nil
+}
+
+func (c *MuxConn) enqueueWrite(payload []byte) error {
+	select {
+	case <-c.done:
+		return net.ErrClosed
+	case c.writeQ <- payload:
+		if depth := len(c.writeQ); depth >= streamWriteQueueDepth/2 && (depth == streamWriteQueueDepth/2 || depth == streamWriteQueueDepth) {
+			logEvent("[IR] session=%s stream=%d writeq_depth=%d bytes_from_client=%d", c.session.sid, c.id, depth, atomic.LoadUint64(&c.bytesFromClient))
+		}
+		return nil
+	case <-time.After(2 * time.Second):
+		return errors.New("stream write queue full")
+	}
+}
+
+func (c *MuxConn) pumpWrites() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case payload := <-c.writeQ:
+			if err := c.session.sendFrame(frameData, c.id, payload); err != nil {
+				c.fail(err)
+				return
+			}
+		}
+	}
+}
+
+func (c *MuxConn) logSummary(reason string) {
+	c.summaryOnce.Do(func() {
+		logEvent(
+			"[IR] session=%s stream=%d summary reason=%s age_ms=%d bytes_client=%d bytes_outer=%d frames_client=%d frames_outer=%d",
+			c.session.sid,
+			c.id,
+			reason,
+			time.Since(c.startedAt).Milliseconds(),
+			atomic.LoadUint64(&c.bytesFromClient),
+			atomic.LoadUint64(&c.bytesFromOuter),
+			atomic.LoadUint64(&c.framesToOuter),
+			atomic.LoadUint64(&c.framesFromOuter),
+		)
+	})
 }
 
 func (c *MuxConn) LocalAddr() net.Addr  { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
@@ -389,6 +498,13 @@ type MuxSession struct {
 	streams        map[uint32]*MuxConn
 	nextStreamID   uint32
 	sessionGen     uint64
+	framesIn       uint64
+	framesOut      uint64
+	bytesIn        uint64
+	bytesOut       uint64
+	slowWrites     uint64
+	lastFrameInUnix  int64
+	lastFrameOutUnix int64
 }
 
 func newMuxSession(pool *SessionPool, idx int, sid string) *MuxSession {
@@ -488,6 +604,7 @@ func (s *MuxSession) sendFrame(typ byte, streamID uint32, payload []byte) error 
 	s.mu.Lock()
 	conn := s.conn
 	ready := s.ready
+	active := len(s.streams)
 	s.mu.Unlock()
 
 	if conn == nil {
@@ -497,9 +614,23 @@ func (s *MuxSession) sendFrame(typ byte, streamID uint32, payload []byte) error 
 		return errors.New("session not ready")
 	}
 
+	lockStart := time.Now()
 	s.writerMu.Lock()
 	defer s.writerMu.Unlock()
-	return writeFrame(conn, typ, streamID, payload)
+	lockWait := time.Since(lockStart)
+	writeStart := time.Now()
+	err := writeFrame(conn, typ, streamID, payload)
+	writeDur := time.Since(writeStart)
+	if err == nil {
+		atomic.AddUint64(&s.framesOut, 1)
+		atomic.AddUint64(&s.bytesOut, uint64(len(payload)))
+		atomic.StoreInt64(&s.lastFrameOutUnix, time.Now().Unix())
+	}
+	if lockWait > slowWriteThreshold || writeDur > slowWriteThreshold {
+		atomic.AddUint64(&s.slowWrites, 1)
+		logEvent("[IR] session=%s slow_send type=%s stream=%d bytes=%d lock_ms=%d write_ms=%d active=%d err=%v", s.sid, frameTypeName(typ), streamID, len(payload), lockWait.Milliseconds(), writeDur.Milliseconds(), active, err)
+	}
+	return err
 }
 
 func (s *MuxSession) nextStream() uint32 {
@@ -531,6 +662,9 @@ func (s *MuxSession) readLoop(gen uint64, conn net.Conn) {
 			s.closeSession(gen, err)
 			return
 		}
+		atomic.AddUint64(&s.framesIn, 1)
+		atomic.AddUint64(&s.bytesIn, uint64(len(fr.payload)))
+		atomic.StoreInt64(&s.lastFrameInUnix, time.Now().Unix())
 
 		switch fr.typ {
 		case frameHelloAck:
@@ -571,6 +705,34 @@ func (s *MuxSession) readLoop(gen uint64, conn net.Conn) {
 	}
 }
 
+func (s *MuxSession) statsLoop() {
+	ticker := time.NewTicker(sessionStatsInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.mu.Lock()
+		connected := s.conn != nil
+		ready := s.ready
+		active := len(s.streams)
+		running := s.requestRunning
+		s.mu.Unlock()
+		logEvent(
+			"[IR] session=%s stats connected=%t ready=%t request_running=%t active=%d frames_in=%d frames_out=%d bytes_in=%d bytes_out=%d slow_writes=%d last_in=%d last_out=%d",
+			s.sid,
+			connected,
+			ready,
+			running,
+			active,
+			atomic.LoadUint64(&s.framesIn),
+			atomic.LoadUint64(&s.framesOut),
+			atomic.LoadUint64(&s.bytesIn),
+			atomic.LoadUint64(&s.bytesOut),
+			atomic.LoadUint64(&s.slowWrites),
+			atomic.LoadInt64(&s.lastFrameInUnix),
+			atomic.LoadInt64(&s.lastFrameOutUnix),
+		)
+	}
+}
+
 func (s *MuxSession) dialStream(ctx context.Context, host, port string) (net.Conn, error) {
 	portNum, err := parsePort(port)
 	if err != nil {
@@ -593,6 +755,7 @@ func (s *MuxSession) dialStream(ctx context.Context, host, port string) (net.Con
 		return nil, err
 	}
 
+	go stream.pumpWrites()
 	logEvent("[IR] session=%s stream=%d new_tunnel target=%s:%s active=%d", s.sid, streamID, host, port, s.activeCount())
 	return stream, nil
 }
@@ -683,6 +846,7 @@ func newSessionPool(count int) *SessionPool {
 func (p *SessionPool) start() {
 	for _, s := range p.order {
 		go s.loop()
+		go s.statsLoop()
 	}
 }
 
@@ -699,6 +863,7 @@ func (p *SessionPool) getByID(sid string) *MuxSession {
 }
 
 func (p *SessionPool) chooseReadySession(ctx context.Context) (*MuxSession, error) {
+	waitStart := time.Now()
 	for {
 		var ready []*MuxSession
 		for _, s := range p.order {
@@ -708,11 +873,17 @@ func (p *SessionPool) chooseReadySession(ctx context.Context) (*MuxSession, erro
 		}
 		if len(ready) > 0 {
 			idx := atomic.AddUint32(&p.rr, 1)
-			return ready[int(idx)%len(ready)], nil
+			chosen := ready[int(idx)%len(ready)]
+			waited := time.Since(waitStart)
+			if waited > time.Second {
+				logEvent("[IR] choose_ready_session waited_ms=%d ready=%d chosen=%s total_active=%d", waited.Milliseconds(), len(ready), chosen.sid, p.totalActive())
+			}
+			return chosen, nil
 		}
 
 		select {
 		case <-ctx.Done():
+			logEvent("[IR] choose_ready_session failed waited_ms=%d err=%v total_active=%d", time.Since(waitStart).Milliseconds(), ctx.Err(), p.totalActive())
 			return nil, ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}

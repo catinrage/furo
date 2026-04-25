@@ -29,6 +29,8 @@ const (
 	frameHeaderSize = 9
 	maxFramePayload = 256 * 1024
 	streamWriteQueueDepth = 32
+	slowWriteThreshold = 200 * time.Millisecond
+	sessionStatsInterval = 15 * time.Second
 )
 
 var (
@@ -87,10 +89,45 @@ func writeString(conn net.Conn, s string) error {
 	return err
 }
 
+func writeFull(w io.Writer, buf []byte) error {
+	for len(buf) > 0 {
+		n, err := w.Write(buf)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		buf = buf[n:]
+	}
+	return nil
+}
+
 type frame struct {
 	typ      byte
 	streamID uint32
 	payload  []byte
+}
+
+func frameTypeName(typ byte) string {
+	switch typ {
+	case frameHello:
+		return "hello"
+	case frameHelloAck:
+		return "hello_ack"
+	case frameOpen:
+		return "open"
+	case frameOpenOK:
+		return "open_ok"
+	case frameOpenErr:
+		return "open_err"
+	case frameData:
+		return "data"
+	case frameClose:
+		return "close"
+	default:
+		return fmt.Sprintf("unknown_%d", typ)
+	}
 }
 
 func writeFrame(w io.Writer, typ byte, streamID uint32, payload []byte) error {
@@ -98,14 +135,13 @@ func writeFrame(w io.Writer, typ byte, streamID uint32, payload []byte) error {
 	header[0] = typ
 	binary.BigEndian.PutUint32(header[1:5], streamID)
 	binary.BigEndian.PutUint32(header[5:9], uint32(len(payload)))
-	if _, err := w.Write(header); err != nil {
+	if err := writeFull(w, header); err != nil {
 		return err
 	}
 	if len(payload) == 0 {
 		return nil
 	}
-	_, err := w.Write(payload)
-	return err
+	return writeFull(w, payload)
 }
 
 func readFrame(r io.Reader) (frame, error) {
@@ -161,6 +197,12 @@ type TargetStream struct {
 	once sync.Once
 	done chan struct{}
 	q    chan []byte
+	summaryOnce sync.Once
+	startedAt time.Time
+	bytesFromRelay uint64
+	bytesToRelay   uint64
+	framesFromRelay uint64
+	framesToRelay   uint64
 }
 
 func (t *TargetStream) close() {
@@ -171,10 +213,15 @@ func (t *TargetStream) close() {
 }
 
 func (t *TargetStream) enqueue(payload []byte) error {
+	atomic.AddUint64(&t.bytesFromRelay, uint64(len(payload)))
+	atomic.AddUint64(&t.framesFromRelay, 1)
 	select {
 	case <-t.done:
 		return net.ErrClosed
 	case t.q <- payload:
+		if depth := len(t.q); depth >= streamWriteQueueDepth/2 && (depth == streamWriteQueueDepth/2 || depth == streamWriteQueueDepth) {
+			logEvent("[OUT] stream=%d target_writeq_depth=%d bytes_from_relay=%d", t.id, depth, atomic.LoadUint64(&t.bytesFromRelay))
+		}
 		return nil
 	case <-time.After(2 * time.Second):
 		return errors.New("stream write queue full")
@@ -189,6 +236,13 @@ type Session struct {
 	conn     net.Conn
 	authOK   bool
 	streams  map[uint32]*TargetStream
+	framesIn       uint64
+	framesOut      uint64
+	bytesIn        uint64
+	bytesOut       uint64
+	slowWrites     uint64
+	lastFrameInUnix  int64
+	lastFrameOutUnix int64
 }
 
 func newSession(sid string, conn net.Conn) *Session {
@@ -204,6 +258,7 @@ func (s *Session) sendFrame(typ byte, streamID uint32, payload []byte) error {
 	s.mu.Lock()
 	conn := s.conn
 	authOK := s.authOK
+	active := len(s.streams)
 	s.mu.Unlock()
 
 	if conn == nil {
@@ -213,9 +268,23 @@ func (s *Session) sendFrame(typ byte, streamID uint32, payload []byte) error {
 		return errors.New("session not authenticated")
 	}
 
+	lockStart := time.Now()
 	s.writerMu.Lock()
 	defer s.writerMu.Unlock()
-	return writeFrame(conn, typ, streamID, payload)
+	lockWait := time.Since(lockStart)
+	writeStart := time.Now()
+	err := writeFrame(conn, typ, streamID, payload)
+	writeDur := time.Since(writeStart)
+	if err == nil {
+		atomic.AddUint64(&s.framesOut, 1)
+		atomic.AddUint64(&s.bytesOut, uint64(len(payload)))
+		atomic.StoreInt64(&s.lastFrameOutUnix, time.Now().Unix())
+	}
+	if lockWait > slowWriteThreshold || writeDur > slowWriteThreshold {
+		atomic.AddUint64(&s.slowWrites, 1)
+		logEvent("[OUT] session=%s slow_send type=%s stream=%d bytes=%d lock_ms=%d write_ms=%d active=%d err=%v", s.sid, frameTypeName(typ), streamID, len(payload), lockWait.Milliseconds(), writeDur.Milliseconds(), active, err)
+	}
+	return err
 }
 
 func (s *Session) addStream(stream *TargetStream) {
@@ -244,9 +313,26 @@ func (s *Session) closeStream(streamID uint32, sendClose bool) {
 		return
 	}
 	stream.close()
+	s.logStreamSummary(stream, map[bool]string{true: "close-local", false: "close-remote"}[sendClose])
 	if sendClose {
 		_ = s.sendFrame(frameClose, streamID, nil)
 	}
+}
+
+func (s *Session) logStreamSummary(stream *TargetStream, reason string) {
+	stream.summaryOnce.Do(func() {
+		logEvent(
+			"[OUT] session=%s stream=%d summary reason=%s age_ms=%d bytes_from_relay=%d bytes_to_relay=%d frames_from_relay=%d frames_to_relay=%d",
+			s.sid,
+			stream.id,
+			reason,
+			time.Since(stream.startedAt).Milliseconds(),
+			atomic.LoadUint64(&stream.bytesFromRelay),
+			atomic.LoadUint64(&stream.bytesToRelay),
+			atomic.LoadUint64(&stream.framesFromRelay),
+			atomic.LoadUint64(&stream.framesToRelay),
+		)
+	})
 }
 
 func (s *Session) activeCount() int {
@@ -288,6 +374,9 @@ func (s *Session) readLoop() {
 			}
 			return
 		}
+		atomic.AddUint64(&s.framesIn, 1)
+		atomic.AddUint64(&s.bytesIn, uint64(len(fr.payload)))
+		atomic.StoreInt64(&s.lastFrameInUnix, time.Now().Unix())
 
 		s.mu.Lock()
 		authOK := s.authOK
@@ -354,6 +443,7 @@ func (s *Session) handleOpen(streamID uint32, payload []byte) {
 		conn: targetConn,
 		done: make(chan struct{}),
 		q:    make(chan []byte, streamWriteQueueDepth),
+		startedAt: time.Now(),
 	}
 	s.addStream(stream)
 	if err := s.sendFrame(frameOpenOK, streamID, nil); err != nil {
@@ -374,6 +464,8 @@ func (s *Session) pumpTarget(stream *TargetStream, targetAddr string) {
 		if n > 0 {
 			payload := make([]byte, n)
 			copy(payload, buf[:n])
+			atomic.AddUint64(&stream.bytesToRelay, uint64(n))
+			atomic.AddUint64(&stream.framesToRelay, 1)
 			if err := s.sendFrame(frameData, stream.id, payload); err != nil {
 				logEvent("[OUT] session=%s stream=%d send_data_failed err=%v", s.sid, stream.id, err)
 				break
@@ -403,6 +495,32 @@ func (s *Session) pumpToTarget(stream *TargetStream, targetAddr string) {
 				return
 			}
 		}
+	}
+}
+
+func (s *Session) statsLoop() {
+	ticker := time.NewTicker(sessionStatsInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.mu.Lock()
+		connected := s.conn != nil
+		authOK := s.authOK
+		active := len(s.streams)
+		s.mu.Unlock()
+		logEvent(
+			"[OUT] session=%s stats connected=%t auth=%t active=%d frames_in=%d frames_out=%d bytes_in=%d bytes_out=%d slow_writes=%d last_in=%d last_out=%d",
+			s.sid,
+			connected,
+			authOK,
+			active,
+			atomic.LoadUint64(&s.framesIn),
+			atomic.LoadUint64(&s.framesOut),
+			atomic.LoadUint64(&s.bytesIn),
+			atomic.LoadUint64(&s.bytesOut),
+			atomic.LoadUint64(&s.slowWrites),
+			atomic.LoadInt64(&s.lastFrameInUnix),
+			atomic.LoadInt64(&s.lastFrameOutUnix),
+		)
 	}
 }
 
@@ -450,6 +568,7 @@ func handleRelayConn(conn net.Conn) {
 	conn = nil
 	activeSessions.Add(1)
 	logEvent("[OUT] session=%s accepted remote=%s active_sessions=%d", session.sid, session.conn.RemoteAddr(), activeSessions.Load())
+	go session.statsLoop()
 	go session.readLoop()
 }
 

@@ -1,25 +1,1010 @@
-2026/04/24 20:07:54.066500 [IR] startup relay=https://hidaco.site/tools/rel/soc/index.php listen=0.0.0.0:18713 agent=0.0.0.0:28080 public=37.32.14.205:28080 outer=185.250.41.30:28081 max_relays=6 open_timeout=45s
-2026/04/24 20:07:54.111130 [IR] conn=sock_1777061274111_1 relay_slot wait_ms=0 active=0
-2026/04/24 20:07:54.111400 [IR] conn=sock_1777061274111_1 new_tunnel target=149.154.167.43:80 active=1
-2026/04/24 20:07:54.124776 [IR] conn=sock_1777061274124_2 relay_slot wait_ms=0 active=1
-2026/04/24 20:07:54.124821 [IR] conn=sock_1777061274124_2 new_tunnel target=91.108.56.129:80 active=2
-2026/04/24 20:07:54.130664 [IR] conn=sock_1777061274130_3 relay_slot wait_ms=0 active=2
-2026/04/24 20:07:54.132109 [IR] conn=sock_1777061274130_3 new_tunnel target=149.154.167.91:80 active=3
-2026/04/24 20:07:54.158873 [IR] attach ok conn=sock_1777061274130_3 remote=5.144.130.6:42486 active=3
-2026/04/24 20:07:54.165412 [IR] conn=sock_1777061274165_4 relay_slot wait_ms=0 active=3
-2026/04/24 20:07:54.165463 [IR] conn=sock_1777061274165_4 new_tunnel target=149.154.167.91:80 active=4
-2026/04/24 20:07:54.173167 [IR] attach ok conn=sock_1777061274124_2 remote=5.144.130.6:42502 active=4
-2026/04/24 20:07:54.173394 [IR] attach ok conn=sock_1777061274111_1 remote=5.144.130.6:42516 active=4
-2026/04/24 20:07:54.182941 [IR] attach ok conn=sock_1777061274165_4 remote=5.144.130.6:42520 active=4
-2026/04/24 20:07:54.374037 [IR] conn=sock_1777061274111_1 relay_open_headers status=200 target=149.154.167.43:80 dur_ms=262
-2026/04/24 20:07:54.384832 [IR] conn=sock_1777061274130_3 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=252
-2026/04/24 20:07:54.410305 [IR] conn=sock_1777061274165_4 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=244
-2026/04/24 20:07:54.593478 [IR] conn=sock_1777061274124_2 relay_open_headers status=200 target=91.108.56.129:80 dur_ms=468
-2026/04/24 20:07:54.603243 [IR] conn=sock_1777061274603_5 relay_slot wait_ms=0 active=4
-2026/04/24 20:07:54.603301 [IR] conn=sock_1777061274603_5 new_tunnel target=149.154.167.91:80 active=5
-2026/04/24 20:07:54.620719 [IR] conn=sock_1777061274620_6 relay_slot wait_ms=0 active=5
-2026/04/24 20:07:54.620791 [IR] conn=sock_1777061274620_6 new_tunnel target=149.154.167.91:80 active=6
-2026/04/24 20:07:54.624809 [IR] attach ok conn=sock_1777061274603_5 remote=5.144.130.6:42530 active=6
-2026/04/24 20:07:54.638275 [IR] attach ok conn=sock_1777061274620_6 remote=5.144.130.6:42534 active=6
-2026/04/24 20:07:54.837384 [IR] conn=sock_1777061274620_6 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=216
-2026/04/24 20:07:54.856469 [IR] conn=sock_1777061274603_5 relay_open_headers status=200 target=149.154.167.91:80 dur_ms=253
+2026/04/25 11:38:02.967787 [IR] startup relay=https://hidaco.site/tools/rel/soc/index.php listen=0.0.0.0:18713 agent=0.0.0.0:28080 public=37.32.14.205:28080 outer=185.250.41.30:28081 open_timeout=45s session_count=1 max_relays_compat=0
+2026/04/25 11:38:03.165286 [IR] session=sess_1 accepted remote=5.144.130.6:38232
+2026/04/25 11:38:03.348452 [IR] session=sess_1 request_ok dur_ms=380
+2026/04/25 11:38:03.438341 [IR] session=sess_1 ready
+2026/04/25 11:38:06.930506 [IR] session=sess_1 stream=2 open_ok active=1
+2026/04/25 11:38:06.930602 [IR] session=sess_1 stream=2 new_tunnel target=api.ipify.org:443 active=1
+2026/04/25 11:38:07.325543 [IR] session=sess_1 stream=2 summary reason=remote-close age_ms=496 bytes_client=799 bytes_outer=3583 frames_client=6 frames_outer=3
+2026/04/25 11:38:17.968567 [IR] session=sess_1 stats connected=true ready=true request_running=true active=0 frames_in=6 frames_out=8 bytes_in=3583 bytes_out=816 slow_writes=0 last_in=1777117087 last_out=1777117087
+2026/04/25 11:38:32.969543 [IR] session=sess_1 stats connected=true ready=true request_running=true active=0 frames_in=6 frames_out=8 bytes_in=3583 bytes_out=816 slow_writes=0 last_in=1777117087 last_out=1777117087
+2026/04/25 11:38:47.969428 [IR] session=sess_1 stats connected=true ready=true request_running=true active=0 frames_in=6 frames_out=8 bytes_in=3583 bytes_out=816 slow_writes=0 last_in=1777117087 last_out=1777117087
+2026/04/25 11:38:49.436448 [IR] session=sess_1 stream=4 open_ok active=40
+2026/04/25 11:38:49.437706 [IR] session=sess_1 stream=4 new_tunnel target=149.154.167.92:443 active=40
+2026/04/25 11:38:49.443118 [IR] session=sess_1 stream=6 open_ok active=40
+2026/04/25 11:38:49.454034 [IR] session=sess_1 stream=8 open_ok active=40
+2026/04/25 11:38:49.459734 [IR] session=sess_1 stream=8 new_tunnel target=149.154.167.91:443 active=40
+2026/04/25 11:38:49.459797 [IR] session=sess_1 stream=6 new_tunnel target=149.154.167.91:80 active=40
+2026/04/25 11:38:49.462277 [IR] session=sess_1 stream=10 open_ok active=40
+2026/04/25 11:38:49.474173 [IR] session=sess_1 stream=12 open_ok active=40
+2026/04/25 11:38:49.480772 [IR] session=sess_1 stream=10 new_tunnel target=149.154.167.92:443 active=40
+2026/04/25 11:38:49.480867 [IR] session=sess_1 stream=12 new_tunnel target=149.154.167.91:80 active=40
+2026/04/25 11:38:49.486084 [IR] session=sess_1 stream=14 open_ok active=43
+2026/04/25 11:38:49.497005 [IR] session=sess_1 stream=16 open_ok active=43
+2026/04/25 11:38:49.501581 [IR] session=sess_1 stream=14 new_tunnel target=149.154.167.92:5222 active=43
+2026/04/25 11:38:49.502740 [IR] session=sess_1 stream=16 new_tunnel target=149.154.167.91:443 active=43
+2026/04/25 11:38:49.507684 [IR] session=sess_1 stream=18 open_ok active=43
+2026/04/25 11:38:49.522483 [IR] session=sess_1 stream=20 open_ok active=43
+2026/04/25 11:38:49.523708 [IR] session=sess_1 stream=20 new_tunnel target=149.154.167.91:443 active=43
+2026/04/25 11:38:49.523749 [IR] session=sess_1 stream=18 new_tunnel target=149.154.167.92:443 active=43
+2026/04/25 11:38:49.534462 [IR] session=sess_1 stream=22 open_ok active=43
+2026/04/25 11:38:49.544147 [IR] session=sess_1 stream=22 new_tunnel target=149.154.167.92:443 active=43
+2026/04/25 11:38:49.596743 [IR] session=sess_1 stream=24 open_ok active=43
+2026/04/25 11:38:49.605396 [IR] session=sess_1 stream=24 new_tunnel target=149.154.167.92:5222 active=43
+2026/04/25 11:38:49.686550 [IR] session=sess_1 stream=26 open_ok active=43
+2026/04/25 11:38:49.687751 [IR] session=sess_1 stream=26 new_tunnel target=20.33.19.88:5222 active=43
+2026/04/25 11:38:49.697065 [IR] session=sess_1 stream=28 open_ok active=43
+2026/04/25 11:38:49.708919 [IR] session=sess_1 stream=28 new_tunnel target=149.154.167.91:443 active=43
+2026/04/25 11:38:49.712272 [IR] session=sess_1 stream=30 open_ok active=43
+2026/04/25 11:38:49.726116 [IR] session=sess_1 stream=32 open_ok active=43
+2026/04/25 11:38:49.729459 [IR] session=sess_1 stream=30 new_tunnel target=149.154.167.91:443 active=43
+2026/04/25 11:38:49.731855 [IR] session=sess_1 stream=32 new_tunnel target=149.154.167.91:443 active=43
+2026/04/25 11:38:49.782858 [IR] session=sess_1 stream=34 open_ok active=43
+2026/04/25 11:38:49.782959 [IR] session=sess_1 stream=36 open_ok active=43
+2026/04/25 11:38:49.782967 [IR] session=sess_1 stream=38 open_ok active=43
+2026/04/25 11:38:49.782971 [IR] session=sess_1 stream=40 open_ok active=43
+2026/04/25 11:38:49.782978 [IR] session=sess_1 stream=42 open_ok active=43
+2026/04/25 11:38:49.784217 [IR] session=sess_1 stream=44 open_ok active=43
+2026/04/25 11:38:49.786174 [IR] session=sess_1 stream=46 open_ok active=43
+2026/04/25 11:38:49.793988 [IR] session=sess_1 stream=44 new_tunnel target=1.1.1.1:853 active=43
+2026/04/25 11:38:49.794044 [IR] session=sess_1 stream=36 new_tunnel target=149.154.167.91:80 active=43
+2026/04/25 11:38:49.794127 [IR] session=sess_1 stream=34 new_tunnel target=149.154.167.91:80 active=43
+2026/04/25 11:38:49.794179 [IR] session=sess_1 stream=46 new_tunnel target=1.1.1.1:853 active=43
+2026/04/25 11:38:49.794197 [IR] session=sess_1 stream=38 new_tunnel target=149.154.167.92:443 active=43
+2026/04/25 11:38:49.794264 [IR] session=sess_1 stream=42 new_tunnel target=149.154.167.92:5222 active=43
+2026/04/25 11:38:49.794306 [IR] session=sess_1 stream=40 new_tunnel target=149.154.167.92:443 active=43
+2026/04/25 11:38:49.797045 [IR] session=sess_1 stream=50 open_ok active=43
+2026/04/25 11:38:49.797877 [IR] session=sess_1 stream=52 open_ok active=43
+2026/04/25 11:38:49.808733 [IR] session=sess_1 stream=48 open_ok active=43
+2026/04/25 11:38:49.814341 [IR] session=sess_1 stream=48 new_tunnel target=149.154.167.91:443 active=43
+2026/04/25 11:38:49.814417 [IR] session=sess_1 stream=50 new_tunnel target=149.154.167.92:443 active=43
+2026/04/25 11:38:49.814484 [IR] session=sess_1 stream=52 new_tunnel target=185.250.41.30:22 active=43
+2026/04/25 11:38:49.824203 [IR] session=sess_1 stream=54 open_ok active=43
+2026/04/25 11:38:49.834496 [IR] session=sess_1 stream=54 new_tunnel target=149.154.167.43:443 active=43
+2026/04/25 11:38:49.934127 [IR] session=sess_1 stream=56 open_ok active=43
+2026/04/25 11:38:49.936494 [IR] session=sess_1 stream=56 new_tunnel target=149.154.175.58:443 active=43
+2026/04/25 11:38:49.947961 [IR] session=sess_1 stream=58 open_ok active=43
+2026/04/25 11:38:49.956756 [IR] session=sess_1 stream=58 new_tunnel target=155.117.5.155:43030 active=43
+2026/04/25 11:38:49.959874 [IR] session=sess_1 stream=60 open_ok active=43
+2026/04/25 11:38:49.970743 [IR] session=sess_1 stream=62 open_ok active=43
+2026/04/25 11:38:49.977498 [IR] session=sess_1 stream=60 new_tunnel target=149.154.167.91:443 active=43
+2026/04/25 11:38:49.977633 [IR] session=sess_1 stream=62 new_tunnel target=149.154.167.91:80 active=43
+2026/04/25 11:38:50.277814 [IR] session=sess_1 stream=64 open_ok active=43
+2026/04/25 11:38:50.288458 [IR] session=sess_1 stream=64 new_tunnel target=mtalk.google.com:5228 active=43
+2026/04/25 11:38:50.585268 [IR] session=sess_1 stream=66 open_ok active=43
+2026/04/25 11:38:50.604269 [IR] session=sess_1 stream=66 new_tunnel target=www.google.com:443 active=43
+2026/04/25 11:38:50.899301 [IR] session=sess_1 stream=68 open_ok active=43
+2026/04/25 11:38:50.899388 [IR] session=sess_1 stream=68 new_tunnel target=api.telegram.org:443 active=43
+2026/04/25 11:38:51.206546 [IR] session=sess_1 stream=70 open_ok active=45
+2026/04/25 11:38:51.216811 [IR] session=sess_1 stream=70 new_tunnel target=android.apis.google.com:443 active=45
+2026/04/25 11:38:51.514421 [IR] session=sess_1 stream=72 open_ok active=45
+2026/04/25 11:38:51.529188 [IR] session=sess_1 stream=72 new_tunnel target=clients4.google.com:443 active=45
+2026/04/25 11:38:51.823505 [IR] session=sess_1 stream=74 open_ok active=45
+2026/04/25 11:38:51.839904 [IR] session=sess_1 stream=74 new_tunnel target=safebrowsing.google.com:443 active=45
+2026/04/25 11:38:52.132148 [IR] session=sess_1 stream=76 open_ok active=45
+2026/04/25 11:38:52.151721 [IR] session=sess_1 stream=76 new_tunnel target=optimizationguide-pa.googleapis.com:443 active=45
+2026/04/25 11:38:52.438795 [IR] session=sess_1 stream=78 open_ok active=45
+2026/04/25 11:38:52.439948 [IR] session=sess_1 stream=78 new_tunnel target=mqtt-mini.facebook.com:443 active=45
+2026/04/25 11:38:52.741240 [IR] session=sess_1 stream=80 open_ok active=45
+2026/04/25 11:38:52.748595 [IR] session=sess_1 stream=80 new_tunnel target=mqtt-mini.facebook.com:443 active=45
+2026/04/25 11:38:53.052481 [IR] session=sess_1 stream=82 open_ok active=45
+2026/04/25 11:38:53.056885 [IR] session=sess_1 stream=82 new_tunnel target=ws.chatgpt.com:443 active=45
+2026/04/25 11:38:53.145210 [IR] session=sess_1 stream=84 open_ok active=45
+2026/04/25 11:38:53.160564 [IR] session=sess_1 stream=84 new_tunnel target=alive.github.com:443 active=45
+2026/04/25 11:38:53.235774 [IR] session=sess_1 stream=88 open_ok active=45
+2026/04/25 11:38:53.243124 [IR] session=sess_1 stream=88 new_tunnel target=alive.github.com:443 active=45
+2026/04/25 11:38:53.325945 [IR] session=sess_1 stream=86 open_ok active=45
+2026/04/25 11:38:53.326147 [IR] session=sess_1 stream=86 new_tunnel target=alive.github.com:443 active=45
+2026/04/25 11:38:53.394140 [IR] session=sess_1 stream=50 summary reason=local-close age_ms=4051 bytes_client=409 bytes_outer=6052 frames_client=1 frames_outer=2
+2026/04/25 11:38:53.421951 [IR] session=sess_1 stream=42 summary reason=local-close age_ms=4080 bytes_client=610 bytes_outer=11677 frames_client=1 frames_outer=2
+2026/04/25 11:38:53.462881 [IR] session=sess_1 stream=14 summary reason=local-close age_ms=4126 bytes_client=4596 bytes_outer=1862 frames_client=1 frames_outer=3
+2026/04/25 11:38:53.476640 [IR] session=sess_1 stream=38 summary reason=local-close age_ms=4135 bytes_client=393 bytes_outer=12945 frames_client=1 frames_outer=2
+2026/04/25 11:38:53.483234 [IR] session=sess_1 stream=90 open_ok active=41
+2026/04/25 11:38:53.483307 [IR] session=sess_1 stream=92 open_ok active=41
+2026/04/25 11:38:53.492456 [IR] session=sess_1 stream=90 new_tunnel target=149.154.175.58:443 active=41
+2026/04/25 11:38:53.492632 [IR] session=sess_1 stream=92 new_tunnel target=149.154.167.43:443 active=41
+2026/04/25 11:38:53.850788 [IR] session=sess_1 stream=94 open_ok active=43
+2026/04/25 11:38:53.853019 [IR] session=sess_1 stream=94 new_tunnel target=alive.github.com:443 active=43
+2026/04/25 11:38:53.959934 [IR] session=sess_1 stream=96 open_ok active=43
+2026/04/25 11:38:53.962214 [IR] session=sess_1 stream=96 new_tunnel target=alive.github.com:443 active=43
+2026/04/25 11:38:54.685361 [IR] session=sess_1 stream=98 open_ok active=45
+2026/04/25 11:38:54.697693 [IR] session=sess_1 stream=98 new_tunnel target=mtalk.google.com:5228 active=45
+2026/04/25 11:38:54.999530 [IR] session=sess_1 stream=100 open_ok active=45
+2026/04/25 11:38:55.002787 [IR] session=sess_1 stream=100 new_tunnel target=z-m-gateway.facebook.com:443 active=45
+2026/04/25 11:38:55.868143 [IR] session=sess_1 stream=102 open_ok active=46
+2026/04/25 11:38:55.877477 [IR] session=sess_1 stream=102 new_tunnel target=www.google.com:443 active=46
+2026/04/25 11:38:55.957014 [IR] session=sess_1 stream=86 summary reason=remote-close age_ms=6472 bytes_client=3034 bytes_outer=3869 frames_client=4 frames_outer=5
+2026/04/25 11:38:55.959136 [IR] session=sess_1 stream=88 summary reason=remote-close age_ms=6474 bytes_client=3051 bytes_outer=3869 frames_client=3 frames_outer=6
+2026/04/25 11:38:56.052307 [IR] session=sess_1 stream=84 summary reason=remote-close age_ms=6568 bytes_client=3036 bytes_outer=3869 frames_client=4 frames_outer=5
+2026/04/25 11:38:58.514506 [IR] session=sess_1 stream=104 open_ok active=44
+2026/04/25 11:38:58.526817 [IR] session=sess_1 stream=104 new_tunnel target=www.google.com:443 active=44
+2026/04/25 11:39:00.597708 [IR] session=sess_1 stream=66 summary reason=remote-close age_ms=11250 bytes_client=1894 bytes_outer=4079 frames_client=2 frames_outer=1
+2026/04/25 11:39:01.140137 [IR] session=sess_1 stream=106 open_ok active=44
+2026/04/25 11:39:01.154490 [IR] session=sess_1 stream=106 new_tunnel target=ssl.gstatic.com:443 active=44
+2026/04/25 11:39:02.968806 [IR] session=sess_1 stats connected=true ready=true request_running=true active=44 frames_in=220 frames_out=196 bytes_in=165826 bytes_out=90259 slow_writes=0 last_in=1777117142 last_out=1777117142
+2026/04/25 11:39:05.575022 [IR] session=sess_1 stream=44 summary reason=remote-close age_ms=16233 bytes_client=757 bytes_outer=1137 frames_client=4 frames_outer=3
+2026/04/25 11:39:05.575105 [IR] session=sess_1 stream=46 summary reason=remote-close age_ms=16232 bytes_client=757 bytes_outer=1137 frames_client=4 frames_outer=3
+2026/04/25 11:39:06.887375 [IR] session=sess_1 stream=108 open_ok active=43
+2026/04/25 11:39:06.898680 [IR] session=sess_1 stream=108 new_tunnel target=ws.chatgpt.com:443 active=43
+2026/04/25 11:39:10.659693 [IR] session=sess_1 stream=110 open_ok active=45
+2026/04/25 11:39:10.659773 [IR] session=sess_1 stream=110 new_tunnel target=www.google.com:443 active=45
+2026/04/25 11:39:10.980659 [IR] session=sess_1 stream=112 open_ok active=45
+2026/04/25 11:39:10.983909 [IR] session=sess_1 stream=112 new_tunnel target=chatgpt.com:443 active=45
+2026/04/25 11:39:12.136452 [IR] session=sess_1 stream=114 open_ok active=47
+2026/04/25 11:39:12.146711 [IR] session=sess_1 stream=114 new_tunnel target=www.google.com:443 active=47
+2026/04/25 11:39:12.450423 [IR] session=sess_1 stream=116 open_ok active=47
+2026/04/25 11:39:12.451577 [IR] session=sess_1 stream=116 new_tunnel target=ogads-pa.clients6.google.com:443 active=47
+2026/04/25 11:39:13.099181 [IR] session=sess_1 stream=118 open_ok active=49
+2026/04/25 11:39:13.108468 [IR] session=sess_1 stream=118 new_tunnel target=play.google.com:443 active=49
+2026/04/25 11:39:13.417131 [IR] session=sess_1 stream=120 open_ok active=50
+2026/04/25 11:39:13.427146 [IR] session=sess_1 stream=120 new_tunnel target=ogads-pa.clients6.google.com:443 active=50
+2026/04/25 11:39:13.730781 [IR] session=sess_1 stream=122 open_ok active=50
+2026/04/25 11:39:13.744067 [IR] session=sess_1 stream=122 new_tunnel target=accounts.google.com:443 active=50
+2026/04/25 11:39:14.246313 [IR] session=sess_1 stream=124 open_ok active=52
+2026/04/25 11:39:14.256472 [IR] session=sess_1 stream=124 new_tunnel target=www.youtube.com:443 active=52
+2026/04/25 11:39:14.549361 [IR] session=sess_1 stream=126 open_ok active=52
+2026/04/25 11:39:14.550767 [IR] session=sess_1 stream=126 new_tunnel target=ogads-pa.clients6.google.com:443 active=52
+2026/04/25 11:39:15.438606 [IR] session=sess_1 stream=128 open_ok active=55
+2026/04/25 11:39:15.446876 [IR] session=sess_1 stream=128 new_tunnel target=i.ytimg.com:443 active=55
+2026/04/25 11:39:15.752299 [IR] session=sess_1 stream=130 open_ok active=55
+2026/04/25 11:39:15.754042 [IR] session=sess_1 stream=132 open_ok active=55
+2026/04/25 11:39:15.763547 [IR] session=sess_1 stream=130 new_tunnel target=fonts.gstatic.com:443 active=55
+2026/04/25 11:39:15.767157 [IR] session=sess_1 stream=132 new_tunnel target=8.8.8.8:853 active=55
+2026/04/25 11:39:16.295297 [IR] session=sess_1 stream=132 summary reason=remote-close age_ms=858 bytes_client=472 bytes_outer=5352 frames_client=5 frames_outer=3
+2026/04/25 11:39:17.464582 [IR] session=sess_1 stream=134 open_ok active=56
+2026/04/25 11:39:17.473614 [IR] session=sess_1 stream=134 new_tunnel target=yt3.ggpht.com:443 active=56
+2026/04/25 11:39:17.897336 [IR] session=sess_1 stream=136 open_ok active=58
+2026/04/25 11:39:17.905578 [IR] session=sess_1 stream=136 new_tunnel target=www.gstatic.com:443 active=58
+2026/04/25 11:39:17.968705 [IR] session=sess_1 stats connected=true ready=true request_running=true active=58 frames_in=548 frames_out=386 bytes_in=743868 bytes_out=271096 slow_writes=0 last_in=1777117157 last_out=1777117157
+2026/04/25 11:39:18.204245 [IR] session=sess_1 stream=138 open_ok active=58
+2026/04/25 11:39:18.207447 [IR] session=sess_1 stream=138 new_tunnel target=www.gstatic.com:443 active=58
+2026/04/25 11:39:18.518890 [IR] session=sess_1 stream=140 open_ok active=58
+2026/04/25 11:39:18.526683 [IR] session=sess_1 stream=140 new_tunnel target=accounts.youtube.com:443 active=58
+2026/04/25 11:39:19.009232 [IR] session=sess_1 stream=142 open_ok active=59
+2026/04/25 11:39:19.026494 [IR] session=sess_1 stream=142 new_tunnel target=149.154.167.92:443 active=59
+2026/04/25 11:39:19.133676 [IR] session=sess_1 stream=40 summary reason=remote-close age_ms=29792 bytes_client=2710 bytes_outer=1079 frames_client=7 frames_outer=3
+2026/04/25 11:39:19.593953 [IR] session=sess_1 stream=144 open_ok active=59
+2026/04/25 11:39:19.603267 [IR] session=sess_1 stream=144 new_tunnel target=149.154.167.151:443 active=59
+2026/04/25 11:39:19.705993 [IR] session=sess_1 stream=146 open_ok active=60
+2026/04/25 11:39:19.715496 [IR] session=sess_1 stream=146 new_tunnel target=8.8.8.8:53 active=60
+2026/04/25 11:39:20.166919 [IR] session=sess_1 stream=148 open_ok active=63
+2026/04/25 11:39:20.168680 [IR] session=sess_1 stream=150 open_ok active=63
+2026/04/25 11:39:20.170711 [IR] session=sess_1 stream=152 open_ok active=63
+2026/04/25 11:39:20.174970 [IR] session=sess_1 stream=152 new_tunnel target=142.251.127.139:443 active=63
+2026/04/25 11:39:20.181687 [IR] session=sess_1 stream=148 new_tunnel target=fast.com:443 active=63
+2026/04/25 11:39:20.188226 [IR] session=sess_1 stream=150 new_tunnel target=8.8.8.8:53 active=63
+2026/04/25 11:39:20.434130 [IR] session=sess_1 stream=154 open_ok active=65
+2026/04/25 11:39:20.438497 [IR] session=sess_1 stream=156 open_ok active=65
+2026/04/25 11:39:20.442752 [IR] session=sess_1 stream=154 new_tunnel target=142.250.154.156:443 active=65
+2026/04/25 11:39:20.446669 [IR] session=sess_1 stream=156 new_tunnel target=142.250.154.156:443 active=65
+2026/04/25 11:39:20.812712 [IR] session=sess_1 stream=158 open_ok active=67
+2026/04/25 11:39:20.822063 [IR] session=sess_1 stream=158 new_tunnel target=8.8.8.8:53 active=67
+2026/04/25 11:39:20.871186 [IR] session=sess_1 stream=160 open_ok active=67
+2026/04/25 11:39:20.880521 [IR] session=sess_1 stream=160 new_tunnel target=8.8.8.8:53 active=67
+2026/04/25 11:39:21.062774 [IR] session=sess_1 stream=162 open_ok active=72
+2026/04/25 11:39:21.063297 [IR] session=sess_1 stream=164 open_ok active=72
+2026/04/25 11:39:21.065038 [IR] session=sess_1 stream=166 open_ok active=72
+2026/04/25 11:39:21.070371 [IR] session=sess_1 stream=164 new_tunnel target=8.8.8.8:53 active=72
+2026/04/25 11:39:21.070515 [IR] session=sess_1 stream=162 new_tunnel target=142.251.20.94:443 active=72
+2026/04/25 11:39:21.075151 [IR] session=sess_1 stream=166 new_tunnel target=8.8.8.8:53 active=72
+2026/04/25 11:39:21.121400 [IR] session=sess_1 stream=168 open_ok active=72
+2026/04/25 11:39:21.130728 [IR] session=sess_1 stream=168 new_tunnel target=8.8.8.8:53 active=72
+2026/04/25 11:39:21.149401 [IR] session=sess_1 stream=170 open_ok active=72
+2026/04/25 11:39:21.157752 [IR] session=sess_1 stream=170 new_tunnel target=142.251.20.95:443 active=72
+2026/04/25 11:39:21.346271 [IR] session=sess_1 stream=172 open_ok active=74
+2026/04/25 11:39:21.354602 [IR] session=sess_1 stream=172 new_tunnel target=142.251.127.84:443 active=74
+2026/04/25 11:39:21.374125 [IR] session=sess_1 stream=174 open_ok active=74
+2026/04/25 11:39:21.383411 [IR] session=sess_1 stream=174 new_tunnel target=142.251.153.119:443 active=74
+2026/04/25 11:39:21.813708 [IR] session=sess_1 stream=146 summary reason=remote-close age_ms=2201 bytes_client=53 bytes_outer=170 frames_client=1 frames_outer=1
+2026/04/25 11:39:22.287210 [IR] session=sess_1 stream=150 summary reason=remote-close age_ms=2409 bytes_client=47 bytes_outer=111 frames_client=1 frames_outer=1
+2026/04/25 11:39:22.350147 [IR] session=sess_1 stream=176 open_ok active=73
+2026/04/25 11:39:22.357459 [IR] session=sess_1 stream=176 new_tunnel target=ichnaea-web.netflix.com:443 active=73
+2026/04/25 11:39:22.919529 [IR] session=sess_1 stream=158 summary reason=remote-close age_ms=2199 bytes_client=37 bytes_outer=53 frames_client=1 frames_outer=1
+2026/04/25 11:39:22.980128 [IR] session=sess_1 stream=160 summary reason=remote-close age_ms=2202 bytes_client=40 bytes_outer=56 frames_client=1 frames_outer=1
+2026/04/25 11:39:23.169554 [IR] session=sess_1 stream=164 summary reason=remote-close age_ms=2202 bytes_client=39 bytes_outer=89 frames_client=1 frames_outer=1
+2026/04/25 11:39:23.174212 [IR] session=sess_1 stream=166 summary reason=remote-close age_ms=2202 bytes_client=39 bytes_outer=55 frames_client=1 frames_outer=1
+2026/04/25 11:39:23.228468 [IR] session=sess_1 stream=168 summary reason=remote-close age_ms=2200 bytes_client=34 bytes_outer=162 frames_client=1 frames_outer=1
+2026/04/25 11:39:25.183336 [IR] session=sess_1 stream=178 open_ok active=69
+2026/04/25 11:39:25.202595 [IR] session=sess_1 stream=178 new_tunnel target=149.154.167.43:443 active=69
+2026/04/25 11:39:26.184982 [IR] session=sess_1 stream=180 open_ok active=70
+2026/04/25 11:39:26.188282 [IR] session=sess_1 stream=180 new_tunnel target=149.154.167.43:443 active=70
+2026/04/25 11:39:26.853965 [IR] session=sess_1 stream=182 open_ok active=72
+2026/04/25 11:39:26.874136 [IR] session=sess_1 stream=182 new_tunnel target=91.108.56.144:443 active=72
+2026/04/25 11:39:26.965432 [IR] session=sess_1 stream=184 open_ok active=72
+2026/04/25 11:39:26.976735 [IR] session=sess_1 stream=184 new_tunnel target=149.154.175.58:443 active=72
+2026/04/25 11:39:28.064293 [IR] session=sess_1 stream=10 summary reason=remote-close age_ms=38728 bytes_client=546 bytes_outer=7018 frames_client=1 frames_outer=1
+2026/04/25 11:39:28.865003 [IR] session=sess_1 stream=186 open_ok active=73
+2026/04/25 11:39:28.873360 [IR] session=sess_1 stream=188 open_ok active=73
+2026/04/25 11:39:28.880761 [IR] session=sess_1 stream=186 new_tunnel target=149.154.167.43:443 active=73
+2026/04/25 11:39:28.880942 [IR] session=sess_1 stream=188 new_tunnel target=149.154.167.43:80 active=73
+2026/04/25 11:39:30.960992 [IR] session=sess_1 stream=190 open_ok active=74
+2026/04/25 11:39:30.967320 [IR] session=sess_1 stream=190 new_tunnel target=api.fast.com:443 active=74
+2026/04/25 11:39:31.811311 [IR] session=sess_1 stream=192 open_ok active=76
+2026/04/25 11:39:31.814609 [IR] session=sess_1 stream=194 open_ok active=76
+2026/04/25 11:39:31.816902 [IR] session=sess_1 stream=194 new_tunnel target=ipv4-c240-fra002-ix.1.oca.nflxvideo.net:443 active=76
+2026/04/25 11:39:31.817128 [IR] session=sess_1 stream=192 new_tunnel target=ipv4-c240-fra002-ix.1.oca.nflxvideo.net:443 active=76
+2026/04/25 11:39:32.968805 [IR] session=sess_1 stats connected=true ready=true request_running=true active=78 frames_in=968 frames_out=592 bytes_in=3360325 bytes_out=370099 slow_writes=0 last_in=1777117172 last_out=1777117172
+2026/04/25 11:39:33.642906 [IR] session=sess_1 stream=196 open_ok active=78
+2026/04/25 11:39:33.644288 [IR] session=sess_1 stream=196 new_tunnel target=ipv4-c010-fra002-dev-ix.1.oca.nflxvideo.net:443 active=78
+2026/04/25 11:39:33.980366 [IR] session=sess_1 stream=198 open_ok active=78
+2026/04/25 11:39:33.992301 [IR] session=sess_1 stream=198 new_tunnel target=ipv4-c010-fra002-dev-ix.1.oca.nflxvideo.net:443 active=78
+2026/04/25 11:39:36.268632 [IR] session=sess_1 stream=200 open_ok active=80
+2026/04/25 11:39:36.275693 [IR] session=sess_1 stream=200 new_tunnel target=8.8.8.8:853 active=80
+2026/04/25 11:39:37.506778 [IR] session=sess_1 stream=202 open_ok active=82
+2026/04/25 11:39:37.521658 [IR] session=sess_1 stream=202 new_tunnel target=www.googleapis.com:443 active=82
+2026/04/25 11:39:38.543701 [IR] session=sess_1 stream=204 open_ok active=86
+2026/04/25 11:39:38.564566 [IR] session=sess_1 stream=204 new_tunnel target=149.154.167.91:443 active=86
+2026/04/25 11:39:39.219463 [IR] session=sess_1 stream=206 open_ok active=86
+2026/04/25 11:39:39.226166 [IR] session=sess_1 stream=206 new_tunnel target=149.154.167.91:443 active=86
+2026/04/25 11:39:39.847639 [IR] session=sess_1 stream=208 open_ok active=86
+2026/04/25 11:39:39.864641 [IR] session=sess_1 stream=208 new_tunnel target=ipv4-c046-bru001-ix.1.oca.nflxvideo.net:443 active=86
+2026/04/25 11:39:40.463558 [IR] session=sess_1 stream=210 open_ok active=86
+2026/04/25 11:39:40.483416 [IR] session=sess_1 stream=210 new_tunnel target=ipv4-c071-bru001-ix.1.oca.nflxvideo.net:443 active=86
+2026/04/25 11:39:41.109006 [IR] session=sess_1 stream=212 open_ok active=86
+2026/04/25 11:39:41.122733 [IR] session=sess_1 stream=212 new_tunnel target=ipv4-c071-bru001-ix.1.oca.nflxvideo.net:443 active=86
+2026/04/25 11:39:41.388184 [IR] session=sess_1 stream=214 open_ok active=86
+2026/04/25 11:39:41.390217 [IR] session=sess_1 stream=214 new_tunnel target=ipv4-c046-bru001-ix.1.oca.nflxvideo.net:443 active=86
+2026/04/25 11:39:47.968685 [IR] session=sess_1 stats connected=true ready=true request_running=true active=86 frames_in=1155 frames_out=678 bytes_in=29176467 bytes_out=414646 slow_writes=0 last_in=1777117187 last_out=1777117186
+2026/04/25 11:39:54.276842 [IR] session=sess_1 stream=216 open_ok active=100
+2026/04/25 11:39:54.287120 [IR] session=sess_1 stream=216 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:39:54.968962 [IR] session=sess_1 stream=218 open_ok active=100
+2026/04/25 11:39:54.984176 [IR] session=sess_1 stream=218 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:39:55.968923 [IR] session=sess_1 stream=220 open_ok active=100
+2026/04/25 11:39:55.988578 [IR] session=sess_1 stream=220 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:39:56.949994 [IR] session=sess_1 stream=222 open_ok active=100
+2026/04/25 11:39:56.960181 [IR] session=sess_1 stream=222 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:39:57.207796 [IR] session=sess_1 stream=212 summary reason=local-close age_ms=19611 bytes_client=3317 bytes_outer=3957209 frames_client=4 frames_outer=19
+2026/04/25 11:39:57.432058 [IR] session=sess_1 stream=194 summary reason=local-close age_ms=25717 bytes_client=3540 bytes_outer=22650116 frames_client=4 frames_outer=147
+2026/04/25 11:39:57.615637 [IR] session=sess_1 stream=224 open_ok active=100
+2026/04/25 11:39:57.615778 [IR] session=sess_1 stream=198 summary reason=local-close age_ms=24953 bytes_client=3554 bytes_outer=12062106 frames_client=4 frames_outer=50
+2026/04/25 11:39:57.623306 [IR] session=sess_1 stream=224 new_tunnel target=pes22-game.cs.konami.net:443 active=99
+2026/04/25 11:39:58.017061 [IR] session=sess_1 stream=214 summary reason=local-close age_ms=20380 bytes_client=3606 bytes_outer=5508506 frames_client=4 frames_outer=25
+2026/04/25 11:39:58.535559 [IR] session=sess_1 stream=226 open_ok active=99
+2026/04/25 11:39:58.551828 [IR] session=sess_1 stream=226 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:39:59.818292 [IR] session=sess_1 stream=228 open_ok active=100
+2026/04/25 11:39:59.833324 [IR] session=sess_1 stream=228 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:40:00.572440 [IR] session=sess_1 stream=230 open_ok active=100
+2026/04/25 11:40:00.577534 [IR] session=sess_1 stream=230 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:40:01.743578 [IR] session=sess_1 stream=232 open_ok active=100
+2026/04/25 11:40:01.757138 [IR] session=sess_1 stream=232 new_tunnel target=pes22-game.cs.konami.net:443 active=100
+2026/04/25 11:40:02.321381 [IR] session=sess_1 stream=234 open_ok active=100
+2026/04/25 11:40:02.332901 [IR] session=sess_1 stream=234 new_tunnel target=android.apis.google.com:443 active=100
+2026/04/25 11:40:02.969573 [IR] session=sess_1 stats connected=true ready=true request_running=true active=102 frames_in=1301 frames_out=748 bytes_in=54894575 bytes_out=436670 slow_writes=0 last_in=1777117202 last_out=1777117202
+2026/04/25 11:40:03.128814 [IR] session=sess_1 stream=236 open_ok active=102
+2026/04/25 11:40:03.138040 [IR] session=sess_1 stream=236 new_tunnel target=www.googleapis.com:443 active=102
+2026/04/25 11:40:03.246787 [IR] session=sess_1 stream=94 summary reason=remote-close age_ms=69578 bytes_client=3616 bytes_outer=3942 frames_client=4 frames_outer=6
+2026/04/25 11:40:03.246839 [IR] session=sess_1 stream=96 summary reason=remote-close age_ms=69469 bytes_client=6083 bytes_outer=3942 frames_client=4 frames_outer=6
+2026/04/25 11:40:03.840420 [IR] session=sess_1 stream=238 open_ok active=102
+2026/04/25 11:40:03.859614 [IR] session=sess_1 stream=238 new_tunnel target=ipv4-c186-ams001-ix.1.oca.nflxvideo.net:443 active=102
+2026/04/25 11:40:03.885105 [IR] session=sess_1 request_body_closed
+2026/04/25 11:40:03.885689 [IR] session=sess_1 stream=230 fail err=unexpected EOF
+2026/04/25 11:40:03.885726 [IR] session=sess_1 stream=230 summary reason=fail age_ms=11642 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.885751 [IR] session=sess_1 stream=36 fail err=unexpected EOF
+2026/04/25 11:40:03.885755 [IR] session=sess_1 stream=36 summary reason=fail age_ms=74544 bytes_client=392 bytes_outer=315 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885759 [IR] session=sess_1 stream=220 fail err=unexpected EOF
+2026/04/25 11:40:03.885762 [IR] session=sess_1 stream=220 summary reason=fail age_ms=11642 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.885765 [IR] session=sess_1 stream=228 fail err=unexpected EOF
+2026/04/25 11:40:03.885767 [IR] session=sess_1 stream=228 summary reason=fail age_ms=11642 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.885771 [IR] session=sess_1 stream=236 fail err=unexpected EOF
+2026/04/25 11:40:03.885774 [IR] session=sess_1 stream=236 summary reason=fail age_ms=11384 bytes_client=403 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.885777 [IR] session=sess_1 stream=238 fail err=unexpected EOF
+2026/04/25 11:40:03.885779 [IR] session=sess_1 stream=238 summary reason=fail age_ms=11382 bytes_client=1749 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.885784 [IR] session=sess_1 stream=186 fail err=unexpected EOF
+2026/04/25 11:40:03.885787 [IR] session=sess_1 stream=186 summary reason=fail age_ms=35127 bytes_client=1738 bytes_outer=13791 frames_client=6 frames_outer=6
+2026/04/25 11:40:03.885791 [IR] session=sess_1 stream=48 fail err=unexpected EOF
+2026/04/25 11:40:03.885793 [IR] session=sess_1 stream=48 summary reason=fail age_ms=74543 bytes_client=402 bytes_outer=178 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885798 [IR] session=sess_1 stream=82 fail err=unexpected EOF
+2026/04/25 11:40:03.885801 [IR] session=sess_1 stream=82 summary reason=fail age_ms=74464 bytes_client=8522 bytes_outer=4995 frames_client=8 frames_outer=5
+2026/04/25 11:40:03.885805 [IR] session=sess_1 stream=118 fail err=unexpected EOF
+2026/04/25 11:40:03.885807 [IR] session=sess_1 stream=118 summary reason=fail age_ms=51186 bytes_client=17767 bytes_outer=5601 frames_client=15 frames_outer=10
+2026/04/25 11:40:03.885811 [IR] session=sess_1 stream=122 fail err=unexpected EOF
+2026/04/25 11:40:03.885813 [IR] session=sess_1 stream=122 summary reason=fail age_ms=50654 bytes_client=2294 bytes_outer=2436 frames_client=2 frames_outer=2
+2026/04/25 11:40:03.885817 [IR] session=sess_1 stream=140 fail err=unexpected EOF
+2026/04/25 11:40:03.885819 [IR] session=sess_1 stream=140 summary reason=fail age_ms=46259 bytes_client=6109 bytes_outer=5308 frames_client=8 frames_outer=5
+2026/04/25 11:40:03.885822 [IR] session=sess_1 stream=252 fail err=unexpected EOF
+2026/04/25 11:40:03.885824 [IR] session=sess_1 stream=252 summary reason=fail age_ms=1105 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.885828 [IR] session=sess_1 stream=200 fail err=unexpected EOF
+2026/04/25 11:40:03.885831 [IR] session=sess_1 stream=200 summary reason=fail age_ms=28534 bytes_client=1365 bytes_outer=7600 frames_client=4 frames_outer=3
+2026/04/25 11:40:03.885835 [IR] session=sess_1 stream=30 fail err=unexpected EOF
+2026/04/25 11:40:03.885838 [IR] session=sess_1 stream=30 summary reason=fail age_ms=74545 bytes_client=8082 bytes_outer=38220 frames_client=31 frames_outer=40
+2026/04/25 11:40:03.885841 [IR] session=sess_1 stream=258 fail err=unexpected EOF
+2026/04/25 11:40:03.885843 [IR] session=sess_1 stream=258 summary reason=fail age_ms=68 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.885847 [IR] session=sess_1 stream=178 fail err=unexpected EOF
+2026/04/25 11:40:03.885849 [IR] session=sess_1 stream=178 summary reason=fail age_ms=38805 bytes_client=2536 bytes_outer=22075 frames_client=3 frames_outer=16
+2026/04/25 11:40:03.885853 [IR] session=sess_1 stream=196 fail err=unexpected EOF
+2026/04/25 11:40:03.885855 [IR] session=sess_1 stream=196 summary reason=fail age_ms=31223 bytes_client=10920 bytes_outer=4190 frames_client=15 frames_outer=13
+2026/04/25 11:40:03.885862 [IR] session=sess_1 stream=244 fail err=unexpected EOF
+2026/04/25 11:40:03.885864 [IR] session=sess_1 stream=244 summary reason=fail age_ms=6387 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.885869 [IR] session=sess_1 stream=78 fail err=unexpected EOF
+2026/04/25 11:40:03.885871 [IR] session=sess_1 stream=78 summary reason=fail age_ms=74465 bytes_client=960 bytes_outer=3509 frames_client=3 frames_outer=3
+2026/04/25 11:40:03.885875 [IR] session=sess_1 stream=80 fail err=unexpected EOF
+2026/04/25 11:40:03.885877 [IR] session=sess_1 stream=80 summary reason=fail age_ms=74465 bytes_client=853 bytes_outer=3621 frames_client=3 frames_outer=3
+2026/04/25 11:40:03.885880 [IR] session=sess_1 stream=90 fail err=unexpected EOF
+2026/04/25 11:40:03.885882 [IR] session=sess_1 stream=90 summary reason=fail age_ms=72866 bytes_client=409 bytes_outer=153 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885886 [IR] session=sess_1 stream=142 fail err=unexpected EOF
+2026/04/25 11:40:03.885888 [IR] session=sess_1 stream=142 summary reason=fail age_ms=44980 bytes_client=14440 bytes_outer=212603 frames_client=37 frames_outer=76
+2026/04/25 11:40:03.885892 [IR] session=sess_1 stream=188 fail err=unexpected EOF
+2026/04/25 11:40:03.885895 [IR] session=sess_1 stream=188 summary reason=fail age_ms=35127 bytes_client=328 bytes_outer=299 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885898 [IR] session=sess_1 stream=232 fail err=unexpected EOF
+2026/04/25 11:40:03.885900 [IR] session=sess_1 stream=232 summary reason=fail age_ms=11642 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.885904 [IR] session=sess_1 stream=108 fail err=unexpected EOF
+2026/04/25 11:40:03.885906 [IR] session=sess_1 stream=108 summary reason=fail age_ms=57393 bytes_client=8691 bytes_outer=3018 frames_client=8 frames_outer=5
+2026/04/25 11:40:03.885910 [IR] session=sess_1 stream=16 fail err=unexpected EOF
+2026/04/25 11:40:03.885912 [IR] session=sess_1 stream=16 summary reason=fail age_ms=74549 bytes_client=626 bytes_outer=178 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885916 [IR] session=sess_1 stream=18 fail err=unexpected EOF
+2026/04/25 11:40:03.885918 [IR] session=sess_1 stream=18 summary reason=fail age_ms=74548 bytes_client=466 bytes_outer=178 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885921 [IR] session=sess_1 stream=32 fail err=unexpected EOF
+2026/04/25 11:40:03.885923 [IR] session=sess_1 stream=32 summary reason=fail age_ms=74545 bytes_client=514 bytes_outer=178 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885927 [IR] session=sess_1 stream=68 fail err=unexpected EOF
+2026/04/25 11:40:03.885929 [IR] session=sess_1 stream=68 summary reason=fail age_ms=74472 bytes_client=2440 bytes_outer=6358 frames_client=5 frames_outer=6
+2026/04/25 11:40:03.885932 [IR] session=sess_1 stream=112 fail err=unexpected EOF
+2026/04/25 11:40:03.885934 [IR] session=sess_1 stream=112 summary reason=fail age_ms=53413 bytes_client=19384 bytes_outer=5492 frames_client=12 frames_outer=4
+2026/04/25 11:40:03.885938 [IR] session=sess_1 stream=134 fail err=unexpected EOF
+2026/04/25 11:40:03.885940 [IR] session=sess_1 stream=134 summary reason=fail age_ms=46821 bytes_client=3456 bytes_outer=2644 frames_client=4 frames_outer=4
+2026/04/25 11:40:03.885944 [IR] session=sess_1 stream=136 fail err=unexpected EOF
+2026/04/25 11:40:03.885946 [IR] session=sess_1 stream=136 summary reason=fail age_ms=46761 bytes_client=3365 bytes_outer=5919 frames_client=3 frames_outer=5
+2026/04/25 11:40:03.885949 [IR] session=sess_1 stream=52 fail err=unexpected EOF
+2026/04/25 11:40:03.885951 [IR] session=sess_1 stream=52 summary reason=fail age_ms=74543 bytes_client=1771 bytes_outer=3131 frames_client=8 frames_outer=8
+2026/04/25 11:40:03.885955 [IR] session=sess_1 stream=58 fail err=unexpected EOF
+2026/04/25 11:40:03.885957 [IR] session=sess_1 stream=58 summary reason=fail age_ms=74543 bytes_client=3055 bytes_outer=91318 frames_client=4 frames_outer=44
+2026/04/25 11:40:03.885961 [IR] session=sess_1 stream=28 fail err=unexpected EOF
+2026/04/25 11:40:03.885967 [IR] session=sess_1 stream=28 summary reason=fail age_ms=74547 bytes_client=141 bytes_outer=97 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.885971 [IR] session=sess_1 stream=76 fail err=unexpected EOF
+2026/04/25 11:40:03.885973 [IR] session=sess_1 stream=76 summary reason=fail age_ms=74466 bytes_client=3894 bytes_outer=7794 frames_client=7 frames_outer=8
+2026/04/25 11:40:03.885976 [IR] session=sess_1 stream=170 fail err=unexpected EOF
+2026/04/25 11:40:03.885979 [IR] session=sess_1 stream=170 summary reason=fail age_ms=42831 bytes_client=2932 bytes_outer=13009 frames_client=5 frames_outer=8
+2026/04/25 11:40:03.885982 [IR] session=sess_1 stream=172 fail err=unexpected EOF
+2026/04/25 11:40:03.885984 [IR] session=sess_1 stream=172 summary reason=fail age_ms=42634 bytes_client=5048 bytes_outer=7938 frames_client=5 frames_outer=3
+2026/04/25 11:40:03.885988 [IR] session=sess_1 stream=182 fail err=unexpected EOF
+2026/04/25 11:40:03.885990 [IR] session=sess_1 stream=182 summary reason=fail age_ms=37277 bytes_client=482 bytes_outer=11749 frames_client=1 frames_outer=3
+2026/04/25 11:40:03.885993 [IR] session=sess_1 stream=184 fail err=unexpected EOF
+2026/04/25 11:40:03.885995 [IR] session=sess_1 stream=184 summary reason=fail age_ms=37215 bytes_client=514 bytes_outer=4069 frames_client=1 frames_outer=2
+2026/04/25 11:40:03.885999 [IR] session=sess_1 stream=34 fail err=unexpected EOF
+2026/04/25 11:40:03.886001 [IR] session=sess_1 stream=34 summary reason=fail age_ms=74545 bytes_client=267 bytes_outer=275 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886005 [IR] session=sess_1 stream=114 fail err=unexpected EOF
+2026/04/25 11:40:03.886007 [IR] session=sess_1 stream=114 summary reason=fail age_ms=52148 bytes_client=3095 bytes_outer=6257 frames_client=9 frames_outer=10
+2026/04/25 11:40:03.886011 [IR] session=sess_1 stream=98 fail err=unexpected EOF
+2026/04/25 11:40:03.886013 [IR] session=sess_1 stream=98 summary reason=fail age_ms=69595 bytes_client=1059 bytes_outer=860 frames_client=3 frames_outer=3
+2026/04/25 11:40:03.886016 [IR] session=sess_1 stream=138 fail err=unexpected EOF
+2026/04/25 11:40:03.886019 [IR] session=sess_1 stream=138 summary reason=fail age_ms=46297 bytes_client=3329 bytes_outer=2731 frames_client=6 frames_outer=3
+2026/04/25 11:40:03.886022 [IR] session=sess_1 stream=192 fail err=unexpected EOF
+2026/04/25 11:40:03.886024 [IR] session=sess_1 stream=192 summary reason=fail age_ms=32171 bytes_client=11575 bytes_outer=4519 frames_client=15 frames_outer=14
+2026/04/25 11:40:03.886028 [IR] session=sess_1 stream=210 fail err=unexpected EOF
+2026/04/25 11:40:03.886031 [IR] session=sess_1 stream=210 summary reason=fail age_ms=26289 bytes_client=6878 bytes_outer=5288 frames_client=9 frames_outer=8
+2026/04/25 11:40:03.886034 [IR] session=sess_1 stream=216 fail err=unexpected EOF
+2026/04/25 11:40:03.886036 [IR] session=sess_1 stream=216 summary reason=fail age_ms=11643 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.886040 [IR] session=sess_1 stream=234 fail err=unexpected EOF
+2026/04/25 11:40:03.886042 [IR] session=sess_1 stream=234 summary reason=fail age_ms=11455 bytes_client=2292 bytes_outer=0 frames_client=2 frames_outer=0
+2026/04/25 11:40:03.886045 [IR] session=sess_1 stream=12 fail err=unexpected EOF
+2026/04/25 11:40:03.886048 [IR] session=sess_1 stream=12 summary reason=fail age_ms=74550 bytes_client=1528 bytes_outer=468 frames_client=4 frames_outer=2
+2026/04/25 11:40:03.886052 [IR] session=sess_1 stream=104 fail err=unexpected EOF
+2026/04/25 11:40:03.886054 [IR] session=sess_1 stream=104 summary reason=fail age_ms=65767 bytes_client=1782 bytes_outer=4290 frames_client=3 frames_outer=3
+2026/04/25 11:40:03.886057 [IR] session=sess_1 stream=208 fail err=unexpected EOF
+2026/04/25 11:40:03.886060 [IR] session=sess_1 stream=208 summary reason=fail age_ms=26291 bytes_client=7268 bytes_outer=2545 frames_client=9 frames_outer=8
+2026/04/25 11:40:03.886063 [IR] session=sess_1 stream=152 fail err=unexpected EOF
+2026/04/25 11:40:03.886065 [IR] session=sess_1 stream=152 summary reason=fail age_ms=44001 bytes_client=2454 bytes_outer=138565 frames_client=4 frames_outer=72
+2026/04/25 11:40:03.886097 [IR] session=sess_1 stream=154 fail err=unexpected EOF
+2026/04/25 11:40:03.886105 [IR] session=sess_1 stream=154 summary reason=fail age_ms=43546 bytes_client=2958 bytes_outer=6533 frames_client=7 frames_outer=5
+2026/04/25 11:40:03.886109 [IR] session=sess_1 stream=226 fail err=unexpected EOF
+2026/04/25 11:40:03.886111 [IR] session=sess_1 stream=226 summary reason=fail age_ms=11643 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.886115 [IR] session=sess_1 stream=126 fail err=unexpected EOF
+2026/04/25 11:40:03.886117 [IR] session=sess_1 stream=126 summary reason=fail age_ms=49989 bytes_client=8557 bytes_outer=4538 frames_client=5 frames_outer=7
+2026/04/25 11:40:03.886121 [IR] session=sess_1 stream=124 fail err=unexpected EOF
+2026/04/25 11:40:03.886123 [IR] session=sess_1 stream=124 summary reason=fail age_ms=50040 bytes_client=86941 bytes_outer=217741 frames_client=55 frames_outer=98
+2026/04/25 11:40:03.886126 [IR] session=sess_1 stream=4 fail err=unexpected EOF
+2026/04/25 11:40:03.886129 [IR] session=sess_1 stream=4 summary reason=fail age_ms=74552 bytes_client=361 bytes_outer=2541 frames_client=1 frames_outer=2
+2026/04/25 11:40:03.886132 [IR] session=sess_1 stream=20 fail err=unexpected EOF
+2026/04/25 11:40:03.886134 [IR] session=sess_1 stream=20 summary reason=fail age_ms=74549 bytes_client=402 bytes_outer=178 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886137 [IR] session=sess_1 stream=26 fail err=unexpected EOF
+2026/04/25 11:40:03.886140 [IR] session=sess_1 stream=26 summary reason=fail age_ms=74547 bytes_client=659 bytes_outer=172 frames_client=2 frames_outer=2
+2026/04/25 11:40:03.886143 [IR] session=sess_1 stream=64 fail err=unexpected EOF
+2026/04/25 11:40:03.886145 [IR] session=sess_1 stream=64 summary reason=fail age_ms=74541 bytes_client=1972 bytes_outer=7065 frames_client=2 frames_outer=4
+2026/04/25 11:40:03.886148 [IR] session=sess_1 stream=72 fail err=unexpected EOF
+2026/04/25 11:40:03.886150 [IR] session=sess_1 stream=72 summary reason=fail age_ms=74470 bytes_client=13333 bytes_outer=6706 frames_client=17 frames_outer=16
+2026/04/25 11:40:03.886154 [IR] session=sess_1 stream=74 fail err=unexpected EOF
+2026/04/25 11:40:03.886156 [IR] session=sess_1 stream=74 summary reason=fail age_ms=74468 bytes_client=3756 bytes_outer=2851 frames_client=4 frames_outer=5
+2026/04/25 11:40:03.886159 [IR] session=sess_1 stream=130 fail err=unexpected EOF
+2026/04/25 11:40:03.886161 [IR] session=sess_1 stream=130 summary reason=fail age_ms=48803 bytes_client=2290 bytes_outer=2430 frames_client=2 frames_outer=2
+2026/04/25 11:40:03.886165 [IR] session=sess_1 stream=56 fail err=unexpected EOF
+2026/04/25 11:40:03.886167 [IR] session=sess_1 stream=56 summary reason=fail age_ms=74543 bytes_client=1003 bytes_outer=153 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886170 [IR] session=sess_1 stream=144 fail err=unexpected EOF
+2026/04/25 11:40:03.886173 [IR] session=sess_1 stream=144 summary reason=fail age_ms=44446 bytes_client=578 bytes_outer=15509 frames_client=1 frames_outer=4
+2026/04/25 11:40:03.886176 [IR] session=sess_1 stream=60 fail err=unexpected EOF
+2026/04/25 11:40:03.886178 [IR] session=sess_1 stream=60 summary reason=fail age_ms=74543 bytes_client=253 bytes_outer=165 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886182 [IR] session=sess_1 stream=174 fail err=unexpected EOF
+2026/04/25 11:40:03.886184 [IR] session=sess_1 stream=174 summary reason=fail age_ms=42605 bytes_client=3984 bytes_outer=6204 frames_client=6 frames_outer=3
+2026/04/25 11:40:03.886188 [IR] session=sess_1 stream=176 fail err=unexpected EOF
+2026/04/25 11:40:03.886190 [IR] session=sess_1 stream=176 summary reason=fail age_ms=41956 bytes_client=4770 bytes_outer=7223 frames_client=3 frames_outer=3
+2026/04/25 11:40:03.886193 [IR] session=sess_1 stream=246 fail err=unexpected EOF
+2026/04/25 11:40:03.886195 [IR] session=sess_1 stream=246 summary reason=fail age_ms=6388 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.886202 [IR] session=sess_1 stream=248 fail err=unexpected EOF
+2026/04/25 11:40:03.886204 [IR] session=sess_1 stream=248 summary reason=fail age_ms=5401 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.886208 [IR] session=sess_1 stream=54 fail err=unexpected EOF
+2026/04/25 11:40:03.886210 [IR] session=sess_1 stream=54 summary reason=fail age_ms=74543 bytes_client=1798 bytes_outer=427 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886212 [IR] session=sess_1 stream=256 fail err=unexpected EOF
+2026/04/25 11:40:03.886215 [IR] session=sess_1 stream=256 summary reason=fail age_ms=68 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.886218 [IR] session=sess_1 stream=102 fail err=unexpected EOF
+2026/04/25 11:40:03.886220 [IR] session=sess_1 stream=102 summary reason=fail age_ms=68414 bytes_client=1782 bytes_outer=4291 frames_client=4 frames_outer=3
+2026/04/25 11:40:03.886222 [IR] session=sess_1 stream=240 fail err=unexpected EOF
+2026/04/25 11:40:03.886224 [IR] session=sess_1 stream=240 summary reason=fail age_ms=11383 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.886228 [IR] session=sess_1 stream=70 fail err=unexpected EOF
+2026/04/25 11:40:03.886230 [IR] session=sess_1 stream=70 summary reason=fail age_ms=74470 bytes_client=5316 bytes_outer=3282 frames_client=9 frames_outer=7
+2026/04/25 11:40:03.886233 [IR] session=sess_1 stream=100 fail err=unexpected EOF
+2026/04/25 11:40:03.886235 [IR] session=sess_1 stream=100 summary reason=fail age_ms=69514 bytes_client=2112 bytes_outer=3773 frames_client=4 frames_outer=4
+2026/04/25 11:40:03.886238 [IR] session=sess_1 stream=190 fail err=unexpected EOF
+2026/04/25 11:40:03.886240 [IR] session=sess_1 stream=190 summary reason=fail age_ms=33346 bytes_client=2702 bytes_outer=2265 frames_client=3 frames_outer=3
+2026/04/25 11:40:03.886244 [IR] session=sess_1 stream=204 fail err=unexpected EOF
+2026/04/25 11:40:03.886246 [IR] session=sess_1 stream=204 summary reason=fail age_ms=27366 bytes_client=3253 bytes_outer=15641 frames_client=10 frames_outer=7
+2026/04/25 11:40:03.886249 [IR] session=sess_1 stream=206 fail err=unexpected EOF
+2026/04/25 11:40:03.886251 [IR] session=sess_1 stream=206 summary reason=fail age_ms=26808 bytes_client=1800 bytes_outer=10937 frames_client=6 frames_outer=4
+2026/04/25 11:40:03.886254 [IR] session=sess_1 stream=224 fail err=unexpected EOF
+2026/04/25 11:40:03.886257 [IR] session=sess_1 stream=224 summary reason=fail age_ms=11643 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.886259 [IR] session=sess_1 stream=250 fail err=unexpected EOF
+2026/04/25 11:40:03.886261 [IR] session=sess_1 stream=250 summary reason=fail age_ms=5349 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.886264 [IR] session=sess_1 stream=254 fail err=unexpected EOF
+2026/04/25 11:40:03.886266 [IR] session=sess_1 stream=254 summary reason=fail age_ms=1096 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.886269 [IR] session=sess_1 stream=6 fail err=unexpected EOF
+2026/04/25 11:40:03.886271 [IR] session=sess_1 stream=6 summary reason=fail age_ms=74551 bytes_client=287 bytes_outer=271 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886275 [IR] session=sess_1 stream=8 fail err=unexpected EOF
+2026/04/25 11:40:03.886277 [IR] session=sess_1 stream=8 summary reason=fail age_ms=74550 bytes_client=309 bytes_outer=185 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886280 [IR] session=sess_1 stream=62 fail err=unexpected EOF
+2026/04/25 11:40:03.886282 [IR] session=sess_1 stream=62 summary reason=fail age_ms=74543 bytes_client=307 bytes_outer=339 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886286 [IR] session=sess_1 stream=110 fail err=unexpected EOF
+2026/04/25 11:40:03.886288 [IR] session=sess_1 stream=110 summary reason=fail age_ms=53622 bytes_client=36618 bytes_outer=286459 frames_client=58 frames_outer=136
+2026/04/25 11:40:03.886295 [IR] session=sess_1 stream=120 fail err=unexpected EOF
+2026/04/25 11:40:03.886298 [IR] session=sess_1 stream=120 summary reason=fail age_ms=50809 bytes_client=3067 bytes_outer=3040 frames_client=6 frames_outer=4
+2026/04/25 11:40:03.886302 [IR] session=sess_1 stream=156 fail err=unexpected EOF
+2026/04/25 11:40:03.886304 [IR] session=sess_1 stream=156 summary reason=fail age_ms=43542 bytes_client=1875 bytes_outer=5328 frames_client=2 frames_outer=2
+2026/04/25 11:40:03.886307 [IR] session=sess_1 stream=202 fail err=unexpected EOF
+2026/04/25 11:40:03.886309 [IR] session=sess_1 stream=202 summary reason=fail age_ms=27645 bytes_client=624 bytes_outer=541 frames_client=3 frames_outer=3
+2026/04/25 11:40:03.886312 [IR] session=sess_1 stream=222 fail err=unexpected EOF
+2026/04/25 11:40:03.886315 [IR] session=sess_1 stream=222 summary reason=fail age_ms=11643 bytes_client=517 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.886318 [IR] session=sess_1 stream=24 fail err=unexpected EOF
+2026/04/25 11:40:03.886320 [IR] session=sess_1 stream=24 summary reason=fail age_ms=74548 bytes_client=354 bytes_outer=178 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886323 [IR] session=sess_1 stream=162 fail err=unexpected EOF
+2026/04/25 11:40:03.886325 [IR] session=sess_1 stream=162 summary reason=fail age_ms=42919 bytes_client=1833 bytes_outer=5047 frames_client=2 frames_outer=2
+2026/04/25 11:40:03.886329 [IR] session=sess_1 stream=22 fail err=unexpected EOF
+2026/04/25 11:40:03.886331 [IR] session=sess_1 stream=22 summary reason=fail age_ms=74549 bytes_client=594 bytes_outer=178 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886334 [IR] session=sess_1 stream=106 fail err=unexpected EOF
+2026/04/25 11:40:03.886337 [IR] session=sess_1 stream=106 summary reason=fail age_ms=63144 bytes_client=3480 bytes_outer=3379 frames_client=10 frames_outer=8
+2026/04/25 11:40:03.886340 [IR] session=sess_1 stream=128 fail err=unexpected EOF
+2026/04/25 11:40:03.886343 [IR] session=sess_1 stream=128 summary reason=fail age_ms=48853 bytes_client=4992 bytes_outer=67755 frames_client=11 frames_outer=29
+2026/04/25 11:40:03.886346 [IR] session=sess_1 stream=180 fail err=unexpected EOF
+2026/04/25 11:40:03.886348 [IR] session=sess_1 stream=180 summary reason=fail age_ms=37800 bytes_client=3694 bytes_outer=95353 frames_client=4 frames_outer=20
+2026/04/25 11:40:03.886352 [IR] session=sess_1 stream=218 fail err=unexpected EOF
+2026/04/25 11:40:03.886354 [IR] session=sess_1 stream=218 summary reason=fail age_ms=11643 bytes_client=185 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:40:03.886356 [IR] session=sess_1 stream=242 fail err=unexpected EOF
+2026/04/25 11:40:03.886358 [IR] session=sess_1 stream=242 summary reason=fail age_ms=10248 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:40:03.886362 [IR] session=sess_1 stream=116 fail err=unexpected EOF
+2026/04/25 11:40:03.886364 [IR] session=sess_1 stream=116 summary reason=fail age_ms=51902 bytes_client=2994 bytes_outer=3046 frames_client=6 frames_outer=6
+2026/04/25 11:40:03.886367 [IR] session=sess_1 stream=92 fail err=unexpected EOF
+2026/04/25 11:40:03.886369 [IR] session=sess_1 stream=92 summary reason=fail age_ms=72866 bytes_client=450 bytes_outer=306 frames_client=1 frames_outer=1
+2026/04/25 11:40:03.886372 [IR] session=sess_1 stream=148 fail err=unexpected EOF
+2026/04/25 11:40:03.886374 [IR] session=sess_1 stream=148 summary reason=fail age_ms=44117 bytes_client=2703 bytes_outer=4513 frames_client=3 frames_outer=4
+2026/04/25 11:40:03.886377 [IR] session=sess_1 closed err=unexpected EOF
+2026/04/25 11:40:09.469570 [IR] session=sess_1 accepted remote=5.144.130.6:56368
+2026/04/25 11:40:09.695899 [IR] session=sess_1 request_ok dur_ms=5479
+2026/04/25 11:40:09.807175 [IR] session=sess_1 ready
+2026/04/25 11:40:09.817446 [IR] choose_ready_session waited_ms=5527 ready=1 chosen=sess_1 total_active=0
+2026/04/25 11:40:09.818676 [IR] choose_ready_session waited_ms=5528 ready=1 chosen=sess_1 total_active=1
+2026/04/25 11:40:09.818752 [IR] choose_ready_session waited_ms=5529 ready=1 chosen=sess_1 total_active=1
+2026/04/25 11:40:09.818852 [IR] choose_ready_session waited_ms=5529 ready=1 chosen=sess_1 total_active=3
+2026/04/25 11:40:09.818877 [IR] choose_ready_session waited_ms=5529 ready=1 chosen=sess_1 total_active=4
+2026/04/25 11:40:09.818890 [IR] choose_ready_session waited_ms=5529 ready=1 chosen=sess_1 total_active=5
+2026/04/25 11:40:09.831338 [IR] choose_ready_session waited_ms=2111 ready=1 chosen=sess_1 total_active=6
+2026/04/25 11:40:09.835838 [IR] choose_ready_session waited_ms=4023 ready=1 chosen=sess_1 total_active=13
+2026/04/25 11:40:09.885641 [IR] choose_ready_session waited_ms=2816 ready=1 chosen=sess_1 total_active=39
+2026/04/25 11:40:09.893169 [IR] choose_ready_session waited_ms=1410 ready=1 chosen=sess_1 total_active=41
+2026/04/25 11:40:09.904376 [IR] choose_ready_session waited_ms=4125 ready=1 chosen=sess_1 total_active=44
+2026/04/25 11:40:10.099351 [IR] session=sess_1 stream=260 open_ok active=47
+2026/04/25 11:40:10.109354 [IR] session=sess_1 stream=260 new_tunnel target=pes22-game.cs.konami.net:443 active=47
+2026/04/25 11:40:10.274846 [IR] session=sess_1 stream=264 open_ok active=47
+2026/04/25 11:40:10.295253 [IR] session=sess_1 stream=264 new_tunnel target=pes22-game.cs.konami.net:443 active=47
+2026/04/25 11:40:10.446609 [IR] session=sess_1 stream=262 open_ok active=47
+2026/04/25 11:40:10.459558 [IR] session=sess_1 stream=262 new_tunnel target=pes22-game.cs.konami.net:443 active=47
+2026/04/25 11:40:10.616352 [IR] session=sess_1 stream=266 open_ok active=47
+2026/04/25 11:40:10.625239 [IR] session=sess_1 stream=266 new_tunnel target=pes22-game.cs.konami.net:443 active=47
+2026/04/25 11:40:10.793579 [IR] session=sess_1 stream=268 open_ok active=47
+2026/04/25 11:40:10.811759 [IR] session=sess_1 stream=268 new_tunnel target=pes22-game.cs.konami.net:443 active=47
+2026/04/25 11:40:10.961372 [IR] session=sess_1 stream=270 open_ok active=47
+2026/04/25 11:40:10.977327 [IR] session=sess_1 stream=270 new_tunnel target=pes22-game.cs.konami.net:443 active=47
+2026/04/25 11:40:11.268135 [IR] session=sess_1 stream=272 open_ok active=54
+2026/04/25 11:40:11.277712 [IR] session=sess_1 stream=272 new_tunnel target=firebaselogging.googleapis.com:443 active=54
+2026/04/25 11:40:11.571351 [IR] session=sess_1 stream=274 open_ok active=54
+2026/04/25 11:40:11.576932 [IR] session=sess_1 stream=274 new_tunnel target=mtalk.google.com:5228 active=54
+2026/04/25 11:40:11.876195 [IR] session=sess_1 stream=276 open_ok active=54
+2026/04/25 11:40:11.879510 [IR] session=sess_1 stream=278 open_ok active=54
+2026/04/25 11:40:11.880753 [IR] session=sess_1 stream=278 new_tunnel target=ipv4-c010-fra002-dev-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:11.884638 [IR] session=sess_1 stream=280 open_ok active=54
+2026/04/25 11:40:11.888053 [IR] session=sess_1 stream=280 new_tunnel target=ipv4-c010-fra002-dev-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:11.892477 [IR] session=sess_1 stream=276 new_tunnel target=mtalk.google.com:5228 active=54
+2026/04/25 11:40:11.898844 [IR] session=sess_1 stream=282 open_ok active=54
+2026/04/25 11:40:11.903098 [IR] session=sess_1 stream=284 open_ok active=54
+2026/04/25 11:40:11.908469 [IR] session=sess_1 stream=284 new_tunnel target=ipv4-c010-fra002-dev-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:11.908567 [IR] session=sess_1 stream=282 new_tunnel target=ipv4-c071-bru001-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:11.919346 [IR] session=sess_1 stream=286 open_ok active=54
+2026/04/25 11:40:11.929098 [IR] session=sess_1 stream=286 new_tunnel target=ipv4-c071-bru001-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:11.930426 [IR] session=sess_1 stream=288 open_ok active=54
+2026/04/25 11:40:11.942147 [IR] session=sess_1 stream=290 open_ok active=54
+2026/04/25 11:40:11.949438 [IR] session=sess_1 stream=288 new_tunnel target=149.154.167.91:80 active=54
+2026/04/25 11:40:11.949622 [IR] session=sess_1 stream=290 new_tunnel target=ipv4-c186-ams001-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:12.256320 [IR] session=sess_1 stream=294 open_ok active=54
+2026/04/25 11:40:12.261731 [IR] session=sess_1 stream=294 new_tunnel target=api.telegram.org:443 active=54
+2026/04/25 11:40:12.268518 [IR] session=sess_1 stream=296 open_ok active=54
+2026/04/25 11:40:12.282134 [IR] session=sess_1 stream=296 new_tunnel target=ipv4-c186-ams001-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:12.571782 [IR] session=sess_1 stream=292 open_ok active=54
+2026/04/25 11:40:12.591457 [IR] session=sess_1 stream=292 new_tunnel target=fonts.gstatic.com:443 active=54
+2026/04/25 11:40:12.875533 [IR] session=sess_1 stream=298 open_ok active=54
+2026/04/25 11:40:12.884144 [IR] session=sess_1 stream=298 new_tunnel target=android.apis.google.com:443 active=54
+2026/04/25 11:40:12.886773 [IR] session=sess_1 stream=300 open_ok active=54
+2026/04/25 11:40:12.904764 [IR] session=sess_1 stream=300 new_tunnel target=ipv4-c186-ams001-ix.1.oca.nflxvideo.net:443 active=54
+2026/04/25 11:40:13.200696 [IR] session=sess_1 stream=302 open_ok active=55
+2026/04/25 11:40:13.215677 [IR] session=sess_1 stream=302 new_tunnel target=mqtt-mini.facebook.com:443 active=55
+2026/04/25 11:40:13.503464 [IR] session=sess_1 stream=304 open_ok active=55
+2026/04/25 11:40:13.504667 [IR] session=sess_1 stream=304 new_tunnel target=mqtt-mini.facebook.com:443 active=55
+2026/04/25 11:40:13.595470 [IR] session=sess_1 stream=306 open_ok active=55
+2026/04/25 11:40:13.608636 [IR] session=sess_1 stream=306 new_tunnel target=alive.github.com:443 active=55
+2026/04/25 11:40:13.899007 [IR] session=sess_1 stream=310 open_ok active=57
+2026/04/25 11:40:13.916214 [IR] session=sess_1 stream=310 new_tunnel target=optimizationguide-pa.googleapis.com:443 active=57
+2026/04/25 11:40:13.989126 [IR] session=sess_1 stream=308 open_ok active=57
+2026/04/25 11:40:13.999904 [IR] session=sess_1 stream=308 new_tunnel target=alive.github.com:443 active=57
+2026/04/25 11:40:14.080124 [IR] session=sess_1 stream=312 open_ok active=57
+2026/04/25 11:40:14.081462 [IR] session=sess_1 stream=312 new_tunnel target=alive.github.com:443 active=57
+2026/04/25 11:40:14.382092 [IR] session=sess_1 stream=314 open_ok active=57
+2026/04/25 11:40:14.392926 [IR] session=sess_1 stream=314 new_tunnel target=www.google.com:443 active=57
+2026/04/25 11:40:14.685318 [IR] session=sess_1 stream=316 open_ok active=58
+2026/04/25 11:40:14.706358 [IR] session=sess_1 stream=316 new_tunnel target=www.google.com:443 active=58
+2026/04/25 11:40:14.988733 [IR] session=sess_1 stream=318 open_ok active=58
+2026/04/25 11:40:14.999021 [IR] session=sess_1 stream=318 new_tunnel target=www.google.com:443 active=58
+2026/04/25 11:40:15.293423 [IR] session=sess_1 stream=320 open_ok active=59
+2026/04/25 11:40:15.313235 [IR] session=sess_1 stream=320 new_tunnel target=www.google.com:443 active=59
+2026/04/25 11:40:15.596542 [IR] session=sess_1 stream=322 open_ok active=59
+2026/04/25 11:40:15.603890 [IR] session=sess_1 stream=322 new_tunnel target=www.google.com:443 active=59
+2026/04/25 11:40:15.900853 [IR] session=sess_1 stream=324 open_ok active=59
+2026/04/25 11:40:15.915522 [IR] session=sess_1 stream=324 new_tunnel target=www.google.com:443 active=59
+2026/04/25 11:40:16.213844 [IR] session=sess_1 stream=326 open_ok active=59
+2026/04/25 11:40:16.227602 [IR] session=sess_1 stream=326 new_tunnel target=fonts.googleapis.com:443 active=59
+2026/04/25 11:40:16.517917 [IR] session=sess_1 stream=328 open_ok active=59
+2026/04/25 11:40:16.520326 [IR] session=sess_1 stream=328 new_tunnel target=www.youtube.com:443 active=59
+2026/04/25 11:40:16.821584 [IR] session=sess_1 stream=330 open_ok active=59
+2026/04/25 11:40:16.834038 [IR] session=sess_1 stream=330 new_tunnel target=www.youtube.com:443 active=59
+2026/04/25 11:40:17.127707 [IR] session=sess_1 stream=336 open_ok active=60
+2026/04/25 11:40:17.144566 [IR] session=sess_1 stream=336 new_tunnel target=www.youtube.com:443 active=60
+2026/04/25 11:40:17.432317 [IR] session=sess_1 stream=332 open_ok active=60
+2026/04/25 11:40:17.433475 [IR] session=sess_1 stream=332 new_tunnel target=www.youtube.com:443 active=60
+2026/04/25 11:40:17.737258 [IR] session=sess_1 stream=334 open_ok active=60
+2026/04/25 11:40:17.749064 [IR] session=sess_1 stream=338 open_ok active=60
+2026/04/25 11:40:17.749244 [IR] session=sess_1 stream=334 new_tunnel target=www.youtube.com:443 active=60
+2026/04/25 11:40:17.753675 [IR] session=sess_1 stream=338 new_tunnel target=149.154.167.91:80 active=60
+2026/04/25 11:40:17.763276 [IR] session=sess_1 stream=340 open_ok active=60
+2026/04/25 11:40:17.773721 [IR] session=sess_1 stream=340 new_tunnel target=149.154.167.91:443 active=61
+2026/04/25 11:40:17.777187 [IR] session=sess_1 stream=342 open_ok active=61
+2026/04/25 11:40:17.778422 [IR] session=sess_1 stream=344 open_ok active=61
+2026/04/25 11:40:17.778456 [IR] session=sess_1 stream=346 open_ok active=61
+2026/04/25 11:40:17.787181 [IR] session=sess_1 stream=348 open_ok active=61
+2026/04/25 11:40:17.792130 [IR] session=sess_1 stream=342 new_tunnel target=155.117.5.155:43030 active=62
+2026/04/25 11:40:17.792180 [IR] session=sess_1 stream=348 new_tunnel target=149.154.167.91:443 active=62
+2026/04/25 11:40:17.792221 [IR] session=sess_1 stream=346 new_tunnel target=185.250.41.30:22 active=62
+2026/04/25 11:40:17.794460 [IR] session=sess_1 stream=344 new_tunnel target=1.1.1.1:853 active=62
+2026/04/25 11:40:17.797446 [IR] session=sess_1 stream=350 open_ok active=62
+2026/04/25 11:40:17.812682 [IR] session=sess_1 stream=350 new_tunnel target=149.154.167.91:80 active=63
+2026/04/25 11:40:17.930742 [IR] session=sess_1 stream=352 open_ok active=63
+2026/04/25 11:40:17.938540 [IR] session=sess_1 stream=352 new_tunnel target=20.33.19.88:5222 active=63
+2026/04/25 11:40:17.941801 [IR] session=sess_1 stream=354 open_ok active=63
+2026/04/25 11:40:17.953884 [IR] session=sess_1 stream=356 open_ok active=63
+2026/04/25 11:40:17.955104 [IR] session=sess_1 stream=354 new_tunnel target=149.154.167.91:443 active=63
+2026/04/25 11:40:17.955217 [IR] session=sess_1 stream=356 new_tunnel target=149.154.167.91:443 active=63
+2026/04/25 11:40:17.967105 [IR] session=sess_1 stream=358 open_ok active=63
+2026/04/25 11:40:17.969369 [IR] session=sess_1 stats connected=true ready=true request_running=true active=63 frames_in=1365 frames_out=880 bytes_in=56730227 bytes_out=513426 slow_writes=0 last_in=1777117217 last_out=1777117217
+2026/04/25 11:40:17.976091 [IR] session=sess_1 stream=358 new_tunnel target=149.154.167.92:443 active=63
+2026/04/25 11:40:17.978456 [IR] session=sess_1 stream=360 open_ok active=63
+2026/04/25 11:40:17.989794 [IR] session=sess_1 stream=362 open_ok active=63
+2026/04/25 11:40:17.996398 [IR] session=sess_1 stream=360 new_tunnel target=149.154.167.92:443 active=63
+2026/04/25 11:40:17.996451 [IR] session=sess_1 stream=362 new_tunnel target=149.154.167.91:443 active=63
+2026/04/25 11:40:18.000907 [IR] session=sess_1 stream=364 open_ok active=63
+2026/04/25 11:40:18.011606 [IR] session=sess_1 stream=366 open_ok active=63
+2026/04/25 11:40:18.016825 [IR] session=sess_1 stream=364 new_tunnel target=149.154.167.91:443 active=63
+2026/04/25 11:40:18.021383 [IR] session=sess_1 stream=366 new_tunnel target=149.154.167.92:443 active=63
+2026/04/25 11:40:18.177245 [IR] session=sess_1 stream=260 summary reason=local-close age_ms=8359 bytes_client=517 bytes_outer=3308 frames_client=1 frames_outer=2
+2026/04/25 11:40:18.184838 [IR] session=sess_1 stream=368 open_ok active=62
+2026/04/25 11:40:18.196179 [IR] session=sess_1 stream=268 summary reason=local-close age_ms=8377 bytes_client=517 bytes_outer=3308 frames_client=1 frames_outer=2
+2026/04/25 11:40:18.199766 [IR] session=sess_1 stream=368 new_tunnel target=alive.github.com:443 active=61
+2026/04/25 11:40:18.278140 [IR] session=sess_1 stream=370 open_ok active=61
+2026/04/25 11:40:18.279295 [IR] session=sess_1 stream=370 new_tunnel target=pes22-game.cs.konami.net:443 active=61
+2026/04/25 11:40:18.452749 [IR] session=sess_1 stream=372 open_ok active=62
+2026/04/25 11:40:18.469686 [IR] session=sess_1 stream=372 new_tunnel target=pes22-game.cs.konami.net:443 active=62
+2026/04/25 11:40:18.756644 [IR] session=sess_1 stream=374 open_ok active=62
+2026/04/25 11:40:18.765560 [IR] session=sess_1 stream=374 new_tunnel target=ws.chatgpt.com:443 active=62
+2026/04/25 11:40:18.847255 [IR] session=sess_1 stream=376 open_ok active=62
+2026/04/25 11:40:18.863591 [IR] session=sess_1 stream=376 new_tunnel target=alive.github.com:443 active=62
+2026/04/25 11:40:19.150202 [IR] session=sess_1 stream=378 open_ok active=62
+2026/04/25 11:40:19.158851 [IR] session=sess_1 stream=378 new_tunnel target=clients4.google.com:443 active=62
+2026/04/25 11:40:19.174693 [IR] session=sess_1 stream=380 open_ok active=62
+2026/04/25 11:40:19.178916 [IR] session=sess_1 stream=382 open_ok active=62
+2026/04/25 11:40:19.191066 [IR] session=sess_1 stream=384 open_ok active=62
+2026/04/25 11:40:19.194826 [IR] session=sess_1 stream=382 new_tunnel target=149.154.167.91:443 active=62
+2026/04/25 11:40:19.194923 [IR] session=sess_1 stream=380 new_tunnel target=ipv4-c071-bru001-ix.1.oca.nflxvideo.net:443 active=62
+2026/04/25 11:40:19.194957 [IR] session=sess_1 stream=384 new_tunnel target=149.154.167.91:80 active=62
+2026/04/25 11:40:19.494649 [IR] session=sess_1 stream=386 open_ok active=63
+2026/04/25 11:40:19.503612 [IR] session=sess_1 stream=386 new_tunnel target=www.google.com:443 active=63
+2026/04/25 11:40:19.618525 [IR] session=sess_1 stream=388 open_ok active=63
+2026/04/25 11:40:19.626247 [IR] session=sess_1 stream=388 new_tunnel target=alive.github.com:443 active=63
+2026/04/25 11:40:20.382935 [IR] session=sess_1 stream=390 open_ok active=68
+2026/04/25 11:40:20.400826 [IR] session=sess_1 stream=390 new_tunnel target=i.ytimg.com:443 active=68
+2026/04/25 11:40:20.687800 [IR] session=sess_1 stream=392 open_ok active=68
+2026/04/25 11:40:20.688968 [IR] session=sess_1 stream=392 new_tunnel target=fonts.gstatic.com:443 active=68
+2026/04/25 11:40:21.034783 [IR] session=sess_1 stream=394 open_ok active=68
+2026/04/25 11:40:21.040465 [IR] session=sess_1 stream=394 new_tunnel target=z-m-gateway.facebook.com:443 active=68
+2026/04/25 11:40:21.273810 [IR] session=sess_1 stream=272 summary reason=remote-close age_ms=11442 bytes_client=517 bytes_outer=3211 frames_client=1 frames_outer=1
+2026/04/25 11:40:21.306164 [IR] session=sess_1 stream=396 open_ok active=67
+2026/04/25 11:40:21.314387 [IR] session=sess_1 stream=396 new_tunnel target=ogads-pa.clients6.google.com:443 active=67
+2026/04/25 11:40:21.609587 [IR] session=sess_1 stream=398 open_ok active=67
+2026/04/25 11:40:21.618789 [IR] session=sess_1 stream=398 new_tunnel target=accounts.google.com:443 active=67
+2026/04/25 11:40:21.675498 [IR] session=sess_1 stream=306 summary reason=remote-close age_ms=11836 bytes_client=3021 bytes_outer=3871 frames_client=4 frames_outer=6
+2026/04/25 11:40:21.841175 [IR] session=sess_1 stream=400 open_ok active=68
+2026/04/25 11:40:21.855371 [IR] session=sess_1 stream=402 open_ok active=68
+2026/04/25 11:40:21.859521 [IR] session=sess_1 stream=402 new_tunnel target=149.154.167.43:80 active=68
+2026/04/25 11:40:21.859734 [IR] session=sess_1 stream=400 new_tunnel target=149.154.167.43:443 active=68
+2026/04/25 11:40:21.951976 [IR] session=sess_1 stream=368 summary reason=remote-close age_ms=8790 bytes_client=3051 bytes_outer=3871 frames_client=4 frames_outer=5
+2026/04/25 11:40:21.952069 [IR] session=sess_1 stream=312 summary reason=remote-close age_ms=12112 bytes_client=3034 bytes_outer=3868 frames_client=3 frames_outer=5
+2026/04/25 11:40:21.954547 [IR] session=sess_1 stream=308 summary reason=remote-close age_ms=12115 bytes_client=3036 bytes_outer=3868 frames_client=4 frames_outer=5
+2026/04/25 11:40:22.777272 [IR] session=sess_1 stream=376 summary reason=remote-close age_ms=7690 bytes_client=3021 bytes_outer=3869 frames_client=4 frames_outer=5
+2026/04/25 11:40:22.882632 [IR] session=sess_1 stream=298 summary reason=remote-close age_ms=13045 bytes_client=2196 bytes_outer=1472 frames_client=1 frames_outer=1
+2026/04/25 11:40:23.109273 [IR] session=sess_1 stream=404 open_ok active=66
+2026/04/25 11:40:23.121661 [IR] session=sess_1 stream=404 new_tunnel target=www.gstatic.com:443 active=66
+2026/04/25 11:40:23.423421 [IR] session=sess_1 stream=406 open_ok active=67
+2026/04/25 11:40:23.440338 [IR] session=sess_1 stream=406 new_tunnel target=firebaseinappmessaging.googleapis.com:443 active=67
+2026/04/25 11:40:23.726876 [IR] session=sess_1 stream=408 open_ok active=68
+2026/04/25 11:40:23.738094 [IR] session=sess_1 stream=408 new_tunnel target=yt3.ggpht.com:443 active=68
+2026/04/25 11:40:24.031186 [IR] session=sess_1 stream=410 open_ok active=68
+2026/04/25 11:40:24.041754 [IR] session=sess_1 stream=410 new_tunnel target=accounts.youtube.com:443 active=68
+2026/04/25 11:40:24.120945 [IR] session=sess_1 stream=412 open_ok active=68
+2026/04/25 11:40:24.133664 [IR] session=sess_1 stream=412 new_tunnel target=alive.github.com:443 active=68
+2026/04/25 11:40:24.710234 [IR] session=sess_1 stream=316 summary reason=remote-close age_ms=14869 bytes_client=1820 bytes_outer=4078 frames_client=1 frames_outer=1
+2026/04/25 11:40:25.013268 [IR] session=sess_1 stream=414 open_ok active=68
+2026/04/25 11:40:25.019549 [IR] session=sess_1 stream=414 new_tunnel target=api.ip.sb:443 active=68
+2026/04/25 11:40:25.312159 [IR] session=sess_1 stream=320 summary reason=remote-close age_ms=15471 bytes_client=1788 bytes_outer=4080 frames_client=1 frames_outer=1
+2026/04/25 11:40:25.419569 [IR] session=sess_1 stream=414 summary reason=remote-close age_ms=828 bytes_client=767 bytes_outer=5091 frames_client=2 frames_outer=2
+2026/04/25 11:40:25.599161 [IR] session=sess_1 stream=322 summary reason=remote-close age_ms=15758 bytes_client=1724 bytes_outer=4078 frames_client=1 frames_outer=1
+2026/04/25 11:40:25.903572 [IR] session=sess_1 stream=324 summary reason=remote-close age_ms=16063 bytes_client=2271 bytes_outer=1492 frames_client=1 frames_outer=1
+2026/04/25 11:40:27.928030 [IR] session=sess_1 stream=416 open_ok active=67
+2026/04/25 11:40:27.933345 [IR] session=sess_1 stream=416 new_tunnel target=api.fast.com:443 active=67
+2026/04/25 11:40:28.015016 [IR] session=sess_1 stream=280 summary reason=remote-close age_ms=18179 bytes_client=1881 bytes_outer=3338 frames_client=2 frames_outer=3
+2026/04/25 11:40:28.015281 [IR] session=sess_1 stream=284 summary reason=remote-close age_ms=18179 bytes_client=1881 bytes_outer=3337 frames_client=2 frames_outer=4
+2026/04/25 11:40:28.016027 [IR] session=sess_1 stream=278 summary reason=remote-close age_ms=18180 bytes_client=1881 bytes_outer=3338 frames_client=2 frames_outer=3
+2026/04/25 11:40:28.029026 [IR] session=sess_1 stream=300 summary reason=remote-close age_ms=18191 bytes_client=1909 bytes_outer=3341 frames_client=2 frames_outer=4
+2026/04/25 11:40:28.029926 [IR] session=sess_1 stream=296 summary reason=remote-close age_ms=18192 bytes_client=1813 bytes_outer=3341 frames_client=2 frames_outer=4
+2026/04/25 11:40:28.032110 [IR] session=sess_1 stream=290 summary reason=remote-close age_ms=18195 bytes_client=1877 bytes_outer=3340 frames_client=2 frames_outer=4
+2026/04/25 11:40:28.040111 [IR] session=sess_1 stream=282 summary reason=remote-close age_ms=18204 bytes_client=2228 bytes_outer=595 frames_client=2 frames_outer=3
+2026/04/25 11:40:28.253118 [IR] session=sess_1 stream=418 open_ok active=60
+2026/04/25 11:40:28.262394 [IR] session=sess_1 stream=418 new_tunnel target=api.fast.com:443 active=60
+2026/04/25 11:40:28.716985 [IR] session=sess_1 stream=420 open_ok active=60
+2026/04/25 11:40:28.720274 [IR] session=sess_1 stream=420 new_tunnel target=r2---sn-4jpm0n-nwje.googlevideo.com:443 active=60
+2026/04/25 11:40:29.343532 [IR] session=sess_1 stream=422 open_ok active=61
+2026/04/25 11:40:29.350736 [IR] session=sess_1 stream=422 new_tunnel target=8.8.8.8:853 active=61
+2026/04/25 11:40:29.507897 [IR] session=sess_1 stream=386 summary reason=remote-close age_ms=11074 bytes_client=1724 bytes_outer=4078 frames_client=1 frames_outer=1
+2026/04/25 11:40:29.524164 [IR] session=sess_1 stream=380 summary reason=remote-close age_ms=11753 bytes_client=1909 bytes_outer=3338 frames_client=2 frames_outer=3
+2026/04/25 11:40:29.850690 [IR] session=sess_1 stream=420 summary reason=remote-close age_ms=1968 bytes_client=3352 bytes_outer=10658 frames_client=2 frames_outer=2
+2026/04/25 11:40:31.415424 [IR] session=sess_1 stream=344 summary reason=remote-close age_ms=21520 bytes_client=757 bytes_outer=1137 frames_client=4 frames_outer=3
+2026/04/25 11:40:32.969135 [IR] session=sess_1 stats connected=true ready=true request_running=true active=57 frames_in=1941 frames_out=1181 bytes_in=57742816 bytes_out=768649 slow_writes=0 last_in=1777117232 last_out=1777117232
+2026/04/25 11:40:33.615780 [IR] session=sess_1 stream=424 open_ok active=59
+2026/04/25 11:40:33.623252 [IR] session=sess_1 stream=426 open_ok active=59
+2026/04/25 11:40:33.635715 [IR] session=sess_1 stream=426 new_tunnel target=149.154.167.91:443 active=60
+2026/04/25 11:40:33.635777 [IR] session=sess_1 stream=424 new_tunnel target=149.154.167.92:443 active=60
+2026/04/25 11:40:34.050575 [IR] session=sess_1 stream=428 open_ok active=60
+2026/04/25 11:40:34.055868 [IR] session=sess_1 stream=428 new_tunnel target=rr5---sn-4g5ednrl.googlevideo.com:443 active=60
+2026/04/25 11:40:35.361606 [IR] session=sess_1 stream=430 open_ok active=61
+2026/04/25 11:40:35.362770 [IR] session=sess_1 stream=430 new_tunnel target=20.157.92.132:5222 active=61
+2026/04/25 11:40:35.931799 [IR] session=sess_1 stream=422 summary reason=remote-close age_ms=6704 bytes_client=472 bytes_outer=5352 frames_client=5 frames_outer=3
+2026/04/25 11:40:36.495645 [IR] session=sess_1 stream=432 open_ok active=61
+2026/04/25 11:40:36.499834 [IR] session=sess_1 stream=432 new_tunnel target=8.8.8.8:853 active=61
+2026/04/25 11:40:39.302522 [IR] session=sess_1 stream=434 open_ok active=72
+2026/04/25 11:40:39.316182 [IR] session=sess_1 stream=434 new_tunnel target=chatgpt.com:443 active=72
+2026/04/25 11:40:39.402466 [IR] session=sess_1 stream=436 open_ok active=73
+2026/04/25 11:40:39.417300 [IR] session=sess_1 stream=436 new_tunnel target=chatgpt.com:443 active=73
+2026/04/25 11:40:39.705507 [IR] session=sess_1 stream=438 open_ok active=73
+2026/04/25 11:40:39.709793 [IR] session=sess_1 stream=438 new_tunnel target=www.googleapis.com:443 active=73
+2026/04/25 11:40:40.008366 [IR] session=sess_1 stream=440 open_ok active=75
+2026/04/25 11:40:40.017685 [IR] session=sess_1 stream=440 new_tunnel target=www.googleapis.com:443 active=75
+2026/04/25 11:40:40.316245 [IR] session=sess_1 stream=442 open_ok active=75
+2026/04/25 11:40:40.334320 [IR] session=sess_1 stream=442 new_tunnel target=www.googleapis.com:443 active=75
+2026/04/25 11:40:40.614868 [IR] session=sess_1 stream=444 open_ok active=79
+2026/04/25 11:40:40.625425 [IR] session=sess_1 stream=444 new_tunnel target=www.googleapis.com:443 active=79
+2026/04/25 11:40:40.792564 [IR] session=sess_1 stream=446 open_ok active=79
+2026/04/25 11:40:40.793726 [IR] session=sess_1 stream=446 new_tunnel target=pes22-game.cs.konami.net:443 active=79
+2026/04/25 11:40:40.963022 [IR] session=sess_1 stream=452 open_ok active=79
+2026/04/25 11:40:40.980790 [IR] session=sess_1 stream=452 new_tunnel target=pes22-game.cs.konami.net:443 active=79
+2026/04/25 11:40:41.138947 [IR] session=sess_1 stream=448 open_ok active=79
+2026/04/25 11:40:41.147340 [IR] session=sess_1 stream=448 new_tunnel target=pes22-game.cs.konami.net:443 active=79
+2026/04/25 11:40:41.311163 [IR] session=sess_1 stream=450 open_ok active=79
+2026/04/25 11:40:41.313464 [IR] session=sess_1 stream=450 new_tunnel target=pes22-game.cs.konami.net:443 active=79
+2026/04/25 11:40:41.637106 [IR] session=sess_1 stream=454 open_ok active=79
+2026/04/25 11:40:41.643972 [IR] session=sess_1 stream=454 new_tunnel target=rr3---sn-aigl6ns6.googlevideo.com:443 active=79
+2026/04/25 11:40:42.336855 [IR] session=sess_1 stream=456 open_ok active=79
+2026/04/25 11:40:42.342190 [IR] session=sess_1 stream=456 new_tunnel target=rr1---sn-aigl6nze.googlevideo.com:443 active=79
+2026/04/25 11:40:42.350387 [IR] session=sess_1 stream=458 open_ok active=79
+2026/04/25 11:40:42.360119 [IR] session=sess_1 stream=460 open_ok active=79
+2026/04/25 11:40:42.362162 [IR] session=sess_1 stream=458 new_tunnel target=ipv4-c233-fra002-ix.1.oca.nflxvideo.net:443 active=79
+2026/04/25 11:40:42.362231 [IR] session=sess_1 stream=460 new_tunnel target=ipv4-c233-fra002-ix.1.oca.nflxvideo.net:443 active=79
+2026/04/25 11:40:43.011234 [IR] session=sess_1 stream=462 open_ok active=80
+2026/04/25 11:40:43.011286 [IR] session=sess_1 stream=464 open_ok active=80
+2026/04/25 11:40:43.011294 [IR] session=sess_1 stream=466 open_ok active=80
+2026/04/25 11:40:43.012435 [IR] session=sess_1 stream=462 new_tunnel target=rr4---sn-4g5ednrl.googlevideo.com:443 active=80
+2026/04/25 11:40:43.012496 [IR] session=sess_1 stream=464 new_tunnel target=rr4---sn-4g5ednrl.googlevideo.com:443 active=80
+2026/04/25 11:40:43.018863 [IR] session=sess_1 stream=466 new_tunnel target=rr2---sn-4g5ednkk.googlevideo.com:443 active=80
+2026/04/25 11:40:43.130452 [IR] session=sess_1 stream=468 open_ok active=80
+2026/04/25 11:40:43.142355 [IR] session=sess_1 stream=468 new_tunnel target=rr2---sn-4g5ednkk.googlevideo.com:443 active=80
+2026/04/25 11:40:43.460624 [IR] session=sess_1 stream=470 open_ok active=82
+2026/04/25 11:40:43.475021 [IR] session=sess_1 stream=470 new_tunnel target=ichnaea-web.netflix.com:443 active=82
+2026/04/25 11:40:43.973711 [IR] session=sess_1 stream=472 open_ok active=82
+2026/04/25 11:40:43.992299 [IR] session=sess_1 stream=472 new_tunnel target=ws.chatgpt.com:443 active=82
+2026/04/25 11:40:44.066448 [IR] session=sess_1 stream=474 open_ok active=82
+2026/04/25 11:40:44.067656 [IR] session=sess_1 stream=474 new_tunnel target=mqtt-mini.facebook.com:443 active=82
+2026/04/25 11:40:47.968706 [IR] session=sess_1 stats connected=true ready=true request_running=true active=82 frames_in=2337 frames_out=1349 bytes_in=65740521 bytes_out=903435 slow_writes=0 last_in=1777117246 last_out=1777117245
+2026/04/25 11:40:50.189533 [IR] session=sess_1 stream=476 open_ok active=84
+2026/04/25 11:40:50.201945 [IR] session=sess_1 stream=476 new_tunnel target=www.googleapis.com:443 active=84
+2026/04/25 11:40:51.440144 [IR] session=sess_1 stream=478 open_ok active=84
+2026/04/25 11:40:51.441286 [IR] session=sess_1 stream=478 new_tunnel target=ntl.service.konami.net:80 active=84
+2026/04/25 11:40:52.934153 [IR] session=sess_1 stream=480 open_ok active=85
+2026/04/25 11:40:52.944442 [IR] session=sess_1 stream=480 new_tunnel target=rr2---sn-4g5ednkk.googlevideo.com:443 active=85
+2026/04/25 11:40:53.134401 [IR] session=sess_1 stream=458 summary reason=remote-close age_ms=13128 bytes_client=2164 bytes_outer=595 frames_client=2 frames_outer=3
+2026/04/25 11:40:53.135483 [IR] session=sess_1 stream=460 summary reason=remote-close age_ms=13129 bytes_client=2196 bytes_outer=595 frames_client=2 frames_outer=3
+2026/04/25 11:40:54.404954 [IR] session=sess_1 stream=436 summary reason=remote-close age_ms=15723 bytes_client=2024 bytes_outer=1375 frames_client=1 frames_outer=1
+2026/04/25 11:40:55.301740 [IR] session=sess_1 stream=482 open_ok active=83
+2026/04/25 11:40:55.307939 [IR] session=sess_1 stream=482 new_tunnel target=1.1.1.1:853 active=83
+2026/04/25 11:40:55.703866 [IR] session=sess_1 stream=484 open_ok active=86
+2026/04/25 11:40:55.706148 [IR] session=sess_1 stream=484 new_tunnel target=47.241.218.182:443 active=86
+2026/04/25 11:40:57.007148 [IR] session=sess_1 stream=478 summary reason=remote-close age_ms=7091 bytes_client=318 bytes_outer=272 frames_client=1 frames_outer=1
+2026/04/25 11:41:02.968544 [IR] session=sess_1 stats connected=true ready=true request_running=true active=101 frames_in=2371 frames_out=1400 bytes_in=65773503 bytes_out=911202 slow_writes=0 last_in=1777117262 last_out=1777117262
+2026/04/25 11:41:05.705107 [IR] session=sess_1 stream=486 open_err detail="dial-failed"
+2026/04/25 11:41:05.727020 [IR] session=sess_1 stream=488 open_ok active=105
+2026/04/25 11:41:05.729109 [IR] session=sess_1 stream=490 open_ok active=105
+2026/04/25 11:41:05.734288 [IR] session=sess_1 stream=492 open_ok active=105
+2026/04/25 11:41:05.739667 [IR] session=sess_1 stream=488 new_tunnel target=99.80.68.21:443 active=105
+2026/04/25 11:41:05.739739 [IR] session=sess_1 stream=490 new_tunnel target=57.144.245.33:80 active=105
+2026/04/25 11:41:05.739778 [IR] session=sess_1 stream=492 new_tunnel target=57.144.245.33:80 active=105
+2026/04/25 11:41:06.037536 [IR] session=sess_1 stream=494 open_ok active=105
+2026/04/25 11:41:06.049180 [IR] session=sess_1 stream=494 new_tunnel target=app-measurement.com:443 active=105
+2026/04/25 11:41:06.049966 [IR] session=sess_1 stream=496 open_ok active=105
+2026/04/25 11:41:06.068497 [IR] session=sess_1 stream=498 open_ok active=105
+2026/04/25 11:41:06.069745 [IR] session=sess_1 stream=496 new_tunnel target=149.154.167.91:443 active=105
+2026/04/25 11:41:06.076377 [IR] session=sess_1 stream=500 open_ok active=105
+2026/04/25 11:41:06.082854 [IR] session=sess_1 stream=500 new_tunnel target=149.154.167.91:443 active=105
+2026/04/25 11:41:06.083125 [IR] session=sess_1 stream=498 new_tunnel target=149.154.167.91:443 active=105
+2026/04/25 11:41:06.098305 [IR] session=sess_1 stream=502 open_ok active=105
+2026/04/25 11:41:06.115394 [IR] session=sess_1 stream=502 new_tunnel target=cachefly.cachefly.net:443 active=105
+2026/04/25 11:41:06.402694 [IR] session=sess_1 stream=504 open_ok active=109
+2026/04/25 11:41:06.422454 [IR] session=sess_1 stream=504 new_tunnel target=dns.google:443 active=109
+2026/04/25 11:41:06.440757 [IR] session=sess_1 stream=506 open_ok active=109
+2026/04/25 11:41:06.443019 [IR] session=sess_1 stream=506 new_tunnel target=events.mapbox.com:443 active=109
+2026/04/25 11:41:06.747974 [IR] session=sess_1 stream=508 open_ok active=110
+2026/04/25 11:41:06.760442 [IR] session=sess_1 stream=508 new_tunnel target=test-gateway.instagram.com:443 active=110
+2026/04/25 11:41:07.066885 [IR] session=sess_1 stream=510 open_ok active=111
+2026/04/25 11:41:07.074246 [IR] session=sess_1 stream=510 new_tunnel target=meetings.googleapis.com:443 active=111
+2026/04/25 11:41:08.355107 [IR] session=sess_1 stream=512 open_ok active=112
+2026/04/25 11:41:08.361590 [IR] session=sess_1 stream=512 new_tunnel target=ntljp.service.konami.net:80 active=112
+2026/04/25 11:41:08.664141 [IR] session=sess_1 stream=514 open_ok active=112
+2026/04/25 11:41:08.675418 [IR] session=sess_1 stream=514 new_tunnel target=edge-mqtt.facebook.com:443 active=112
+2026/04/25 11:41:08.972588 [IR] session=sess_1 stream=516 open_ok active=112
+2026/04/25 11:41:08.980019 [IR] session=sess_1 stream=516 new_tunnel target=halo.cosmicnarrativehub.com:443 active=112
+2026/04/25 11:41:09.276291 [IR] session=sess_1 stream=518 open_ok active=112
+2026/04/25 11:41:09.286557 [IR] session=sess_1 stream=518 new_tunnel target=halo.cosmicnarrativehub.com:443 active=112
+2026/04/25 11:41:09.578455 [IR] session=sess_1 stream=520 open_ok active=115
+2026/04/25 11:41:09.592484 [IR] session=sess_1 stream=520 new_tunnel target=halo.cosmicnarrativehub.com:443 active=115
+2026/04/25 11:41:09.882475 [IR] session=sess_1 stream=522 open_ok active=115
+2026/04/25 11:41:09.883766 [IR] session=sess_1 stream=522 new_tunnel target=test-gateway.instagram.com:443 active=115
+2026/04/25 11:41:10.185831 [IR] session=sess_1 stream=524 open_ok active=116
+2026/04/25 11:41:10.195449 [IR] session=sess_1 stream=524 new_tunnel target=halo.cosmicnarrativehub.com:443 active=116
+2026/04/25 11:41:10.448757 [IR] session=sess_1 stream=264 summary reason=remote-close age_ms=60629 bytes_client=517 bytes_outer=3315 frames_client=1 frames_outer=3
+2026/04/25 11:41:10.488485 [IR] session=sess_1 stream=526 open_ok active=118
+2026/04/25 11:41:10.507503 [IR] session=sess_1 stream=526 new_tunnel target=halo.cosmicnarrativehub.com:443 active=118
+2026/04/25 11:41:10.613101 [IR] session=sess_1 stream=262 summary reason=remote-close age_ms=60794 bytes_client=517 bytes_outer=3315 frames_client=1 frames_outer=3
+2026/04/25 11:41:10.786580 [IR] session=sess_1 stream=266 summary reason=remote-close age_ms=60967 bytes_client=185 bytes_outer=3309 frames_client=1 frames_outer=3
+2026/04/25 11:41:10.823896 [IR] session=sess_1 stream=528 open_ok active=116
+2026/04/25 11:41:10.837238 [IR] session=sess_1 stream=528 new_tunnel target=eu.matk.temu.com:443 active=116
+2026/04/25 11:41:11.123972 [IR] session=sess_1 stream=270 summary reason=remote-close age_ms=61305 bytes_client=517 bytes_outer=3315 frames_client=1 frames_outer=3
+2026/04/25 11:41:11.152978 [IR] session=sess_1 stream=530 open_ok active=115
+2026/04/25 11:41:11.169145 [IR] session=sess_1 stream=530 new_tunnel target=eu.matk.temu.com:443 active=115
+2026/04/25 11:41:11.179664 [IR] session=sess_1 stream=532 open_ok active=115
+2026/04/25 11:41:11.187645 [IR] session=sess_1 stream=532 new_tunnel target=beacons.gcp.gvt2.com:443 active=115
+2026/04/25 11:41:11.191932 [IR] session=sess_1 stream=534 open_ok active=115
+2026/04/25 11:41:11.208530 [IR] session=sess_1 stream=534 new_tunnel target=149.154.167.92:443 active=115
+2026/04/25 11:41:11.228154 [IR] session=sess_1 stream=536 open_ok active=115
+2026/04/25 11:41:11.230400 [IR] session=sess_1 stream=536 new_tunnel target=tracking.india.miui.com:443 active=115
+2026/04/25 11:41:11.535159 [IR] session=sess_1 stream=538 open_ok active=116
+2026/04/25 11:41:11.537482 [IR] session=sess_1 stream=538 new_tunnel target=b-graph.facebook.com:443 active=116
+2026/04/25 11:41:11.848761 [IR] session=sess_1 stream=540 open_ok active=117
+2026/04/25 11:41:11.867842 [IR] session=sess_1 stream=540 new_tunnel target=graph.facebook.com:443 active=117
+2026/04/25 11:41:12.156236 [IR] session=sess_1 stream=542 open_ok active=120
+2026/04/25 11:41:12.158559 [IR] session=sess_1 stream=542 new_tunnel target=play-fe.googleapis.com:443 active=120
+2026/04/25 11:41:13.519588 [IR] session=sess_1 stream=304 summary reason=remote-close age_ms=63681 bytes_client=406 bytes_outer=260 frames_client=1 frames_outer=2
+2026/04/25 11:41:16.068966 [IR] session=sess_1 stream=494 summary reason=remote-close age_ms=19799 bytes_client=5538 bytes_outer=4670 frames_client=5 frames_outer=1
+2026/04/25 11:41:16.421629 [IR] session=sess_1 stream=504 summary reason=remote-close age_ms=14172 bytes_client=932 bytes_outer=2950 frames_client=3 frames_outer=1
+2026/04/25 11:41:17.072343 [IR] session=sess_1 stream=510 summary reason=remote-close age_ms=14820 bytes_client=2260 bytes_outer=1488 frames_client=1 frames_outer=1
+2026/04/25 11:41:17.968696 [IR] session=sess_1 stats connected=true ready=true request_running=true active=132 frames_in=2515 frames_out=1532 bytes_in=66007399 bytes_out=980739 slow_writes=0 last_in=1777117277 last_out=1777117277
+2026/04/25 11:41:18.449164 [IR] session=sess_1 stream=370 summary reason=remote-close age_ms=64628 bytes_client=517 bytes_outer=3315 frames_client=1 frames_outer=3
+2026/04/25 11:41:18.627178 [IR] session=sess_1 stream=372 summary reason=remote-close age_ms=64806 bytes_client=517 bytes_outer=3315 frames_client=1 frames_outer=3
+2026/04/25 11:41:19.220162 [IR] session=sess_1 stream=286 summary reason=remote-close age_ms=69384 bytes_client=2915 bytes_outer=924 frames_client=3 frames_outer=4
+2026/04/25 11:41:19.511699 [IR] session=sess_1 stream=342 summary reason=remote-close age_ms=69618 bytes_client=3087 bytes_outer=88970 frames_client=4 frames_outer=42
+2026/04/25 11:41:21.199447 [IR] session=sess_1 stream=532 summary reason=remote-close age_ms=15015 bytes_client=2222 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:41:22.157901 [IR] session=sess_1 stream=544 open_err detail="dial-failed"
+2026/04/25 11:41:22.160695 [IR] session=sess_1 stream=546 open_ok active=131
+2026/04/25 11:41:22.162391 [IR] session=sess_1 stream=542 summary reason=remote-close age_ms=15102 bytes_client=2322 bytes_outer=0 frames_client=1 frames_outer=0
+2026/04/25 11:41:22.162427 [IR] session=sess_1 stream=548 open_ok active=130
+2026/04/25 11:41:22.163956 [IR] session=sess_1 stream=550 open_ok active=130
+2026/04/25 11:41:22.166282 [IR] session=sess_1 stream=552 open_ok active=130
+2026/04/25 11:41:22.166367 [IR] session=sess_1 stream=548 new_tunnel target=8.8.8.8:443 active=130
+2026/04/25 11:41:22.166477 [IR] session=sess_1 stream=552 new_tunnel target=8.8.4.4:443 active=130
+2026/04/25 11:41:22.166545 [IR] session=sess_1 stream=550 new_tunnel target=216.239.38.223:443 active=130
+2026/04/25 11:41:22.166619 [IR] session=sess_1 stream=546 new_tunnel target=8.8.8.8:443 active=130
+2026/04/25 11:41:22.168727 [IR] session=sess_1 stream=514 summary reason=remote-close age_ms=19915 bytes_client=1969 bytes_outer=231 frames_client=2 frames_outer=2
+2026/04/25 11:41:22.168758 [IR] session=sess_1 stream=554 open_ok active=129
+2026/04/25 11:41:22.170113 [IR] session=sess_1 stream=556 open_ok active=129
+2026/04/25 11:41:22.186883 [IR] session=sess_1 stream=556 new_tunnel target=8.8.4.4:443 active=129
+2026/04/25 11:41:22.186963 [IR] session=sess_1 stream=554 new_tunnel target=216.239.32.223:443 active=129
+2026/04/25 11:41:22.489541 [IR] session=sess_1 stream=558 open_ok active=129
+2026/04/25 11:41:22.499690 [IR] session=sess_1 stream=558 new_tunnel target=www.gstatic.com:443 active=129
+2026/04/25 11:41:22.502685 [IR] session=sess_1 stream=534 summary reason=local-close age_ms=16301 bytes_client=626 bytes_outer=19648 frames_client=1 frames_outer=4
+2026/04/25 11:41:22.509913 [IR] session=sess_1 stream=528 summary reason=local-close age_ms=16971 bytes_client=517 bytes_outer=6607 frames_client=1 frames_outer=2
+2026/04/25 11:41:22.787961 [IR] session=sess_1 stream=560 open_ok active=127
+2026/04/25 11:41:22.789992 [IR] session=sess_1 stream=562 open_ok active=127
+2026/04/25 11:41:22.791330 [IR] session=sess_1 stream=562 new_tunnel target=57.144.245.32:443 active=127
+2026/04/25 11:41:22.791430 [IR] session=sess_1 stream=560 new_tunnel target=edge-mqtt-fallback.facebook.com:443 active=127
+2026/04/25 11:41:22.792027 [IR] session=sess_1 stream=564 open_ok active=127
+2026/04/25 11:41:22.792124 [IR] session=sess_1 stream=482 summary reason=remote-close age_ms=27605 bytes_client=472 bytes_outer=3917 frames_client=5 frames_outer=4
+2026/04/25 11:41:22.811704 [IR] session=sess_1 stream=564 new_tunnel target=1.1.1.1:853 active=126
+2026/04/25 11:41:23.099809 [IR] session=sess_1 stream=566 open_ok active=126
+2026/04/25 11:41:23.101233 [IR] session=sess_1 stream=566 new_tunnel target=graph.facebook.com:443 active=126
+2026/04/25 11:41:23.402391 [IR] session=sess_1 stream=568 open_ok active=128
+2026/04/25 11:41:23.412523 [IR] session=sess_1 stream=568 new_tunnel target=graph.facebook.com:443 active=128
+2026/04/25 11:41:23.417387 [IR] session=sess_1 stream=570 open_ok active=128
+2026/04/25 11:41:23.420388 [IR] session=sess_1 stream=382 summary reason=local-close age_ms=65630 bytes_client=4850 bytes_outer=36780 frames_client=19 frames_outer=28
+2026/04/25 11:41:23.431272 [IR] session=sess_1 stream=572 open_ok active=127
+2026/04/25 11:41:23.432868 [IR] session=sess_1 stream=574 open_ok active=127
+2026/04/25 11:41:23.432940 [IR] session=sess_1 stream=570 new_tunnel target=149.154.167.92:5222 active=127
+2026/04/25 11:41:23.433047 [IR] session=sess_1 stream=572 new_tunnel target=149.154.167.92:443 active=127
+2026/04/25 11:41:23.439983 [IR] session=sess_1 stream=574 new_tunnel target=8.8.8.8:853 active=127
+2026/04/25 11:41:23.447522 [IR] session=sess_1 stream=576 open_ok active=127
+2026/04/25 11:41:23.458106 [IR] session=sess_1 stream=578 open_ok active=127
+2026/04/25 11:41:23.460361 [IR] session=sess_1 stream=576 new_tunnel target=149.154.167.91:443 active=127
+2026/04/25 11:41:23.466299 [IR] session=sess_1 stream=580 open_ok active=127
+2026/04/25 11:41:23.473577 [IR] session=sess_1 stream=578 new_tunnel target=149.154.167.91:80 active=127
+2026/04/25 11:41:23.473667 [IR] session=sess_1 stream=580 new_tunnel target=149.154.167.91:80 active=127
+2026/04/25 11:41:23.481158 [IR] session=sess_1 stream=582 open_ok active=127
+2026/04/25 11:41:23.482740 [IR] session=sess_1 stream=584 open_ok active=127
+2026/04/25 11:41:23.494355 [IR] session=sess_1 stream=582 new_tunnel target=149.154.167.91:443 active=127
+2026/04/25 11:41:23.494423 [IR] session=sess_1 stream=584 new_tunnel target=1.1.1.1:853 active=127
+2026/04/25 11:41:23.788052 [IR] session=sess_1 stream=586 open_ok active=127
+2026/04/25 11:41:23.807037 [IR] session=sess_1 stream=586 new_tunnel target=www.google.com:443 active=127
+2026/04/25 11:41:23.975158 [IR] session=sess_1 stream=516 summary reason=remote-close age_ms=21721 bytes_client=517 bytes_outer=3146 frames_client=1 frames_outer=1
+2026/04/25 11:41:24.090645 [IR] session=sess_1 stream=588 open_ok active=126
+2026/04/25 11:41:24.096995 [IR] session=sess_1 stream=588 new_tunnel target=ogads-pa.clients6.google.com:443 active=126
+2026/04/25 11:41:24.278894 [IR] session=sess_1 stream=518 summary reason=remote-close age_ms=22025 bytes_client=517 bytes_outer=3144 frames_client=1 frames_outer=1
+2026/04/25 11:41:24.400617 [IR] session=sess_1 stream=590 open_ok active=127
+2026/04/25 11:41:24.408965 [IR] session=sess_1 stream=590 new_tunnel target=play.google.com:443 active=127
+2026/04/25 11:41:24.580440 [IR] session=sess_1 stream=520 summary reason=remote-close age_ms=22326 bytes_client=517 bytes_outer=3144 frames_client=1 frames_outer=1
+2026/04/25 11:41:24.726992 [IR] session=sess_1 stream=592 open_ok active=126
+2026/04/25 11:41:24.740052 [IR] session=sess_1 stream=592 new_tunnel target=eu.matk.temu.com:443 active=126
+2026/04/25 11:41:25.040337 [IR] session=sess_1 stream=594 open_ok active=126
+2026/04/25 11:41:25.050670 [IR] session=sess_1 stream=594 new_tunnel target=encrypted-tbn0.gstatic.com:443 active=126
+2026/04/25 11:41:25.187493 [IR] session=sess_1 stream=524 summary reason=remote-close age_ms=19888 bytes_client=517 bytes_outer=3145 frames_client=1 frames_outer=1
+2026/04/25 11:41:25.343746 [IR] session=sess_1 stream=596 open_ok active=125
+2026/04/25 11:41:25.358155 [IR] session=sess_1 stream=596 new_tunnel target=encrypted-tbn0.gstatic.com:443 active=125
+2026/04/25 11:41:25.491732 [IR] session=sess_1 stream=526 summary reason=remote-close age_ms=20191 bytes_client=517 bytes_outer=3144 frames_client=1 frames_outer=1
+2026/04/25 11:41:25.646438 [IR] session=sess_1 stream=598 open_ok active=126
+2026/04/25 11:41:25.662997 [IR] session=sess_1 stream=600 open_ok active=126
+2026/04/25 11:41:25.666321 [IR] session=sess_1 stream=598 new_tunnel target=encrypted-tbn0.gstatic.com:443 active=126
+2026/04/25 11:41:25.668488 [IR] session=sess_1 stream=600 new_tunnel target=http-dns.imostatic.com:443 active=126
+2026/04/25 11:41:25.675201 [IR] session=sess_1 stream=602 open_ok active=126
+2026/04/25 11:41:25.688954 [IR] session=sess_1 stream=602 new_tunnel target=149.154.167.91:443 active=126
+2026/04/25 11:41:25.689708 [IR] session=sess_1 stream=604 open_ok active=126
+2026/04/25 11:41:25.707587 [IR] session=sess_1 stream=604 new_tunnel target=149.154.167.91:80 active=126
+2026/04/25 11:41:25.992375 [IR] session=sess_1 stream=606 open_ok active=126
+2026/04/25 11:41:25.999768 [IR] session=sess_1 stream=606 new_tunnel target=dns.google:443 active=126
+2026/04/25 11:41:26.005937 [IR] session=sess_1 stream=608 open_ok active=126
+2026/04/25 11:41:26.020401 [IR] session=sess_1 stream=608 new_tunnel target=155.117.5.155:43030 active=126
+2026/04/25 11:41:26.309281 [IR] session=sess_1 stream=610 open_ok active=126
+2026/04/25 11:41:26.313061 [IR] session=sess_1 stream=610 new_tunnel target=ogads-pa.clients6.google.com:443 active=126
+2026/04/25 11:41:26.329332 [IR] session=sess_1 stream=612 open_ok active=126
+2026/04/25 11:41:26.334559 [IR] session=sess_1 stream=612 new_tunnel target=149.154.167.91:80 active=126
+2026/04/25 11:41:26.336064 [IR] session=sess_1 stream=614 open_ok active=126
+2026/04/25 11:41:26.351283 [IR] session=sess_1 stream=616 open_ok active=126
+2026/04/25 11:41:26.355394 [IR] session=sess_1 stream=616 new_tunnel target=149.154.167.92:443 active=126
+2026/04/25 11:41:26.355485 [IR] session=sess_1 stream=614 new_tunnel target=149.154.167.91:443 active=126
+2026/04/25 11:41:26.361805 [IR] session=sess_1 stream=572 summary reason=local-close age_ms=11171 bytes_client=7101 bytes_outer=12280 frames_client=4 frames_outer=2
+2026/04/25 11:41:26.365114 [IR] session=sess_1 stream=618 open_ok active=125
+2026/04/25 11:41:26.365163 [IR] session=sess_1 stream=620 open_ok active=125
+2026/04/25 11:41:26.365212 [IR] session=sess_1 stream=622 open_ok active=125
+2026/04/25 11:41:26.370640 [IR] session=sess_1 stream=570 summary reason=local-close age_ms=12133 bytes_client=297 bytes_outer=14736 frames_client=1 frames_outer=2
+2026/04/25 11:41:26.375487 [IR] session=sess_1 stream=618 new_tunnel target=beacons.gcp.gvt2.com:443 active=124
+2026/04/25 11:41:26.378732 [IR] session=sess_1 stream=620 new_tunnel target=8.8.8.8:443 active=124
+2026/04/25 11:41:26.384123 [IR] session=sess_1 stream=622 new_tunnel target=8.8.4.4:443 active=124
+2026/04/25 11:41:26.411798 [IR] session=sess_1 stream=592 summary reason=local-close age_ms=8729 bytes_client=517 bytes_outer=6607 frames_client=1 frames_outer=2
+2026/04/25 11:41:26.953106 [IR] session=sess_1 stream=624 open_ok active=124
+2026/04/25 11:41:26.959657 [IR] session=sess_1 stream=624 new_tunnel target=17.248.209.69:443 active=125
+2026/04/25 11:41:27.176122 [IR] session=sess_1 stream=626 open_ok active=130
+2026/04/25 11:41:27.177744 [IR] session=sess_1 stream=628 open_ok active=130
+2026/04/25 11:41:27.186388 [IR] session=sess_1 stream=626 new_tunnel target=17.188.172.10:443 active=130
+2026/04/25 11:41:27.188406 [IR] session=sess_1 stream=630 open_ok active=130
+2026/04/25 11:41:27.191986 [IR] session=sess_1 stream=628 new_tunnel target=2.16.168.110:443 active=130
+2026/04/25 11:41:27.208595 [IR] session=sess_1 stream=630 new_tunnel target=149.154.167.92:5222 active=130
+2026/04/25 11:41:27.400575 [IR] session=sess_1 stream=512 summary reason=remote-close age_ms=25148 bytes_client=4291 bytes_outer=144 frames_client=1 frames_outer=1
+2026/04/25 11:41:27.485631 [IR] session=sess_1 stream=388 summary reason=remote-close age_ms=68206 bytes_client=6179 bytes_outer=3942 frames_client=6 frames_outer=6
+2026/04/25 11:41:27.530224 [IR] session=sess_1 stream=632 open_ok active=130
+2026/04/25 11:41:27.534923 [IR] session=sess_1 stream=632 new_tunnel target=17.242.184.19:443 active=130
+2026/04/25 11:41:27.845240 [IR] session=sess_1 stream=634 open_ok active=134
+2026/04/25 11:41:27.848515 [IR] session=sess_1 stream=634 new_tunnel target=ogs.google.com:443 active=134
+2026/04/25 11:41:28.351593 [IR] session=sess_1 stream=636 open_err detail="dial-failed"
+2026/04/25 11:41:28.656289 [IR] session=sess_1 stream=638 open_ok active=153
+2026/04/25 11:41:28.657829 [IR] session=sess_1 stream=640 open_ok active=153
+2026/04/25 11:41:28.659964 [IR] session=sess_1 stream=642 open_ok active=153
+2026/04/25 11:41:28.660033 [IR] session=sess_1 stream=638 new_tunnel target=www.youtube.com:443 active=153
+2026/04/25 11:41:28.660221 [IR] session=sess_1 stream=640 new_tunnel target=157.240.0.63:443 active=153
+2026/04/25 11:41:28.661123 [IR] session=sess_1 stream=644 open_ok active=153
+2026/04/25 11:41:28.663006 [IR] session=sess_1 stream=646 open_ok active=153
+2026/04/25 11:41:28.663632 [IR] session=sess_1 stream=620 summary reason=local-close age_ms=3031 bytes_client=10486 bytes_outer=25871 frames_client=22 frames_outer=46
+2026/04/25 11:41:28.664690 [IR] session=sess_1 stream=648 open_ok active=152
+2026/04/25 11:41:28.666522 [IR] session=sess_1 stream=650 open_ok active=152
+2026/04/25 11:41:28.666575 [IR] session=sess_1 stream=642 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.668678 [IR] session=sess_1 stream=652 open_ok active=152
+2026/04/25 11:41:28.670042 [IR] session=sess_1 stream=654 open_ok active=152
+2026/04/25 11:41:28.671119 [IR] session=sess_1 stream=650 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.671160 [IR] session=sess_1 stream=652 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.671761 [IR] session=sess_1 stream=656 open_ok active=152
+2026/04/25 11:41:28.673278 [IR] session=sess_1 stream=658 open_ok active=152
+2026/04/25 11:41:28.675185 [IR] session=sess_1 stream=656 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.676763 [IR] session=sess_1 stream=654 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.680487 [IR] session=sess_1 stream=644 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.680552 [IR] session=sess_1 stream=646 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.682353 [IR] session=sess_1 stream=648 new_tunnel target=157.240.0.63:443 active=152
+2026/04/25 11:41:28.685739 [IR] session=sess_1 stream=658 new_tunnel target=157.240.253.12:443 active=152
+2026/04/25 11:41:28.906812 [IR] session=sess_1 stream=418 summary reason=remote-close age_ms=61420 bytes_client=2041 bytes_outer=660 frames_client=2 frames_outer=2
+2026/04/25 11:41:28.910520 [IR] session=sess_1 stream=416 summary reason=remote-close age_ms=61424 bytes_client=2734 bytes_outer=2276 frames_client=2 frames_outer=4
+2026/04/25 11:41:28.976170 [IR] session=sess_1 stream=660 open_ok active=150
+2026/04/25 11:41:28.977698 [IR] session=sess_1 stream=662 open_ok active=150
+2026/04/25 11:41:28.980622 [IR] session=sess_1 stream=664 open_ok active=150
+2026/04/25 11:41:28.981757 [IR] session=sess_1 stream=662 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:28.982180 [IR] session=sess_1 stream=666 open_ok active=150
+2026/04/25 11:41:28.984393 [IR] session=sess_1 stream=668 open_ok active=150
+2026/04/25 11:41:28.986063 [IR] session=sess_1 stream=670 open_ok active=150
+2026/04/25 11:41:28.987214 [IR] session=sess_1 stream=668 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:28.987794 [IR] session=sess_1 stream=672 open_ok active=150
+2026/04/25 11:41:28.988939 [IR] session=sess_1 stream=670 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:28.989008 [IR] session=sess_1 stream=672 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:28.989069 [IR] session=sess_1 stream=664 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:28.989921 [IR] session=sess_1 stream=674 open_ok active=150
+2026/04/25 11:41:28.990970 [IR] session=sess_1 stream=676 open_ok active=150
+2026/04/25 11:41:28.992844 [IR] session=sess_1 stream=678 open_ok active=150
+2026/04/25 11:41:28.992888 [IR] session=sess_1 stream=660 new_tunnel target=www.gstatic.com:443 active=150
+2026/04/25 11:41:28.994548 [IR] session=sess_1 stream=680 open_ok active=150
+2026/04/25 11:41:28.995853 [IR] session=sess_1 stream=682 open_ok active=150
+2026/04/25 11:41:28.996928 [IR] session=sess_1 stream=682 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:28.997619 [IR] session=sess_1 stream=684 open_ok active=150
+2026/04/25 11:41:28.997678 [IR] session=sess_1 stream=666 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:28.999392 [IR] session=sess_1 stream=686 open_ok active=150
+2026/04/25 11:41:29.009752 [IR] session=sess_1 stream=674 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:29.009847 [IR] session=sess_1 stream=680 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:29.009885 [IR] session=sess_1 stream=676 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:29.011036 [IR] session=sess_1 stream=678 new_tunnel target=157.240.0.63:443 active=150
+2026/04/25 11:41:29.017309 [IR] session=sess_1 stream=684 new_tunnel target=157.240.253.13:443 active=150
+2026/04/25 11:41:29.018686 [IR] session=sess_1 stream=686 new_tunnel target=157.240.253.13:443 active=150
+2026/04/25 11:41:29.303159 [IR] session=sess_1 stream=688 open_ok active=150
+2026/04/25 11:41:29.316224 [IR] session=sess_1 stream=688 new_tunnel target=www.gstatic.com:443 active=150
+2026/04/25 11:41:30.999901 [IR] session=sess_1 stream=632 summary reason=remote-close age_ms=3981 bytes_client=1539 bytes_outer=3624 frames_client=1 frames_outer=1
+2026/04/25 11:41:31.215650 [IR] session=sess_1 stream=630 summary reason=local-close age_ms=4232 bytes_client=2235 bytes_outer=150289 frames_client=5 frames_outer=45
+2026/04/25 11:41:32.141252 [IR] session=sess_1 stream=608 summary reason=local-close age_ms=10638 bytes_client=3123 bytes_outer=3410 frames_client=3 frames_outer=5
+2026/04/25 11:41:32.170043 [IR] session=sess_1 stream=550 summary reason=remote-close age_ms=22592 bytes_client=1556 bytes_outer=4294 frames_client=1 frames_outer=1
+2026/04/25 11:41:32.170830 [IR] session=sess_1 stream=554 summary reason=remote-close age_ms=21875 bytes_client=1556 bytes_outer=4295 frames_client=1 frames_outer=1
+2026/04/25 11:41:32.187434 [IR] session=sess_1 stream=548 summary reason=remote-close age_ms=22619 bytes_client=1539 bytes_outer=4053 frames_client=1 frames_outer=1
+2026/04/25 11:41:32.192172 [IR] session=sess_1 stream=552 summary reason=remote-close age_ms=22141 bytes_client=1537 bytes_outer=4053 frames_client=1 frames_outer=1
+2026/04/25 11:41:32.279173 [IR] session=sess_1 stream=626 summary reason=remote-close age_ms=5320 bytes_client=1544 bytes_outer=2228 frames_client=1 frames_outer=1
+2026/04/25 11:41:32.478372 [IR] session=sess_1 stream=558 summary reason=remote-close age_ms=22004 bytes_client=1477 bytes_outer=3907 frames_client=1 frames_outer=1
+2026/04/25 11:41:32.969148 [IR] session=sess_1 stats connected=true ready=true request_running=true active=141 frames_in=3188 frames_out=1757 bytes_in=67485485 bytes_out=1108969 slow_writes=0 last_in=1777117292 last_out=1777117292
+2026/04/25 11:41:33.457939 [IR] session=sess_1 stream=574 summary reason=remote-close age_ms=18113 bytes_client=228 bytes_outer=4628 frames_client=1 frames_outer=1
+2026/04/25 11:41:33.796914 [IR] session=sess_1 stream=586 summary reason=remote-close age_ms=16116 bytes_client=1476 bytes_outer=3878 frames_client=1 frames_outer=1
+2026/04/25 11:41:35.050097 [IR] session=sess_1 stream=594 summary reason=remote-close age_ms=17298 bytes_client=1736 bytes_outer=4093 frames_client=1 frames_outer=1
+2026/04/25 11:41:35.660690 [IR] session=sess_1 stream=598 summary reason=remote-close age_ms=17909 bytes_client=2202 bytes_outer=1475 frames_client=1 frames_outer=1
+2026/04/25 11:41:36.027199 [IR] session=sess_1 stream=606 summary reason=remote-close age_ms=16426 bytes_client=517 bytes_outer=2948 frames_client=1 frames_outer=1
+2026/04/25 11:41:37.847761 [IR] session=sess_1 stream=634 summary reason=remote-close age_ms=10764 bytes_client=2178 bytes_outer=1463 frames_client=1 frames_outer=1
+2026/04/25 11:41:38.666620 [IR] session=sess_1 stream=638 summary reason=remote-close age_ms=11326 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:41:39.011295 [IR] session=sess_1 stream=660 summary reason=remote-close age_ms=10859 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0
+2026/04/25 11:41:39.360022 [IR] session=sess_1 stream=688 summary reason=remote-close age_ms=10841 bytes_client=0 bytes_outer=0 frames_client=0 frames_outer=0

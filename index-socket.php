@@ -28,6 +28,11 @@ function failJson(string $message, int $code = 400, array $extra = []): void
     exit;
 }
 
+function relayLog(string $message): void
+{
+    error_log('[INDEX-SOCKET] ' . $message);
+}
+
 function cleanToken(string $value): string
 {
     return preg_replace('/[^a-zA-Z0-9_\-\.]/', '', $value) ?? '';
@@ -103,11 +108,23 @@ function bridgeSockets(Socket $left, Socket $right, int $bufferSize, int $idleTi
         $except = null;
         $changed = @socket_select($read, $write, $except, 1, 0);
         if ($changed === false) {
-            throw new RuntimeException('socket_select failed');
+            $leftErr = socket_last_error($left);
+            $rightErr = socket_last_error($right);
+            throw new RuntimeException(
+                sprintf(
+                    'socket_select failed left=%s right=%s',
+                    socket_strerror($leftErr),
+                    socket_strerror($rightErr)
+                )
+            );
         }
         if ($changed === 0) {
             if (time() - $lastActivity > $idleTimeoutSec) {
-                break;
+                return [
+                    'left_to_right_bytes' => $leftToRight,
+                    'right_to_left_bytes' => $rightToLeft,
+                    'reason' => 'idle-timeout',
+                ];
             }
             continue;
         }
@@ -120,6 +137,7 @@ function bridgeSockets(Socket $left, Socket $right, int $bufferSize, int $idleTi
                 return [
                     'left_to_right_bytes' => $leftToRight,
                     'right_to_left_bytes' => $rightToLeft,
+                    'reason' => $source === $left ? 'iran-closed' : 'outer-closed',
                 ];
             }
 
@@ -137,6 +155,7 @@ function bridgeSockets(Socket $left, Socket $right, int $bufferSize, int $idleTi
     return [
         'left_to_right_bytes' => $leftToRight,
         'right_to_left_bytes' => $rightToLeft,
+        'reason' => 'loop-exit',
     ];
 }
 
@@ -178,8 +197,18 @@ if ($iranHost === '' || $iranPort < 1 || $iranPort > 65535 || $outerHost === '' 
 
 $iranSocket = null;
 $outerSocket = null;
+$startedAt = microtime(true);
 
 try {
+    relayLog(sprintf(
+        'session_start sid=%s iran=%s:%d outer=%s:%d',
+        $sessionId,
+        $iranHost,
+        $iranPort,
+        $outerHost,
+        $outerPort
+    ));
+
     $iranSocket = connectTcp($iranHost, $iranPort, $CONNECT_TIMEOUT_SEC);
     socket_write_all($iranSocket, sprintf("SESSION %s %s\n", $API_KEY, $sessionId));
     $iranReply = socketReadLine($iranSocket);
@@ -206,10 +235,23 @@ try {
     $stats = bridgeSockets($iranSocket, $outerSocket, $BUFFER_SIZE, $READ_IDLE_TIMEOUT_SEC);
     closeSocket($iranSocket);
     closeSocket($outerSocket);
-    error_log(sprintf('[INDEX-SOCKET] session bridged %d/%d bytes', $stats['left_to_right_bytes'], $stats['right_to_left_bytes']));
+    relayLog(sprintf(
+        'session_end sid=%s reason=%s dur_ms=%.0f iran_to_outer=%d outer_to_iran=%d',
+        $sessionId,
+        $stats['reason'] ?? 'unknown',
+        (microtime(true) - $startedAt) * 1000,
+        $stats['left_to_right_bytes'],
+        $stats['right_to_left_bytes']
+    ));
     exit;
 } catch (Throwable $e) {
     closeSocket($iranSocket);
     closeSocket($outerSocket);
+    relayLog(sprintf(
+        'session_fail sid=%s dur_ms=%.0f error=%s',
+        $sessionId !== '' ? $sessionId : 'unknown',
+        (microtime(true) - $startedAt) * 1000,
+        $e->getMessage()
+    ));
     failJson('Session bridge failed', 502, ['detail' => $e->getMessage()]);
 }
