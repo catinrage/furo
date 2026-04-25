@@ -582,11 +582,11 @@ func (s *Session) closeAll(err error) {
 	})
 }
 
-func (s *Session) readLoop() {
+func (s *Session) readLoop(conn net.Conn) {
 	defer s.closeAll(io.EOF)
 
 	for {
-		fr, err := readFrame(s.conn)
+		fr, err := readFrame(conn)
 		if err != nil {
 			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 				logEvent("[SERVER] session=%s read_failed err=%v", s.sid, err)
@@ -788,7 +788,7 @@ func handleRelayConn(conn net.Conn) {
 	activeSessions.Add(1)
 	logEvent("[SERVER] session=%s accepted remote=%s active_sessions=%d", session.sid, session.conn.RemoteAddr(), activeSessions.Load())
 	go session.statsLoop()
-	go session.readLoop()
+	go session.readLoop(session.conn)
 }
 
 func main() {
