@@ -26,11 +26,12 @@ const (
 )
 
 const (
-	frameHeaderSize = 9
-	maxFramePayload = 256 * 1024
-	streamWriteQueueDepth = 32
-	slowWriteThreshold = 200 * time.Millisecond
-	sessionStatsInterval = 15 * time.Second
+	frameHeaderSize        = 9
+	maxFramePayload        = 128 * 1024
+	streamWriteQueueDepth  = 32
+	controlWriteQueueDepth = 256
+	slowWriteThreshold     = 200 * time.Millisecond
+	sessionStatsInterval   = 15 * time.Second
 )
 
 var (
@@ -39,7 +40,7 @@ var (
 	dialTimeout     = flag.Duration("dial-timeout", 10*time.Second, "TCP dial timeout to target")
 	keepalivePeriod = flag.Duration("keepalive", 30*time.Second, "TCP keepalive period")
 	maxSessions     = flag.Int("max-sessions", 0, "Maximum concurrent multiplexed sessions; 0 means unlimited")
-	logFilePath     = flag.String("log-file", "logs.txt", "Path to debug log file")
+	logFilePath     = flag.String("log-file", "", "Optional path to debug log file; disabled when empty")
 )
 
 var (
@@ -192,17 +193,25 @@ func writeAll(conn net.Conn, data []byte) error {
 }
 
 type TargetStream struct {
-	id   uint32
-	conn net.Conn
-	once sync.Once
-	done chan struct{}
-	q    chan []byte
-	summaryOnce sync.Once
-	startedAt time.Time
-	bytesFromRelay uint64
-	bytesToRelay   uint64
+	id              uint32
+	conn            net.Conn
+	once            sync.Once
+	done            chan struct{}
+	q               chan []byte
+	summaryOnce     sync.Once
+	startedAt       time.Time
+	bytesFromRelay  uint64
+	bytesToRelay    uint64
 	framesFromRelay uint64
 	framesToRelay   uint64
+}
+
+type outboundFrame struct {
+	typ        byte
+	streamID   uint32
+	payload    []byte
+	enqueuedAt time.Time
+	result     chan error
 }
 
 func (t *TargetStream) close() {
@@ -231,34 +240,45 @@ func (t *TargetStream) enqueue(payload []byte) error {
 type Session struct {
 	sid string
 
-	mu       sync.Mutex
-	writerMu sync.Mutex
-	conn     net.Conn
-	authOK   bool
-	streams  map[uint32]*TargetStream
-	framesIn       uint64
-	framesOut      uint64
-	bytesIn        uint64
-	bytesOut       uint64
-	slowWrites     uint64
+	closeOnce        sync.Once
+	mu               sync.Mutex
+	conn             net.Conn
+	authOK           bool
+	streams          map[uint32]*TargetStream
+	controlQ         chan *outboundFrame
+	wakeWriter       chan struct{}
+	closed           chan struct{}
+	schedMu          sync.Mutex
+	dataQueues       map[uint32][]*outboundFrame
+	readyStreams     []uint32
+	framesIn         uint64
+	framesOut        uint64
+	bytesIn          uint64
+	bytesOut         uint64
+	slowWrites       uint64
 	lastFrameInUnix  int64
 	lastFrameOutUnix int64
 }
 
 func newSession(sid string, conn net.Conn) *Session {
 	setTCPOptions(conn)
-	return &Session{
-		sid:     sid,
-		conn:    conn,
-		streams: make(map[uint32]*TargetStream),
+	s := &Session{
+		sid:        sid,
+		conn:       conn,
+		streams:    make(map[uint32]*TargetStream),
+		controlQ:   make(chan *outboundFrame, controlWriteQueueDepth),
+		wakeWriter: make(chan struct{}, 1),
+		closed:     make(chan struct{}),
+		dataQueues: make(map[uint32][]*outboundFrame),
 	}
+	go s.writeLoop()
+	return s
 }
 
 func (s *Session) sendFrame(typ byte, streamID uint32, payload []byte) error {
 	s.mu.Lock()
 	conn := s.conn
 	authOK := s.authOK
-	active := len(s.streams)
 	s.mu.Unlock()
 
 	if conn == nil {
@@ -268,23 +288,146 @@ func (s *Session) sendFrame(typ byte, streamID uint32, payload []byte) error {
 		return errors.New("session not authenticated")
 	}
 
-	lockStart := time.Now()
-	s.writerMu.Lock()
-	defer s.writerMu.Unlock()
-	lockWait := time.Since(lockStart)
-	writeStart := time.Now()
-	err := writeFrame(conn, typ, streamID, payload)
-	writeDur := time.Since(writeStart)
-	if err == nil {
-		atomic.AddUint64(&s.framesOut, 1)
-		atomic.AddUint64(&s.bytesOut, uint64(len(payload)))
-		atomic.StoreInt64(&s.lastFrameOutUnix, time.Now().Unix())
+	req := &outboundFrame{
+		typ:        typ,
+		streamID:   streamID,
+		payload:    payload,
+		enqueuedAt: time.Now(),
+		result:     make(chan error, 1),
 	}
-	if lockWait > slowWriteThreshold || writeDur > slowWriteThreshold {
-		atomic.AddUint64(&s.slowWrites, 1)
-		logEvent("[OUT] session=%s slow_send type=%s stream=%d bytes=%d lock_ms=%d write_ms=%d active=%d err=%v", s.sid, frameTypeName(typ), streamID, len(payload), lockWait.Milliseconds(), writeDur.Milliseconds(), active, err)
+
+	if typ == frameData {
+		if err := s.enqueueData(req); err != nil {
+			return err
+		}
+	} else {
+		select {
+		case <-s.closed:
+			return net.ErrClosed
+		case s.controlQ <- req:
+		case <-time.After(2 * time.Second):
+			return errors.New("control write queue full")
+		}
 	}
-	return err
+
+	return <-req.result
+}
+
+func (s *Session) enqueueData(req *outboundFrame) error {
+	s.schedMu.Lock()
+	if s.conn == nil {
+		s.schedMu.Unlock()
+		return net.ErrClosed
+	}
+	if len(s.dataQueues[req.streamID]) == 0 {
+		s.readyStreams = append(s.readyStreams, req.streamID)
+	}
+	s.dataQueues[req.streamID] = append(s.dataQueues[req.streamID], req)
+	s.schedMu.Unlock()
+	select {
+	case s.wakeWriter <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (s *Session) popDataFrame() *outboundFrame {
+	s.schedMu.Lock()
+	defer s.schedMu.Unlock()
+	if len(s.readyStreams) == 0 {
+		return nil
+	}
+	streamID := s.readyStreams[0]
+	s.readyStreams = s.readyStreams[1:]
+	queue := s.dataQueues[streamID]
+	req := queue[0]
+	queue = queue[1:]
+	if len(queue) == 0 {
+		delete(s.dataQueues, streamID)
+	} else {
+		s.dataQueues[streamID] = queue
+		s.readyStreams = append(s.readyStreams, streamID)
+	}
+	return req
+}
+
+func (s *Session) nextFrame() (*outboundFrame, bool) {
+	for {
+		select {
+		case req := <-s.controlQ:
+			return req, true
+		default:
+		}
+		if req := s.popDataFrame(); req != nil {
+			return req, true
+		}
+		select {
+		case <-s.closed:
+			return nil, false
+		case req := <-s.controlQ:
+			return req, true
+		case <-s.wakeWriter:
+		}
+	}
+}
+
+func (s *Session) writeLoop() {
+	for {
+		req, ok := s.nextFrame()
+		if !ok {
+			return
+		}
+
+		s.mu.Lock()
+		conn := s.conn
+		active := len(s.streams)
+		s.mu.Unlock()
+
+		if conn == nil {
+			req.result <- net.ErrClosed
+			continue
+		}
+
+		writeStart := time.Now()
+		err := writeFrame(conn, req.typ, req.streamID, req.payload)
+		writeDur := time.Since(writeStart)
+		if err == nil {
+			atomic.AddUint64(&s.framesOut, 1)
+			atomic.AddUint64(&s.bytesOut, uint64(len(req.payload)))
+			atomic.StoreInt64(&s.lastFrameOutUnix, time.Now().Unix())
+		}
+		if queueWait := writeStart.Sub(req.enqueuedAt); queueWait > slowWriteThreshold || writeDur > slowWriteThreshold {
+			atomic.AddUint64(&s.slowWrites, 1)
+			logEvent("[OUT] session=%s slow_send type=%s stream=%d bytes=%d lock_ms=%d write_ms=%d active=%d err=%v", s.sid, frameTypeName(req.typ), req.streamID, len(req.payload), queueWait.Milliseconds(), writeDur.Milliseconds(), active, err)
+		}
+		req.result <- err
+		if err != nil {
+			s.closeAll(err)
+			return
+		}
+	}
+}
+
+func (s *Session) failPending(err error) {
+	for {
+		select {
+		case req := <-s.controlQ:
+			req.result <- err
+		default:
+			goto drainData
+		}
+	}
+
+drainData:
+	s.schedMu.Lock()
+	defer s.schedMu.Unlock()
+	for streamID, queue := range s.dataQueues {
+		for _, req := range queue {
+			req.result <- err
+		}
+		delete(s.dataQueues, streamID)
+	}
+	s.readyStreams = nil
 }
 
 func (s *Session) addStream(stream *TargetStream) {
@@ -342,25 +485,29 @@ func (s *Session) activeCount() int {
 }
 
 func (s *Session) closeAll(err error) {
-	s.mu.Lock()
-	conn := s.conn
-	s.conn = nil
-	s.authOK = false
-	streams := make([]*TargetStream, 0, len(s.streams))
-	for id, stream := range s.streams {
-		streams = append(streams, stream)
-		delete(s.streams, id)
-	}
-	s.mu.Unlock()
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		conn := s.conn
+		s.conn = nil
+		s.authOK = false
+		streams := make([]*TargetStream, 0, len(s.streams))
+		for id, stream := range s.streams {
+			streams = append(streams, stream)
+			delete(s.streams, id)
+		}
+		s.mu.Unlock()
 
-	if conn != nil {
-		_ = conn.Close()
-	}
-	for _, stream := range streams {
-		stream.close()
-	}
-	activeSessions.Add(-1)
-	logEvent("[OUT] session=%s closed err=%v active_sessions=%d", s.sid, err, activeSessions.Load())
+		close(s.closed)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		s.failPending(net.ErrClosed)
+		for _, stream := range streams {
+			stream.close()
+		}
+		activeSessions.Add(-1)
+		logEvent("[OUT] session=%s closed err=%v active_sessions=%d", s.sid, err, activeSessions.Load())
+	})
 }
 
 func (s *Session) readLoop() {
@@ -439,10 +586,10 @@ func (s *Session) handleOpen(streamID uint32, payload []byte) {
 	setTCPOptions(targetConn)
 
 	stream := &TargetStream{
-		id:   streamID,
-		conn: targetConn,
-		done: make(chan struct{}),
-		q:    make(chan []byte, streamWriteQueueDepth),
+		id:        streamID,
+		conn:      targetConn,
+		done:      make(chan struct{}),
+		q:         make(chan []byte, streamWriteQueueDepth),
 		startedAt: time.Now(),
 	}
 	s.addStream(stream)
@@ -575,12 +722,14 @@ func handleRelayConn(conn net.Conn) {
 func main() {
 	flag.Parse()
 
-	logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		log.Fatalf("failed to open log file %s: %v", *logFilePath, err)
+	if *logFilePath != "" {
+		logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatalf("failed to open log file %s: %v", *logFilePath, err)
+		}
+		logger = log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
+		log.Printf("[OUT-SOCK] debug log file: %s", *logFilePath)
 	}
-	logger = log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
-	log.Printf("[OUT-SOCK] debug log file: %s", *logFilePath)
 	logEvent("[OUT] startup agent_listen=%s dial_timeout=%s max_sessions=%d", *agentListen, dialTimeout.String(), *maxSessions)
 
 	ln, err := net.Listen("tcp", *agentListen)

@@ -5,6 +5,7 @@ $API_KEY = 'my_super_secret_123456789';
 $CONNECT_TIMEOUT_SEC = 8;
 $READ_IDLE_TIMEOUT_SEC = 300;
 $BUFFER_SIZE = 1024 * 1024;
+$ENABLE_RELAY_LOGS = false;
 
 ignore_user_abort(true);
 set_time_limit(0);
@@ -30,6 +31,10 @@ function failJson(string $message, int $code = 400, array $extra = []): void
 
 function relayLog(string $message): void
 {
+    global $ENABLE_RELAY_LOGS;
+    if (!$ENABLE_RELAY_LOGS) {
+        return;
+    }
     error_log('[INDEX-SOCKET] ' . $message);
 }
 

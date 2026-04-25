@@ -32,12 +32,12 @@ const (
 )
 
 const (
-	frameHeaderSize  = 9
-	maxFramePayload  = 256 * 1024
-	sessionPollDelay = 1200 * time.Millisecond
+	frameHeaderSize       = 9
+	maxFramePayload       = 128 * 1024
+	sessionPollDelay      = 1200 * time.Millisecond
 	streamWriteQueueDepth = 32
-	slowWriteThreshold = 200 * time.Millisecond
-	sessionStatsInterval = 15 * time.Second
+	slowWriteThreshold    = 200 * time.Millisecond
+	sessionStatsInterval  = 15 * time.Second
 )
 
 var (
@@ -54,7 +54,7 @@ var (
 	keepalivePeriod = flag.Duration("keepalive", 30*time.Second, "TCP keepalive period")
 	sessionCount    = flag.Int("session-count", 1, "Number of multiplexed PHP sessions to maintain")
 	maxRelays       = flag.Int("max-relays", 0, "Compatibility flag; ignored in multiplex mode")
-	logFilePath     = flag.String("log-file", "logs.txt", "Path to debug log file")
+	logFilePath     = flag.String("log-file", "", "Optional path to debug log file; disabled when empty")
 )
 
 var (
@@ -250,19 +250,19 @@ type MuxConn struct {
 	id      uint32
 	session *MuxSession
 
-	mu           sync.Mutex
-	cond         *sync.Cond
-	openReady    bool
-	openErr      error
-	readQ        [][]byte
-	readBuf      []byte
-	closed       bool
-	remoteClosed bool
-	done         chan struct{}
-	writeQ       chan []byte
-	closeOnce    sync.Once
-	summaryOnce  sync.Once
-	startedAt    time.Time
+	mu              sync.Mutex
+	cond            *sync.Cond
+	openReady       bool
+	openErr         error
+	readQ           [][]byte
+	readBuf         []byte
+	closed          bool
+	remoteClosed    bool
+	done            chan struct{}
+	writeQ          chan []byte
+	closeOnce       sync.Once
+	summaryOnce     sync.Once
+	startedAt       time.Time
 	bytesFromClient uint64
 	bytesFromOuter  uint64
 	framesToOuter   uint64
@@ -479,8 +479,8 @@ func (c *MuxConn) logSummary(reason string) {
 	})
 }
 
-func (c *MuxConn) LocalAddr() net.Addr  { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
-func (c *MuxConn) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
+func (c *MuxConn) LocalAddr() net.Addr              { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
+func (c *MuxConn) RemoteAddr() net.Addr             { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
 func (c *MuxConn) SetDeadline(time.Time) error      { return nil }
 func (c *MuxConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *MuxConn) SetWriteDeadline(time.Time) error { return nil }
@@ -490,28 +490,28 @@ type MuxSession struct {
 	sid  string
 	idx  int
 
-	mu             sync.Mutex
-	writerMu       sync.Mutex
-	conn           net.Conn
-	ready          bool
-	requestRunning bool
-	streams        map[uint32]*MuxConn
-	nextStreamID   uint32
-	sessionGen     uint64
-	framesIn       uint64
-	framesOut      uint64
-	bytesIn        uint64
-	bytesOut       uint64
-	slowWrites     uint64
+	mu               sync.Mutex
+	writerMu         sync.Mutex
+	conn             net.Conn
+	ready            bool
+	requestRunning   bool
+	streams          map[uint32]*MuxConn
+	nextStreamID     uint32
+	sessionGen       uint64
+	framesIn         uint64
+	framesOut        uint64
+	bytesIn          uint64
+	bytesOut         uint64
+	slowWrites       uint64
 	lastFrameInUnix  int64
 	lastFrameOutUnix int64
 }
 
 func newMuxSession(pool *SessionPool, idx int, sid string) *MuxSession {
 	return &MuxSession{
-		pool:   pool,
-		idx:    idx,
-		sid:    sid,
+		pool:    pool,
+		idx:     idx,
+		sid:     sid,
 		streams: make(map[uint32]*MuxConn),
 	}
 }
@@ -974,12 +974,14 @@ func main() {
 		log.Fatal("--session-count must be >= 1")
 	}
 
-	logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		log.Fatalf("failed to open log file %s: %v", *logFilePath, err)
+	if *logFilePath != "" {
+		logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatalf("failed to open log file %s: %v", *logFilePath, err)
+		}
+		logger = log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
+		log.Printf("[IR-SOCK] debug log file: %s", *logFilePath)
 	}
-	logger = log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
-	log.Printf("[IR-SOCK] debug log file: %s", *logFilePath)
 
 	httpClient.Transport.(*http.Transport).ResponseHeaderTimeout = *openTimeout
 	pool := newSessionPool(*sessionCount)
