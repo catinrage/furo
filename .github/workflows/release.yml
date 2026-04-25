@@ -1,0 +1,87 @@
+name: Build And Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compute version
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+            TAG_NAME="${GITHUB_REF_NAME}"
+            PRERELEASE="false"
+          else
+            VERSION="0.0.${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+            TAG_NAME="build-${GITHUB_RUN_NUMBER}-${SHORT_SHA}"
+            PRERELEASE="true"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries and package release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHORT_SHA="${{ steps.meta.outputs.short_sha }}"
+          BUILD_DATE="${{ steps.meta.outputs.build_date }}"
+          RELEASE_DIR="dist/furo_${VERSION}_linux_amd64"
+
+          mkdir -p "${RELEASE_DIR}"
+
+          LD_FLAGS="-s -w -X main.appVersion=${VERSION} -X main.appCommit=${SHORT_SHA} -X main.appBuildDate=${BUILD_DATE}"
+
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-client" ./furo-client.go
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-server" ./furo-server.go
+
+          cp furo-relay.php "${RELEASE_DIR}/"
+          cp config.client.json "${RELEASE_DIR}/"
+          cp config.server.json "${RELEASE_DIR}/"
+          cp README.md "${RELEASE_DIR}/"
+
+          tar -C dist -czf "dist/furo_${VERSION}_linux_amd64.tar.gz" "furo_${VERSION}_linux_amd64"
+          sha256sum "dist/furo_${VERSION}_linux_amd64.tar.gz" > "dist/furo_${VERSION}_linux_amd64.tar.gz.sha256"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: ${{ steps.meta.outputs.version }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          files: |
+            dist/furo_${{ steps.meta.outputs.version }}_linux_amd64.tar.gz
+            dist/furo_${{ steps.meta.outputs.version }}_linux_amd64.tar.gz.sha256
+            furo-relay.php
