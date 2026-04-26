@@ -7,6 +7,7 @@
   "public_port": 28080,
   "server_host": "185.250.41.30",
   "server_port": 28081,
+  "admin_listen": "127.0.0.1:19080",
   "open_timeout": "45s",
   "keepalive": "30s",
   "session_count": 8,

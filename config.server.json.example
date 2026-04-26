@@ -1,6 +1,7 @@
 {
   "api_key": "my_super_secret_123456789",
   "agent_listen": "0.0.0.0:28081",
+  "admin_listen": "127.0.0.1:19081",
   "dial_timeout": "10s",
   "keepalive": "30s",
   "max_sessions": 8,

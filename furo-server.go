@@ -9,7 +9,9 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +35,7 @@ const (
 	controlWriteQueueDepth = 256
 	slowWriteThreshold     = 200 * time.Millisecond
 	sessionStatsInterval   = 15 * time.Second
+	adminReadHeaderTimeout = 5 * time.Second
 )
 
 var (
@@ -40,6 +43,7 @@ var (
 	showVersion     = flag.Bool("version", false, "Print version and exit")
 	apiKey          string
 	agentListen     string
+	adminListen     string
 	dialTimeout     time.Duration
 	keepalivePeriod time.Duration
 	maxSessions     int
@@ -55,6 +59,7 @@ var (
 type serverConfigFile struct {
 	APIKey      string `json:"api_key"`
 	AgentListen string `json:"agent_listen"`
+	AdminListen string `json:"admin_listen"`
 	DialTimeout string `json:"dial_timeout"`
 	Keepalive   string `json:"keepalive"`
 	MaxSessions int    `json:"max_sessions"`
@@ -65,6 +70,7 @@ func defaultServerConfig() serverConfigFile {
 	return serverConfigFile{
 		APIKey:      "my_super_secret_123456789",
 		AgentListen: "0.0.0.0:28081",
+		AdminListen: "",
 		DialTimeout: "10s",
 		Keepalive:   "30s",
 		MaxSessions: 8,
@@ -104,6 +110,7 @@ func loadServerConfig(path string) error {
 
 	apiKey = cfg.APIKey
 	agentListen = cfg.AgentListen
+	adminListen = cfg.AdminListen
 	dialTimeout = parsedDialTimeout
 	keepalivePeriod = parsedKeepalive
 	maxSessions = cfg.MaxSessions
@@ -112,9 +119,14 @@ func loadServerConfig(path string) error {
 }
 
 var (
-	logMu          sync.Mutex
-	logger         = log.New(io.Discard, "", log.LstdFlags|log.Lmicroseconds)
-	activeSessions atomic.Int32
+	logMu            sync.Mutex
+	logger           = log.New(io.Discard, "", log.LstdFlags|log.Lmicroseconds)
+	serverStartedAt  = time.Now()
+	activeSessions   atomic.Int32
+	acceptedSessions uint64
+	rejectedSessions uint64
+	closedSessions   uint64
+	serverRegistry   = newServerSessionRegistry()
 )
 
 func logEvent(format string, args ...any) {
@@ -125,6 +137,79 @@ func logEvent(format string, args ...any) {
 
 func serverVersionString() string {
 	return fmt.Sprintf("furo-server version=%s commit=%s built=%s", appVersion, appCommit, appBuildDate)
+}
+
+type serverSessionSnapshot struct {
+	SessionID        string `json:"session_id"`
+	Connected        bool   `json:"connected"`
+	Authenticated    bool   `json:"authenticated"`
+	ActiveStreams    int    `json:"active_streams"`
+	FramesIn         uint64 `json:"frames_in"`
+	FramesOut        uint64 `json:"frames_out"`
+	BytesIn          uint64 `json:"bytes_in"`
+	BytesOut         uint64 `json:"bytes_out"`
+	SlowWrites       uint64 `json:"slow_writes"`
+	LastFrameInUnix  int64  `json:"last_frame_in_unix"`
+	LastFrameOutUnix int64  `json:"last_frame_out_unix"`
+}
+
+type serverStatusResponse struct {
+	Service          string                  `json:"service"`
+	Version          string                  `json:"version"`
+	Commit           string                  `json:"commit"`
+	BuildDate        string                  `json:"build_date"`
+	StartedAt        string                  `json:"started_at"`
+	UptimeSec        int64                   `json:"uptime_sec"`
+	AgentListen      string                  `json:"agent_listen"`
+	AdminListen      string                  `json:"admin_listen,omitempty"`
+	DialTimeout      string                  `json:"dial_timeout"`
+	MaxSessions      int                     `json:"max_sessions"`
+	ActiveSessions   int32                   `json:"active_sessions"`
+	AcceptedSessions uint64                  `json:"accepted_sessions"`
+	RejectedSessions uint64                  `json:"rejected_sessions"`
+	ClosedSessions   uint64                  `json:"closed_sessions"`
+	Sessions         []serverSessionSnapshot `json:"sessions"`
+}
+
+type serverSessionRegistry struct {
+	mu       sync.Mutex
+	sessions map[string]*Session
+}
+
+func newServerSessionRegistry() *serverSessionRegistry {
+	return &serverSessionRegistry{sessions: make(map[string]*Session)}
+}
+
+func (r *serverSessionRegistry) add(session *Session) {
+	r.mu.Lock()
+	r.sessions[session.sid] = session
+	r.mu.Unlock()
+}
+
+func (r *serverSessionRegistry) remove(session *Session) {
+	r.mu.Lock()
+	if current := r.sessions[session.sid]; current == session {
+		delete(r.sessions, session.sid)
+	}
+	r.mu.Unlock()
+}
+
+func (r *serverSessionRegistry) snapshots() []serverSessionSnapshot {
+	r.mu.Lock()
+	sessions := make([]*Session, 0, len(r.sessions))
+	for _, session := range r.sessions {
+		sessions = append(sessions, session)
+	}
+	r.mu.Unlock()
+
+	snapshots := make([]serverSessionSnapshot, 0, len(sessions))
+	for _, session := range sessions {
+		snapshots = append(snapshots, session.snapshot())
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].SessionID < snapshots[j].SessionID
+	})
+	return snapshots
 }
 
 func setTCPOptions(conn net.Conn) {
@@ -330,6 +415,28 @@ type Session struct {
 	slowWrites       uint64
 	lastFrameInUnix  int64
 	lastFrameOutUnix int64
+}
+
+func (s *Session) snapshot() serverSessionSnapshot {
+	s.mu.Lock()
+	connected := s.conn != nil
+	authOK := s.authOK
+	active := len(s.streams)
+	s.mu.Unlock()
+
+	return serverSessionSnapshot{
+		SessionID:        s.sid,
+		Connected:        connected,
+		Authenticated:    authOK,
+		ActiveStreams:    active,
+		FramesIn:         atomic.LoadUint64(&s.framesIn),
+		FramesOut:        atomic.LoadUint64(&s.framesOut),
+		BytesIn:          atomic.LoadUint64(&s.bytesIn),
+		BytesOut:         atomic.LoadUint64(&s.bytesOut),
+		SlowWrites:       atomic.LoadUint64(&s.slowWrites),
+		LastFrameInUnix:  atomic.LoadInt64(&s.lastFrameInUnix),
+		LastFrameOutUnix: atomic.LoadInt64(&s.lastFrameOutUnix),
+	}
 }
 
 func newSession(sid string, conn net.Conn) *Session {
@@ -577,7 +684,9 @@ func (s *Session) closeAll(err error) {
 		for _, stream := range streams {
 			stream.close()
 		}
+		serverRegistry.remove(s)
 		activeSessions.Add(-1)
+		atomic.AddUint64(&closedSessions, 1)
 		logEvent("[SERVER] session=%s closed err=%v active_sessions=%d", s.sid, err, activeSessions.Load())
 	})
 }
@@ -743,6 +852,56 @@ func (s *Session) statsLoop() {
 	}
 }
 
+func buildServerStatus() serverStatusResponse {
+	return serverStatusResponse{
+		Service:          "furo-server",
+		Version:          appVersion,
+		Commit:           appCommit,
+		BuildDate:        appBuildDate,
+		StartedAt:        serverStartedAt.UTC().Format(time.RFC3339),
+		UptimeSec:        int64(time.Since(serverStartedAt).Seconds()),
+		AgentListen:      agentListen,
+		AdminListen:      adminListen,
+		DialTimeout:      dialTimeout.String(),
+		MaxSessions:      maxSessions,
+		ActiveSessions:   activeSessions.Load(),
+		AcceptedSessions: atomic.LoadUint64(&acceptedSessions),
+		RejectedSessions: atomic.LoadUint64(&rejectedSessions),
+		ClosedSessions:   atomic.LoadUint64(&closedSessions),
+		Sessions:         serverRegistry.snapshots(),
+	}
+}
+
+func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func runServerAdminServer() error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		status := buildServerStatus()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":              true,
+			"active_sessions": status.ActiveSessions,
+			"saturated":       status.MaxSessions > 0 && int(status.ActiveSessions) >= status.MaxSessions,
+		})
+	})
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, buildServerStatus())
+	})
+
+	server := &http.Server{
+		Addr:              adminListen,
+		Handler:           mux,
+		ReadHeaderTimeout: adminReadHeaderTimeout,
+	}
+
+	log.Printf("[FURO-SERVER] admin listener on %s", adminListen)
+	return server.ListenAndServe()
+}
+
 func handleRelayConn(conn net.Conn) {
 	defer func() {
 		if conn != nil {
@@ -762,17 +921,20 @@ func handleRelayConn(conn net.Conn) {
 	parts := strings.Fields(line)
 	if len(parts) != 3 || parts[0] != "SESSION" {
 		_ = writeString(conn, "ERR bad-handshake\n")
+		atomic.AddUint64(&rejectedSessions, 1)
 		logEvent("[SERVER] bad_handshake remote=%s line=%q", conn.RemoteAddr(), line)
 		return
 	}
 	if parts[1] != apiKey {
 		_ = writeString(conn, "ERR unauthorized\n")
+		atomic.AddUint64(&rejectedSessions, 1)
 		logEvent("[SERVER] unauthorized remote=%s sid=%s", conn.RemoteAddr(), parts[2])
 		return
 	}
 
 	if maxSessions > 0 && int(activeSessions.Load()) >= maxSessions {
 		_ = writeString(conn, "ERR session-limit\n")
+		atomic.AddUint64(&rejectedSessions, 1)
 		logEvent("[SERVER] reject sid=%s reason=session-limit active_sessions=%d", parts[2], activeSessions.Load())
 		return
 	}
@@ -785,7 +947,9 @@ func handleRelayConn(conn net.Conn) {
 
 	session := newSession(parts[2], conn)
 	conn = nil
+	serverRegistry.add(session)
 	activeSessions.Add(1)
+	atomic.AddUint64(&acceptedSessions, 1)
 	logEvent("[SERVER] session=%s accepted remote=%s active_sessions=%d", session.sid, session.conn.RemoteAddr(), activeSessions.Load())
 	go session.statsLoop()
 	go session.readLoop(session.conn)
@@ -811,11 +975,19 @@ func main() {
 		logger = log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
 		log.Printf("[FURO-SERVER] debug log file: %s", logFilePath)
 	}
-	logEvent("[SERVER] startup version=%s agent_listen=%s dial_timeout=%s max_sessions=%d", appVersion, agentListen, dialTimeout.String(), maxSessions)
+	logEvent("[SERVER] startup version=%s agent_listen=%s admin_listen=%s dial_timeout=%s max_sessions=%d", appVersion, agentListen, adminListen, dialTimeout.String(), maxSessions)
 
 	ln, err := net.Listen("tcp", agentListen)
 	if err != nil {
 		log.Fatalf("[FURO-SERVER] listen failed on %s: %v", agentListen, err)
+	}
+
+	if adminListen != "" {
+		go func() {
+			if err := runServerAdminServer(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("[FURO-SERVER] admin server failed: %v", err)
+			}
+		}()
 	}
 
 	log.Printf("[FURO-SERVER] agent listening on %s", agentListen)

@@ -33,12 +33,15 @@ const (
 )
 
 const (
-	frameHeaderSize       = 9
-	maxFramePayload       = 128 * 1024
-	sessionPollDelay      = 1200 * time.Millisecond
-	streamWriteQueueDepth = 32
-	slowWriteThreshold    = 200 * time.Millisecond
-	sessionStatsInterval  = 15 * time.Second
+	frameHeaderSize        = 9
+	maxFramePayload        = 128 * 1024
+	sessionPollDelay       = 1200 * time.Millisecond
+	streamWriteQueueDepth  = 32
+	slowWriteThreshold     = 200 * time.Millisecond
+	sessionStatsInterval   = 15 * time.Second
+	reconnectBackoffMin    = 1 * time.Second
+	reconnectBackoffMax    = 30 * time.Second
+	adminReadHeaderTimeout = 5 * time.Second
 )
 
 var (
@@ -52,6 +55,7 @@ var (
 	publicPort      int
 	serverHost      string
 	serverPort      int
+	adminListen     string
 	openTimeout     time.Duration
 	keepalivePeriod time.Duration
 	sessionCount    int
@@ -73,6 +77,7 @@ type clientConfigFile struct {
 	PublicPort   int    `json:"public_port"`
 	ServerHost   string `json:"server_host"`
 	ServerPort   int    `json:"server_port"`
+	AdminListen  string `json:"admin_listen"`
 	OpenTimeout  string `json:"open_timeout"`
 	Keepalive    string `json:"keepalive"`
 	SessionCount int    `json:"session_count"`
@@ -87,6 +92,7 @@ func defaultClientConfig() clientConfigFile {
 		AgentListen:  "0.0.0.0:28080",
 		PublicPort:   28080,
 		ServerPort:   28081,
+		AdminListen:  "",
 		OpenTimeout:  "45s",
 		Keepalive:    "30s",
 		SessionCount: 8,
@@ -150,6 +156,7 @@ func loadClientConfig(path string) error {
 	publicPort = cfg.PublicPort
 	serverHost = cfg.ServerHost
 	serverPort = cfg.ServerPort
+	adminListen = cfg.AdminListen
 	openTimeout = parsedOpenTimeout
 	keepalivePeriod = parsedKeepalive
 	sessionCount = cfg.SessionCount
@@ -158,8 +165,14 @@ func loadClientConfig(path string) error {
 }
 
 var (
-	logMu  sync.Mutex
-	logger = log.New(io.Discard, "", log.LstdFlags|log.Lmicroseconds)
+	logMu           sync.Mutex
+	logger          = log.New(io.Discard, "", log.LstdFlags|log.Lmicroseconds)
+	clientStartedAt = time.Now()
+
+	relayRequestsStarted   uint64
+	relayRequestsSucceeded uint64
+	relayRequestsFailed    uint64
+	relayRequestsRejected  uint64
 
 	httpClient = &http.Client{
 		Transport: &http.Transport{
@@ -170,7 +183,7 @@ var (
 			DisableCompression:    true,
 			DisableKeepAlives:     false,
 			ForceAttemptHTTP2:     false,
-			ResponseHeaderTimeout: 15 * time.Second,
+			ResponseHeaderTimeout: 45 * time.Second,
 			TLSHandshakeTimeout:   15 * time.Second,
 		},
 	}
@@ -184,6 +197,24 @@ func logEvent(format string, args ...any) {
 
 func clientVersionString() string {
 	return fmt.Sprintf("furo-client version=%s commit=%s built=%s", appVersion, appCommit, appBuildDate)
+}
+
+func computeReconnectDelay(failures int) time.Duration {
+	if failures <= 0 {
+		return 0
+	}
+
+	delay := reconnectBackoffMin
+	for attempt := 1; attempt < failures; attempt++ {
+		if delay >= reconnectBackoffMax {
+			return reconnectBackoffMax
+		}
+		delay *= 2
+		if delay > reconnectBackoffMax {
+			return reconnectBackoffMax
+		}
+	}
+	return delay
 }
 
 type upstreamResolver struct {
@@ -609,6 +640,10 @@ type MuxSession struct {
 	slowWrites       uint64
 	lastFrameInUnix  int64
 	lastFrameOutUnix int64
+	requestFailures  int
+	nextRetryAt      time.Time
+	retryDelay       time.Duration
+	lastRequestErr   string
 }
 
 func newMuxSession(pool *SessionPool, idx int, sid string) *MuxSession {
@@ -820,12 +855,14 @@ func (s *MuxSession) statsLoop() {
 		running := s.requestRunning
 		s.mu.Unlock()
 		logEvent(
-			"[CLIENT] session=%s stats connected=%t ready=%t request_running=%t active=%d frames_in=%d frames_out=%d bytes_in=%d bytes_out=%d slow_writes=%d last_in=%d last_out=%d",
+			"[CLIENT] session=%s stats connected=%t ready=%t request_running=%t active=%d request_failures=%d retry_delay_ms=%d frames_in=%d frames_out=%d bytes_in=%d bytes_out=%d slow_writes=%d last_in=%d last_out=%d",
 			s.sid,
 			connected,
 			ready,
 			running,
 			active,
+			s.requestFailures,
+			s.retryDelay.Milliseconds(),
 			atomic.LoadUint64(&s.framesIn),
 			atomic.LoadUint64(&s.framesOut),
 			atomic.LoadUint64(&s.bytesIn),
@@ -835,6 +872,35 @@ func (s *MuxSession) statsLoop() {
 			atomic.LoadInt64(&s.lastFrameOutUnix),
 		)
 	}
+}
+
+func (s *MuxSession) markRequestSuccess() {
+	s.mu.Lock()
+	s.requestFailures = 0
+	s.nextRetryAt = time.Time{}
+	s.retryDelay = 0
+	s.lastRequestErr = ""
+	s.mu.Unlock()
+}
+
+func (s *MuxSession) markRequestFailure(reason string) time.Duration {
+	s.mu.Lock()
+	s.requestFailures++
+	s.retryDelay = computeReconnectDelay(s.requestFailures)
+	s.nextRetryAt = time.Now().Add(s.retryDelay)
+	s.lastRequestErr = reason
+	delay := s.retryDelay
+	s.mu.Unlock()
+	return delay
+}
+
+func (s *MuxSession) retryWait(now time.Time) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.nextRetryAt.IsZero() || !now.Before(s.nextRetryAt) {
+		return 0
+	}
+	return s.nextRetryAt.Sub(now)
 }
 
 func (s *MuxSession) dialStream(ctx context.Context, host, port string) (net.Conn, error) {
@@ -889,25 +955,34 @@ func (s *MuxSession) requestSession() {
 
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, relayURL+"?"+values.Encode(), nil)
 	if err != nil {
-		logEvent("[CLIENT] session=%s request_build_failed err=%v", s.sid, err)
+		delay := s.markRequestFailure(err.Error())
+		atomic.AddUint64(&relayRequestsFailed, 1)
+		logEvent("[CLIENT] session=%s request_build_failed next_retry_ms=%d err=%v", s.sid, delay.Milliseconds(), err)
 		return
 	}
 	req.Header.Set("X-API-KEY", apiKey)
 
 	start := time.Now()
+	atomic.AddUint64(&relayRequestsStarted, 1)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		logEvent("[CLIENT] session=%s request_failed dur_ms=%d err=%v", s.sid, time.Since(start).Milliseconds(), err)
+		delay := s.markRequestFailure(err.Error())
+		atomic.AddUint64(&relayRequestsFailed, 1)
+		logEvent("[CLIENT] session=%s request_failed dur_ms=%d next_retry_ms=%d err=%v", s.sid, time.Since(start).Milliseconds(), delay.Milliseconds(), err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		logEvent("[CLIENT] session=%s request_rejected status=%d body=%q", s.sid, resp.StatusCode, strings.TrimSpace(string(body)))
+		delay := s.markRequestFailure(fmt.Sprintf("relay rejected with status %d", resp.StatusCode))
+		atomic.AddUint64(&relayRequestsRejected, 1)
+		logEvent("[CLIENT] session=%s request_rejected status=%d next_retry_ms=%d body=%q", s.sid, resp.StatusCode, delay.Milliseconds(), strings.TrimSpace(string(body)))
 		return
 	}
 
+	s.markRequestSuccess()
+	atomic.AddUint64(&relayRequestsSucceeded, 1)
 	logEvent("[CLIENT] session=%s request_ok dur_ms=%d", s.sid, time.Since(start).Milliseconds())
 	_, _ = io.Copy(io.Discard, resp.Body)
 	logEvent("[CLIENT] session=%s request_body_closed", s.sid)
@@ -920,10 +995,16 @@ func (s *MuxSession) loop() {
 		running := s.requestRunning
 		s.mu.Unlock()
 
-		if !connected && !running {
+		retryWait := s.retryWait(time.Now())
+		if !connected && !running && retryWait == 0 {
 			go s.requestSession()
 		}
-		time.Sleep(sessionPollDelay)
+
+		sleepFor := sessionPollDelay
+		if retryWait > 0 && retryWait < sleepFor {
+			sleepFor = retryWait
+		}
+		time.Sleep(sleepFor)
 	}
 }
 
@@ -931,6 +1012,60 @@ type SessionPool struct {
 	sessions map[string]*MuxSession
 	order    []*MuxSession
 	rr       uint32
+}
+
+type clientRelayRequestStats struct {
+	Started   uint64 `json:"started"`
+	Succeeded uint64 `json:"succeeded"`
+	Failed    uint64 `json:"failed"`
+	Rejected  uint64 `json:"rejected"`
+}
+
+type clientTotals struct {
+	ConnectedSessions int    `json:"connected_sessions"`
+	ReadySessions     int    `json:"ready_sessions"`
+	ActiveStreams     int    `json:"active_streams"`
+	FramesIn          uint64 `json:"frames_in"`
+	FramesOut         uint64 `json:"frames_out"`
+	BytesIn           uint64 `json:"bytes_in"`
+	BytesOut          uint64 `json:"bytes_out"`
+	SlowWrites        uint64 `json:"slow_writes"`
+}
+
+type clientSessionStatus struct {
+	SessionID        string `json:"session_id"`
+	Connected        bool   `json:"connected"`
+	Ready            bool   `json:"ready"`
+	RequestRunning   bool   `json:"request_running"`
+	ActiveStreams    int    `json:"active_streams"`
+	RequestFailures  int    `json:"request_failures"`
+	RetryDelayMs     int64  `json:"retry_delay_ms"`
+	NextRetryAt      string `json:"next_retry_at,omitempty"`
+	LastRequestErr   string `json:"last_request_error,omitempty"`
+	FramesIn         uint64 `json:"frames_in"`
+	FramesOut        uint64 `json:"frames_out"`
+	BytesIn          uint64 `json:"bytes_in"`
+	BytesOut         uint64 `json:"bytes_out"`
+	SlowWrites       uint64 `json:"slow_writes"`
+	LastFrameInUnix  int64  `json:"last_frame_in_unix"`
+	LastFrameOutUnix int64  `json:"last_frame_out_unix"`
+}
+
+type clientStatusResponse struct {
+	Service       string                  `json:"service"`
+	Version       string                  `json:"version"`
+	Commit        string                  `json:"commit"`
+	BuildDate     string                  `json:"build_date"`
+	StartedAt     string                  `json:"started_at"`
+	UptimeSec     int64                   `json:"uptime_sec"`
+	RelayURL      string                  `json:"relay_url"`
+	SOCKSListen   string                  `json:"socks_listen"`
+	AgentListen   string                  `json:"agent_listen"`
+	AdminListen   string                  `json:"admin_listen,omitempty"`
+	SessionCount  int                     `json:"session_count"`
+	RelayRequests clientRelayRequestStats `json:"relay_requests"`
+	Totals        clientTotals            `json:"totals"`
+	Sessions      []clientSessionStatus   `json:"sessions"`
 }
 
 func newSessionPool(count int) *SessionPool {
@@ -960,6 +1095,117 @@ func (p *SessionPool) totalActive() int {
 		total += s.activeCount()
 	}
 	return total
+}
+
+func (s *MuxSession) snapshot() clientSessionStatus {
+	s.mu.Lock()
+	connected := s.conn != nil
+	ready := s.ready
+	running := s.requestRunning
+	active := len(s.streams)
+	requestFailures := s.requestFailures
+	retryDelay := s.retryDelay
+	nextRetryAt := s.nextRetryAt
+	lastRequestErr := s.lastRequestErr
+	s.mu.Unlock()
+
+	status := clientSessionStatus{
+		SessionID:        s.sid,
+		Connected:        connected,
+		Ready:            ready,
+		RequestRunning:   running,
+		ActiveStreams:    active,
+		RequestFailures:  requestFailures,
+		RetryDelayMs:     retryDelay.Milliseconds(),
+		LastRequestErr:   lastRequestErr,
+		FramesIn:         atomic.LoadUint64(&s.framesIn),
+		FramesOut:        atomic.LoadUint64(&s.framesOut),
+		BytesIn:          atomic.LoadUint64(&s.bytesIn),
+		BytesOut:         atomic.LoadUint64(&s.bytesOut),
+		SlowWrites:       atomic.LoadUint64(&s.slowWrites),
+		LastFrameInUnix:  atomic.LoadInt64(&s.lastFrameInUnix),
+		LastFrameOutUnix: atomic.LoadInt64(&s.lastFrameOutUnix),
+	}
+	if !nextRetryAt.IsZero() {
+		status.NextRetryAt = nextRetryAt.UTC().Format(time.RFC3339)
+	}
+	return status
+}
+
+func buildClientStatus(pool *SessionPool) clientStatusResponse {
+	status := clientStatusResponse{
+		Service:      "furo-client",
+		Version:      appVersion,
+		Commit:       appCommit,
+		BuildDate:    appBuildDate,
+		StartedAt:    clientStartedAt.UTC().Format(time.RFC3339),
+		UptimeSec:    int64(time.Since(clientStartedAt).Seconds()),
+		RelayURL:     relayURL,
+		SOCKSListen:  socksListen,
+		AgentListen:  agentListen,
+		AdminListen:  adminListen,
+		SessionCount: sessionCount,
+		RelayRequests: clientRelayRequestStats{
+			Started:   atomic.LoadUint64(&relayRequestsStarted),
+			Succeeded: atomic.LoadUint64(&relayRequestsSucceeded),
+			Failed:    atomic.LoadUint64(&relayRequestsFailed),
+			Rejected:  atomic.LoadUint64(&relayRequestsRejected),
+		},
+		Sessions: make([]clientSessionStatus, 0, len(pool.order)),
+	}
+
+	for _, session := range pool.order {
+		snapshot := session.snapshot()
+		status.Sessions = append(status.Sessions, snapshot)
+		if snapshot.Connected {
+			status.Totals.ConnectedSessions++
+		}
+		if snapshot.Ready {
+			status.Totals.ReadySessions++
+		}
+		status.Totals.ActiveStreams += snapshot.ActiveStreams
+		status.Totals.FramesIn += snapshot.FramesIn
+		status.Totals.FramesOut += snapshot.FramesOut
+		status.Totals.BytesIn += snapshot.BytesIn
+		status.Totals.BytesOut += snapshot.BytesOut
+		status.Totals.SlowWrites += snapshot.SlowWrites
+	}
+
+	return status
+}
+
+func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func runClientAdminServer(pool *SessionPool) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		status := buildClientStatus(pool)
+		code := http.StatusOK
+		if status.Totals.ReadySessions == 0 {
+			code = http.StatusServiceUnavailable
+		}
+		writeJSON(w, code, map[string]any{
+			"ok":                 code == http.StatusOK,
+			"ready_sessions":     status.Totals.ReadySessions,
+			"connected_sessions": status.Totals.ConnectedSessions,
+		})
+	})
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, buildClientStatus(pool))
+	})
+
+	server := &http.Server{
+		Addr:              adminListen,
+		Handler:           mux,
+		ReadHeaderTimeout: adminReadHeaderTimeout,
+	}
+
+	log.Printf("[FURO-CLIENT] admin listener on %s", adminListen)
+	return server.ListenAndServe()
 }
 
 func (p *SessionPool) getByID(sid string) *MuxSession {
@@ -1088,13 +1334,20 @@ func main() {
 
 	httpClient.Transport.(*http.Transport).ResponseHeaderTimeout = openTimeout
 	pool := newSessionPool(sessionCount)
-	logEvent("[CLIENT] startup version=%s relay=%s socks_listen=%s agent_listen=%s public=%s:%d server=%s:%d open_timeout=%s session_count=%d", appVersion, relayURL, socksListen, agentListen, publicHost, publicPort, serverHost, serverPort, openTimeout.String(), sessionCount)
+	logEvent("[CLIENT] startup version=%s relay=%s socks_listen=%s agent_listen=%s admin_listen=%s public=%s:%d server=%s:%d open_timeout=%s session_count=%d", appVersion, relayURL, socksListen, agentListen, adminListen, publicHost, publicPort, serverHost, serverPort, openTimeout.String(), sessionCount)
 
 	go func() {
 		if err := runAgentListener(pool); err != nil {
 			log.Fatalf("[FURO-CLIENT] agent listener failed: %v", err)
 		}
 	}()
+	if adminListen != "" {
+		go func() {
+			if err := runClientAdminServer(pool); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatalf("[FURO-CLIENT] admin server failed: %v", err)
+			}
+		}()
+	}
 	pool.start()
 
 	conf := &socks5.Config{
