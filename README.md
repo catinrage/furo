@@ -1,12 +1,12 @@
-# Host-Tun / FURO
+# FURO
 
-FURO is a TCP tunnel that keeps a PHP host in the middle of the path:
+FURO is a TCP tunnel that keeps a PHP host in the middle of the path.
 
-- `furo-client.go` runs on the Iran VPS and exposes a local SOCKS5 proxy.
-- `furo-server.go` runs on the Outer VPS and dials the final internet targets.
-- `furo-relay.php` runs on the PHP host and bridges long-lived client/server sessions.
+- `furo-client.go` runs on the client-side VPS and exposes a local SOCKS5 proxy.
+- `furo-server.go` runs on the exit VPS and dials final internet targets.
+- `furo-relay.php` runs on a PHP host and bridges long-lived client/server sessions.
 
-The point of the project is to use a PHP host as a relay while still keeping latency and throughput practical by using persistent multiplexed sessions instead of HTTP polling per connection.
+The design goal is to keep the PHP host in the traffic path without falling back to per-connection HTTP polling. FURO keeps a small pool of long-lived relay sessions open and multiplexes SOCKS streams across them.
 
 ## Topology
 
@@ -15,7 +15,7 @@ Application / Browser / Xray / 3x-ui
                 |
                 v
       +-------------------+
-      | Iran VPS          |
+      | Client VPS        |
       | furo-client       |
       | SOCKS5 :18713     |
       +-------------------+
@@ -31,7 +31,7 @@ Application / Browser / Xray / 3x-ui
                 | long-lived multiplexed session(s)
                 v
       +-------------------+
-      | Outer VPS         |
+      | Exit VPS          |
       | furo-server       |
       | dials targets     |
       +-------------------+
@@ -40,39 +40,107 @@ Application / Browser / Xray / 3x-ui
           Internet targets
 ```
 
-## How it works
+## Protocol
 
-1. `furo-client` opens one or more long-lived session requests to `furo-relay.php`.
-2. `furo-relay.php` connects back to the client agent port and the server agent port.
-3. `furo-server` accepts those session connections and authenticates them with the shared key.
-4. SOCKS streams are multiplexed over the session(s) using binary frames: `OPEN`, `OPEN_OK`, `OPEN_ERR`, `DATA`, `CLOSE`.
-5. The server dials real targets and returns traffic through the relay back to the client.
+1. `furo-client` keeps `session_count` relay requests open against `furo-relay.php`.
+2. For each request, `furo-relay.php` connects back to the client agent port and the server agent port.
+3. Both Go binaries authenticate the session with the shared `api_key`.
+4. Streams are multiplexed over the session using binary frames:
+   - `HELLO`
+   - `HELLO_ACK`
+   - `OPEN`
+   - `OPEN_OK`
+   - `OPEN_ERR`
+   - `DATA`
+   - `CLOSE`
+5. `furo-server` dials the real target and forwards bytes back through the relay to the client.
 
-This avoids the old file queue / polling design and keeps the PHP host out of per-connection request churn.
+## Requirements
 
-## Required components
-
-- Iran VPS with outbound access to the PHP host
-- Outer VPS with outbound access to final internet targets
-- PHP host with:
+- A client-side VPS that can reach the PHP relay URL.
+- An exit VPS that can reach final internet targets.
+- A PHP host with:
   - PHP 8+
-  - sockets extension enabled
-  - ability to open outbound TCP connections to both VPSes
-- Open TCP access from the PHP host to:
-  - client agent port (`28080` by default)
-  - server agent port (`28081` by default)
-- Same `api_key` configured on all three components
+  - the sockets extension enabled
+  - outbound TCP access to both VPSes
+- Matching `api_key` values across:
+  - `config.client.json`
+  - `config.server.json`
+  - `furo-relay.php`
+
+## Configuration
+
+The repo ships example configs:
+
+- `config.client.json.example`
+- `config.server.json.example`
+
+Create your working configs from those examples:
+
+```bash
+cp config.client.json.example config.client.json
+cp config.server.json.example config.server.json
+```
+
+### Client config
+
+Key fields in `config.client.json`:
+
+- `relay_url`
+  URL of the deployed `furo-relay.php`.
+- `api_key`
+  Shared secret. Must match the server and relay.
+- `socks_listen`
+  Local SOCKS5 listener for applications.
+- `agent_listen`
+  TCP listener that the PHP host connects back to.
+- `public_host` / `public_port`
+  Public address of the client agent as seen by the PHP host.
+- `server_host` / `server_port`
+  Public address of the server agent as seen by the PHP host.
+- `admin_listen`
+  Optional local admin HTTP listener. Recommended on loopback only.
+- `open_timeout`
+  Timeout for relay HTTP response headers and stream open waits.
+- `keepalive`
+  TCP keepalive period for session and stream sockets.
+- `session_count`
+  Number of multiplexed sessions to keep open.
+- `log_file`
+  Optional debug log path. Empty disables debug logs.
+
+### Server config
+
+Key fields in `config.server.json`:
+
+- `api_key`
+  Shared secret. Must match the client and relay.
+- `agent_listen`
+  TCP listener that accepts relay session connections.
+- `admin_listen`
+  Optional local admin HTTP listener. Recommended on loopback only.
+- `dial_timeout`
+  Timeout for outbound target dials.
+- `keepalive`
+  TCP keepalive period for server-side sockets.
+- `max_sessions`
+  Maximum active relay sessions. Set this at or above the client `session_count`.
+- `log_file`
+  Optional debug log path. Empty disables debug logs.
+
+### Relay config
+
+Top-of-file variables in `furo-relay.php`:
+
+- `$RELAY_API_KEY`
+- `$RELAY_CONNECT_TIMEOUT_SEC`
+- `$RELAY_IDLE_TIMEOUT_SEC`
+- `$RELAY_BUFFER_SIZE`
+- `$RELAY_ENABLE_LOGS`
 
 ## Build
 
-If `go` is installed in `/usr/local/go/bin/go`:
-
-```bash
-/usr/local/go/bin/go build -o furo-client ./furo-client.go
-/usr/local/go/bin/go build -o furo-server ./furo-server.go
-```
-
-If `go` is already on `PATH`:
+If `go` is on `PATH`:
 
 ```bash
 go build -o furo-client ./furo-client.go
@@ -88,262 +156,124 @@ Print embedded build metadata:
 
 ## Run
 
-Server on the Outer VPS:
+Server on the exit VPS:
 
 ```bash
 ./furo-server -c config.server.json
 ```
 
-Client on the Iran VPS:
+Client on the client-side VPS:
 
 ```bash
 ./furo-client -c config.client.json
 ```
 
-Deploy the PHP relay file as `furo-relay.php` on the relay host, then make sure `relay_url` in `config.client.json` matches the real URL.
+Deploy `furo-relay.php` on the PHP host, then make sure `relay_url` in `config.client.json` points to the deployed URL.
 
-## Config values that must match
+## Observability
 
-These values are coupled across components.
+Both Go binaries now support a small admin HTTP surface when `admin_listen` is set.
 
-- `config.client.json -> api_key`
-- `config.server.json -> api_key`
-- `furo-relay.php -> $RELAY_API_KEY`
+- `GET /healthz`
+  Lightweight health probe.
+- `GET /status`
+  JSON status snapshot with version, uptime, counters, and per-session state.
 
-All three must be identical.
+Example:
 
-- `config.client.json -> session_count`
-- `config.server.json -> max_sessions`
+```bash
+curl http://127.0.0.1:19080/status
+curl http://127.0.0.1:19081/status
+```
 
-`max_sessions` should be greater than or equal to `session_count`.
-If `max_sessions` is lower, some client sessions will be rejected by the server.
+The client status includes:
 
-- `config.client.json -> public_host`
-- `config.client.json -> public_port`
-- `config.client.json -> agent_listen`
+- ready and connected session counts
+- per-session reconnect backoff state
+- relay request success/failure counters
+- stream, frame, byte, and slow-write counters
 
-These must describe the client agent endpoint that the PHP relay can actually reach.
-In practice:
-- `public_host:public_port` must route to the client process
-- the client process must be listening on `agent_listen`
+The server status includes:
 
-- `config.client.json -> server_host`
-- `config.client.json -> server_port`
-- `config.server.json -> agent_listen`
+- active, accepted, rejected, and closed session counters
+- per-session authentication and stream counts
+- frame, byte, and slow-write counters
 
-These must describe the server agent endpoint that the PHP relay can actually reach.
-In practice:
-- `server_host:server_port` must route to the server process
-- the server process must be listening on `agent_listen`
+## Reconnect behavior
 
-- `config.client.json -> relay_url`
+When the relay request fails or is rejected, the client no longer retries at a fixed cadence forever. It now applies capped exponential backoff:
 
-This must point to the deployed location of `furo-relay.php`.
-If the file is moved or renamed on the PHP host, update `relay_url`.
+- 1st failure: 1s
+- 2nd failure: 2s
+- 3rd failure: 4s
+- 4th failure: 8s
+- 5th failure: 16s
+- 6th failure and beyond: 30s max
 
-Values that do **not** need to match exactly:
+Backoff state is exposed in the client `/status` output.
 
-- `open_timeout`
-- `dial_timeout`
-- `keepalive`
-- `log_file`
-- `$RELAY_CONNECT_TIMEOUT_SEC`
-- `$RELAY_IDLE_TIMEOUT_SEC`
-- `$RELAY_BUFFER_SIZE`
-- `$RELAY_ENABLE_LOGS`
+## Verification
 
-Those are local tuning or operational settings.
+Local test commands:
 
-## Client config
+```bash
+go test -v ./tests/...
+```
 
-File: [config.client.json](/home/catinrage/projects/Host-Tun/config.client.json)
+Test layout:
 
-- `relay_url`
-  URL of `furo-relay.php`.
-  If this path is wrong, the client will never establish sessions.
+- `tests/client`
+  Unit tests for `furo-client.go`
+- `tests/server`
+  Unit tests for `furo-server.go`
+- `tests/integration`
+  PHP relay validation tests
+- `tests/e2e`
+  Full-stack client + PHP relay + server tunnel test
 
-- `api_key`
-  Shared secret used by client, server, and relay.
-  All three values must match exactly.
+The integration and E2E suites require:
 
-- `socks_listen`
-  Local SOCKS5 listener address on the Iran VPS.
-  Example: `0.0.0.0:18713`
+- PHP CLI
+- the PHP `sockets` extension
 
-- `agent_listen`
-  TCP listener the PHP relay connects back to on the client side.
-  This must be reachable from the PHP host.
+CI runs on pushes, pull requests, and manual dispatch through `.github/workflows/ci.yml`. The release workflow also runs the full `./tests/...` suite before packaging artifacts.
 
-- `public_host`
-  Public IP or DNS name of the Iran VPS as seen by the PHP host.
+## Releases
 
-- `public_port`
-  Public TCP port on the Iran VPS that maps to `agent_listen`.
-
-- `server_host`
-  Public IP or DNS name of the Outer VPS as seen by the PHP host.
-
-- `server_port`
-  Public TCP port on the Outer VPS that maps to the server agent listener.
-
-- `open_timeout`
-  Timeout for session setup HTTP headers.
-  Higher values tolerate a slower PHP host.
-  Lower values fail faster when the relay is unhealthy.
-
-- `keepalive`
-  TCP keepalive period for session and stream sockets.
-  Usually leave at `30s`.
-
-- `session_count`
-  Number of multiplexed relay sessions the client keeps open.
-  This is one of the main throughput/fairness tuning knobs.
-  More sessions reduce head-of-line blocking, but too many sessions increase load on the PHP host.
-  In your recent testing, `8` was a good value.
-
-- `log_file`
-  Optional log file path.
-  Empty string disables Go debug logs completely.
-
-## Server config
-
-File: [config.server.json](/home/catinrage/projects/Host-Tun/config.server.json)
-
-- `api_key`
-  Must match the client and relay.
-
-- `agent_listen`
-  TCP listener that accepts relay session connections from the PHP host.
-
-- `dial_timeout`
-  Timeout for outbound target connects from the Outer VPS.
-  Lower values fail bad targets faster.
-  Higher values help on slow destinations, but keep dead targets around longer.
-
-- `keepalive`
-  TCP keepalive period for server-side sockets.
-
-- `max_sessions`
-  Maximum number of active multiplexed sessions accepted by the server.
-  Set this at or above the client `session_count`.
-  If it is lower than the client value, some sessions will be rejected.
-
-- `log_file`
-  Optional log file path.
-  Empty string disables Go debug logs completely.
-
-## Relay config
-
-File: [furo-relay.php](/home/catinrage/projects/Host-Tun/furo-relay.php)
-
-Top-of-file variables:
-
-- `$RELAY_API_KEY`
-  Shared secret. Must match both JSON configs.
-
-- `$RELAY_CONNECT_TIMEOUT_SEC`
-  TCP connect timeout when the relay attaches to client and server.
-
-- `$RELAY_IDLE_TIMEOUT_SEC`
-  Session idle timeout inside the relay bridge loop.
-
-- `$RELAY_BUFFER_SIZE`
-  PHP socket read buffer size.
-  Larger values can improve throughput, but very large values can increase per-iteration burstiness.
-
-- `$RELAY_ENABLE_LOGS`
-  `true` enables relay logging via `error_log()`.
-  `false` keeps the relay quiet.
-
-## Tuning notes
-
-- `session_count` / `max_sessions`
-  Best first tuning knob.
-  Too low: heavy streams block lighter traffic.
-  Too high: more load on the PHP host.
-
-- `maxFramePayload`
-  Currently fixed in code at `128 KiB`.
-  This was reduced from `256 KiB` to cut long writer stalls.
-
-- Fair scheduling
-  The server now uses a queued fair sender so one heavy stream cannot repeatedly hold the only session writer.
-  This is important for x-ui and whole-system tunnel mode.
-
-- Logging
-  Logging is now opt-in on all three components.
-  Use it only while debugging.
-
-## GitHub release automation
-
-Workflow file:
-
-- [.github/workflows/release.yml](/home/catinrage/projects/Host-Tun/.github/workflows/release.yml)
-
-What it does:
-
-- on every push to `main`
-  - builds `furo-client` and `furo-server`
-  - packages them together with `furo-relay.php`, both config files, and `README.md`
-  - creates a GitHub **prerelease**
-- on every pushed tag like `v1.2.3`
-  - runs the same build
-  - creates a normal GitHub release for that tag
-
-Release assets:
+`.github/workflows/release.yml` builds Linux amd64 binaries and publishes:
 
 - `furo_<version>_linux_amd64.tar.gz`
 - `furo_<version>_linux_amd64.tar.gz.sha256`
 - raw `furo-relay.php`
 
-The Go binaries receive embedded version metadata via `ldflags`, so `--version` reflects the release version, commit, and build date.
+The tarball contains:
 
-## Auto versioning on each commit
+- `furo-client`
+- `furo-server`
+- `furo-relay.php`
+- `config.client.json.example`
+- `config.server.json.example`
+- `README.md`
 
-The workflow already gives each `main` commit a unique prerelease version:
+For `main` branch pushes, the workflow creates a prerelease version in this form:
 
 ```text
 0.0.<run_number>-<short_sha>
 ```
 
-Example:
+For pushed tags like `v1.2.3`, the workflow creates a normal GitHub release for that tag.
 
-```text
-0.0.42-a1b2c3d
-```
+## Deployment checklist
 
-This is the safest form of automatic per-commit versioning:
-
-- every commit gets a unique build version
-- normal semantic tags like `v1.0.0` are still available for official releases
-- the repo does not need to create and push a permanent tag for every commit
-
-If you want strict semantic version automation instead, the next step would be using:
-
-- Release Please
-- semantic-release
-- GitVersion
-
-Those tools are better when you want commit-message-driven version bumps such as:
-
-- `feat:` -> minor
-- `fix:` -> patch
-- breaking change -> major
-
-For this repo, the current setup is pragmatic:
-
-- branch commits -> auto-versioned prereleases
-- version tags -> official releases
-
-## Typical deployment checklist
-
-1. Upload [furo-relay.php](/home/catinrage/projects/Host-Tun/furo-relay.php) to the PHP host.
-2. Confirm `relay_url` points to the deployed file.
-3. Open client agent port on Iran VPS.
-4. Open server agent port on Outer VPS.
-5. Build and run `furo-server`.
-6. Build and run `furo-client`.
-7. Test the SOCKS endpoint:
+1. Copy the example configs and update all addresses and secrets.
+2. Deploy `furo-relay.php` on the PHP host.
+3. Confirm `relay_url` matches the deployed relay URL.
+4. Open the client agent port so the PHP host can reach it.
+5. Open the server agent port so the PHP host can reach it.
+6. Start `furo-server`.
+7. Start `furo-client`.
+8. If enabled, verify `admin_listen` on both binaries.
+9. Test the SOCKS endpoint:
 
 ```bash
 curl --socks5-hostname 127.0.0.1:18713 https://api.ipify.org
@@ -351,6 +281,6 @@ curl --socks5-hostname 127.0.0.1:18713 https://api.ipify.org
 
 ## Notes
 
-- Empty `log_file` means no Go debug logs are written at all.
-- The relay only supports TCP. UDP-based traffic is outside this design.
-- If the PHP host path changes, update only `relay_url`; the transport protocol stays the same.
+- FURO is TCP-only. UDP is outside this design.
+- Empty `log_file` disables Go debug logs.
+- Keep `admin_listen` bound to loopback unless you intentionally want remote visibility.
