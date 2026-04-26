@@ -48,6 +48,59 @@ function cleanToken(string $value): string
     return preg_replace('/[^a-zA-Z0-9_\-\.]/', '', $value) ?? '';
 }
 
+function isConnectInProgressError(int $errorCode): bool
+{
+    $pending = [];
+    foreach (['SOCKET_EINPROGRESS', 'SOCKET_EALREADY', 'SOCKET_EWOULDBLOCK'] as $name) {
+        if (defined($name)) {
+            $pending[] = constant($name);
+        }
+    }
+
+    return in_array($errorCode, $pending, true);
+}
+
+function waitForConnect(Socket $socket, string $host, int $port, int $timeoutSec): void
+{
+    $read = [];
+    $write = [$socket];
+    $except = [$socket];
+    $changed = @socket_select($read, $write, $except, $timeoutSec, 0);
+    if ($changed === false) {
+        $err = socket_last_error($socket);
+        throw new RuntimeException(
+            sprintf(
+                'socket_connect wait failed to %s:%d: %s',
+                $host,
+                $port,
+                socket_strerror($err)
+            )
+        );
+    }
+    if ($changed === 0) {
+        throw new RuntimeException(
+            sprintf('socket_connect timed out to %s:%d', $host, $port)
+        );
+    }
+
+    $soError = @socket_get_option($socket, SOL_SOCKET, SO_ERROR);
+    if (!is_int($soError)) {
+        throw new RuntimeException(
+            sprintf('socket_connect state check failed to %s:%d', $host, $port)
+        );
+    }
+    if ($soError !== 0) {
+        throw new RuntimeException(
+            sprintf(
+                'socket_connect failed to %s:%d: %s',
+                $host,
+                $port,
+                socket_strerror($soError)
+            )
+        );
+    }
+}
+
 function connectTcp(string $host, int $port, int $timeoutSec): Socket
 {
     $socket = @socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
@@ -63,9 +116,19 @@ function connectTcp(string $host, int $port, int $timeoutSec): Socket
     @socket_set_option($socket, SOL_SOCKET, SO_SNDBUF, 1024 * 1024);
 
     if (!@socket_connect($socket, $host, $port)) {
-        $err = socket_strerror(socket_last_error($socket));
-        @socket_close($socket);
-        throw new RuntimeException("socket_connect failed to {$host}:{$port}: {$err}");
+        $errCode = socket_last_error($socket);
+        if (isConnectInProgressError($errCode)) {
+            try {
+                waitForConnect($socket, $host, $port, $timeoutSec);
+            } catch (Throwable $e) {
+                @socket_close($socket);
+                throw $e;
+            }
+        } else {
+            $err = socket_strerror($errCode);
+            @socket_close($socket);
+            throw new RuntimeException("socket_connect failed to {$host}:{$port}: {$err}");
+        }
     }
 
     return $socket;
