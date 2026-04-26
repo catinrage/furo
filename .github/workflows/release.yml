@@ -26,6 +26,18 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: sockets
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -v ./tests/...
+
       - name: Compute version
         id: meta
         shell: bash
@@ -68,8 +80,8 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-server" ./furo-server.go
 
           cp furo-relay.php "${RELEASE_DIR}/"
-          cp config.client.json "${RELEASE_DIR}/"
-          cp config.server.json "${RELEASE_DIR}/"
+          cp config.client.json.example "${RELEASE_DIR}/"
+          cp config.server.json.example "${RELEASE_DIR}/"
           cp README.md "${RELEASE_DIR}/"
 
           tar -C dist -czf "dist/furo_${VERSION}_linux_amd64.tar.gz" "furo_${VERSION}_linux_amd64"
