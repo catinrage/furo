@@ -65,6 +65,105 @@ func TestComputeReconnectDelay(t *testing.T) {
 	}
 }
 
+func TestReserveSessionCount(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		count int
+		want  int
+	}{
+		{count: 1, want: 0},
+		{count: 3, want: 0},
+		{count: 4, want: 1},
+		{count: 7, want: 1},
+		{count: 8, want: 2},
+	}
+
+	for _, tc := range tests {
+		if got := reserveSessionCount(tc.count); got != tc.want {
+			t.Fatalf("reserveSessionCount(%d) = %d, want %d", tc.count, got, tc.want)
+		}
+	}
+}
+
+func TestSelectReadySessionPrefersLeastLoaded(t *testing.T) {
+	t.Parallel()
+
+	pool := newSessionPool(3)
+	markSessionReady(pool.order[0], 3, 3*maxFramePayload)
+	markSessionReady(pool.order[1], 1, maxFramePayload/2)
+	markSessionReady(pool.order[2], 0, 0)
+
+	chosen, readyCount := pool.selectReadySession()
+	if readyCount != 3 {
+		t.Fatalf("readyCount = %d, want 3", readyCount)
+	}
+	if chosen != pool.order[2] {
+		t.Fatalf("selected %s, want %s", chosen.sid, pool.order[2].sid)
+	}
+}
+
+func TestSelectReadySessionPreservesReserveCapacity(t *testing.T) {
+	t.Parallel()
+
+	pool := newSessionPool(4)
+	markSessionReady(pool.order[0], 2, maxFramePayload)
+	markSessionReady(pool.order[1], 0, 0)
+	markSessionReady(pool.order[2], 0, 0)
+	markSessionReady(pool.order[3], 0, 0)
+
+	chosen, readyCount := pool.selectReadySession()
+	if readyCount != 4 {
+		t.Fatalf("readyCount = %d, want 4", readyCount)
+	}
+	if chosen != pool.order[0] {
+		t.Fatalf("selected %s, want warm session %s", chosen.sid, pool.order[0].sid)
+	}
+}
+
+func TestMuxSessionPopDataFrameFairness(t *testing.T) {
+	t.Parallel()
+
+	session := newMuxSession(newSessionPool(1), 0, "sess_1")
+	session.mu.Lock()
+	session.conn = &stubConn{}
+	session.ready = true
+	session.mu.Unlock()
+
+	for _, item := range []struct {
+		streamID uint32
+		payload  []byte
+	}{
+		{streamID: 1, payload: []byte("first")},
+		{streamID: 1, payload: []byte("second")},
+		{streamID: 3, payload: []byte("third")},
+	} {
+		if err := session.enqueueDataFrame(&outboundFrame{
+			typ:      frameData,
+			streamID: item.streamID,
+			payload:  item.payload,
+			result:   make(chan error, 1),
+		}); err != nil {
+			t.Fatalf("enqueueDataFrame(%d) error = %v", item.streamID, err)
+		}
+	}
+
+	got := []uint32{
+		session.popDataFrame().streamID,
+		session.popDataFrame().streamID,
+		session.popDataFrame().streamID,
+	}
+	want := []uint32{1, 3, 1}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pop order = %v, want %v", got, want)
+		}
+	}
+	if pending := atomic.LoadInt64(&session.pendingFrames); pending != 0 {
+		t.Fatalf("pendingFrames = %d, want 0", pending)
+	}
+}
+
 func TestBuildClientStatusAggregatesSessions(t *testing.T) {
 	t.Parallel()
 
@@ -89,6 +188,8 @@ func TestBuildClientStatusAggregatesSessions(t *testing.T) {
 	first.retryDelay = 2 * time.Second
 	first.nextRetryAt = time.Now().Add(2 * time.Second)
 	first.lastRequestErr = "relay rejected"
+	atomic.StoreInt64(&first.pendingFrames, 2)
+	atomic.StoreInt64(&first.pendingBytes, 2048)
 	first.streams[1] = newMuxConn(first, 1)
 	first.mu.Unlock()
 	atomic.StoreUint64(&first.framesIn, 11)
@@ -115,6 +216,9 @@ func TestBuildClientStatusAggregatesSessions(t *testing.T) {
 	if status.Totals.ActiveStreams != 1 {
 		t.Fatalf("active streams = %d, want 1", status.Totals.ActiveStreams)
 	}
+	if status.Totals.PendingFrames != 2 || status.Totals.PendingBytes != 2048 {
+		t.Fatalf("pending totals = (%d, %d), want (2, 2048)", status.Totals.PendingFrames, status.Totals.PendingBytes)
+	}
 	if status.RelayRequests.Started != 4 || status.RelayRequests.Succeeded != 3 || status.RelayRequests.Failed != 1 {
 		t.Fatalf("unexpected relay request stats = %#v", status.RelayRequests)
 	}
@@ -126,6 +230,20 @@ func TestBuildClientStatusAggregatesSessions(t *testing.T) {
 	}
 	if status.Sessions[1].RetryDelayMs != 4000 {
 		t.Fatalf("second session retry delay = %d, want 4000", status.Sessions[1].RetryDelayMs)
+	}
+}
+
+func markSessionReady(session *MuxSession, activeStreams int, pendingBytes int64) {
+	session.mu.Lock()
+	session.conn = &stubConn{}
+	session.ready = true
+	for i := 0; i < activeStreams; i++ {
+		session.streams[uint32(i+1)] = newMuxConn(session, uint32(i+1))
+	}
+	session.mu.Unlock()
+	atomic.StoreInt64(&session.pendingBytes, pendingBytes)
+	if pendingBytes > 0 {
+		atomic.StoreInt64(&session.pendingFrames, 1)
 	}
 }
 

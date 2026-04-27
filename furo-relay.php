@@ -9,7 +9,7 @@ declare(strict_types=1);
 $RELAY_API_KEY = 'my_super_secret_123456789';
 $RELAY_CONNECT_TIMEOUT_SEC = 8;
 $RELAY_IDLE_TIMEOUT_SEC = 300;
-$RELAY_BUFFER_SIZE = 1024 * 1024;
+$RELAY_BUFFER_SIZE = 256 * 1024;
 $RELAY_ENABLE_LOGS = false;
 
 ignore_user_abort(true);
