@@ -30,11 +30,15 @@ const (
 	frameOpenErr
 	frameData
 	frameClose
+	framePing
+	framePong
 )
 
 const (
 	frameHeaderSize        = 9
 	maxFramePayload        = 128 * 1024
+	minAdaptiveFrameSize   = 32 * 1024
+	midAdaptiveFrameSize   = 64 * 1024
 	sessionPollDelay       = 1200 * time.Millisecond
 	streamWriteQueueDepth  = 32
 	controlWriteQueueDepth = 256
@@ -45,6 +49,9 @@ const (
 	adminReadHeaderTimeout = 5 * time.Second
 	pooledFrameThreshold   = 32 * 1024
 	maxReservedSessions    = 2
+	heartbeatInterval      = 15 * time.Second
+	heartbeatTimeout       = 45 * time.Second
+	recentSlowPenaltyAge   = 30 * time.Second
 )
 
 var (
@@ -223,6 +230,17 @@ func allocateFramePayload(src []byte) ([]byte, func()) {
 	return payload, nil
 }
 
+func adaptiveFramePayload(activeStreams int, pendingBytes int64) int {
+	switch {
+	case activeStreams >= 6 || pendingBytes >= 512*1024:
+		return minAdaptiveFrameSize
+	case activeStreams >= 2 || pendingBytes >= 128*1024:
+		return midAdaptiveFrameSize
+	default:
+		return maxFramePayload
+	}
+}
+
 func computeReconnectDelay(failures int) time.Duration {
 	if failures <= 0 {
 		return 0
@@ -265,7 +283,7 @@ func (r *upstreamResolver) Resolve(ctx xcontext.Context, name string) (xcontext.
 	}
 	ipAddrs, err := r.fallback.LookupIPAddr(ctx, name)
 	if err != nil {
-		return ctx, net.IPv4zero, nil
+		return ctx, net.IPv4zero, err
 	}
 	for _, addr := range ipAddrs {
 		if v4 := addr.IP.To4(); v4 != nil {
@@ -275,7 +293,7 @@ func (r *upstreamResolver) Resolve(ctx xcontext.Context, name string) (xcontext.
 	if len(ipAddrs) > 0 {
 		return ctx, ipAddrs[0].IP, nil
 	}
-	return ctx, net.IPv4zero, nil
+	return ctx, net.IPv4zero, fmt.Errorf("no addresses found for %s", name)
 }
 
 func setTCPOptions(conn net.Conn) {
@@ -349,6 +367,10 @@ func frameTypeName(typ byte) string {
 		return "data"
 	case frameClose:
 		return "close"
+	case framePing:
+		return "ping"
+	case framePong:
+		return "pong"
 	default:
 		return fmt.Sprintf("unknown_%d", typ)
 	}
@@ -569,9 +591,9 @@ func (c *MuxConn) Write(b []byte) (int, error) {
 
 	total := 0
 	for len(b) > 0 {
-		chunkLen := len(b)
-		if chunkLen > maxFramePayload {
-			chunkLen = maxFramePayload
+		chunkLen := c.session.recommendedChunkSize()
+		if chunkLen > len(b) {
+			chunkLen = len(b)
 		}
 		payload, release := allocateFramePayload(b[:chunkLen])
 		if err := c.session.sendData(c.id, payload, release); err != nil {
@@ -648,32 +670,34 @@ type MuxSession struct {
 	sid  string
 	idx  int
 
-	mu               sync.Mutex
-	conn             net.Conn
-	ready            bool
-	requestRunning   bool
-	streams          map[uint32]*MuxConn
-	nextStreamID     uint32
-	sessionGen       uint64
-	writeStop        chan struct{}
-	controlQ         chan *outboundFrame
-	wakeWriter       chan struct{}
-	schedMu          sync.Mutex
-	dataQueues       map[uint32][]*outboundFrame
-	readyStreams     []uint32
-	framesIn         uint64
-	framesOut        uint64
-	bytesIn          uint64
-	bytesOut         uint64
-	slowWrites       uint64
-	lastFrameInUnix  int64
-	lastFrameOutUnix int64
-	pendingBytes     int64
-	pendingFrames    int64
-	requestFailures  int
-	nextRetryAt      time.Time
-	retryDelay       time.Duration
-	lastRequestErr   string
+	mu                sync.Mutex
+	conn              net.Conn
+	ready             bool
+	requestRunning    bool
+	streams           map[uint32]*MuxConn
+	nextStreamID      uint32
+	sessionGen        uint64
+	loopWake          chan struct{}
+	writeStop         chan struct{}
+	controlQ          chan *outboundFrame
+	wakeWriter        chan struct{}
+	schedMu           sync.Mutex
+	dataQueues        map[uint32][]*outboundFrame
+	readyStreams      []uint32
+	framesIn          uint64
+	framesOut         uint64
+	bytesIn           uint64
+	bytesOut          uint64
+	slowWrites        uint64
+	lastSlowWriteUnix int64
+	lastFrameInUnix   int64
+	lastFrameOutUnix  int64
+	pendingBytes      int64
+	pendingFrames     int64
+	requestFailures   int
+	nextRetryAt       time.Time
+	retryDelay        time.Duration
+	lastRequestErr    string
 }
 
 func newMuxSession(pool *SessionPool, idx int, sid string) *MuxSession {
@@ -682,6 +706,7 @@ func newMuxSession(pool *SessionPool, idx int, sid string) *MuxSession {
 		idx:        idx,
 		sid:        sid,
 		streams:    make(map[uint32]*MuxConn),
+		loopWake:   make(chan struct{}, 1),
 		controlQ:   make(chan *outboundFrame, controlWriteQueueDepth),
 		wakeWriter: make(chan struct{}, 1),
 		dataQueues: make(map[uint32][]*outboundFrame),
@@ -692,6 +717,20 @@ func (s *MuxSession) activeCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.streams)
+}
+
+func (s *MuxSession) notifyLoop() {
+	select {
+	case s.loopWake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *MuxSession) recommendedChunkSize() int {
+	s.mu.Lock()
+	active := len(s.streams)
+	s.mu.Unlock()
+	return adaptiveFramePayload(active, atomic.LoadInt64(&s.pendingBytes))
 }
 
 func (s *MuxSession) isReady() bool {
@@ -723,6 +762,9 @@ func (s *MuxSession) attachConn(conn net.Conn) {
 	s.writeStop = make(chan struct{})
 	writeStop := s.writeStop
 	s.mu.Unlock()
+	now := time.Now().Unix()
+	atomic.StoreInt64(&s.lastFrameInUnix, now)
+	atomic.StoreInt64(&s.lastFrameOutUnix, now)
 
 	if oldWriteStop != nil {
 		close(oldWriteStop)
@@ -740,11 +782,13 @@ func (s *MuxSession) attachConn(conn net.Conn) {
 	logEvent("[CLIENT] session=%s accepted remote=%s", s.sid, conn.RemoteAddr())
 	go s.writeLoop(gen, conn, writeStop)
 	go s.readLoop(gen, conn)
+	go s.heartbeatLoop(gen, writeStop)
 	if err := s.sendHello(gen); err != nil {
 		logEvent("[CLIENT] session=%s hello_failed err=%v", s.sid, err)
 		s.closeSession(gen, err)
 	}
 	s.pool.notifyStateChange()
+	s.notifyLoop()
 }
 
 func (s *MuxSession) closeSession(gen uint64, err error) {
@@ -774,6 +818,7 @@ func (s *MuxSession) closeSession(gen uint64, err error) {
 	}
 	logEvent("[CLIENT] session=%s closed err=%v", s.sid, err)
 	s.pool.notifyStateChange()
+	s.notifyLoop()
 }
 
 func (s *MuxSession) sendHello(gen uint64) error {
@@ -791,6 +836,7 @@ func (s *MuxSession) sendControl(typ byte, streamID uint32, payload []byte) erro
 	s.mu.Lock()
 	ready := s.ready
 	connected := s.conn != nil
+	stop := s.writeStop
 	s.mu.Unlock()
 
 	if !connected {
@@ -809,9 +855,9 @@ func (s *MuxSession) sendControl(typ byte, streamID uint32, payload []byte) erro
 	}
 
 	select {
+	case <-stop:
+		return net.ErrClosed
 	case s.controlQ <- req:
-	case <-time.After(2 * time.Second):
-		return errors.New("control write queue full")
 	}
 
 	return <-req.result
@@ -952,6 +998,7 @@ func (s *MuxSession) writeLoop(gen uint64, conn net.Conn, stop <-chan struct{}) 
 		}
 		if queueWait := writeStart.Sub(req.enqueuedAt); queueWait > slowWriteThreshold || writeDur > slowWriteThreshold {
 			atomic.AddUint64(&s.slowWrites, 1)
+			atomic.StoreInt64(&s.lastSlowWriteUnix, time.Now().Unix())
 			logEvent("[CLIENT] session=%s slow_send type=%s stream=%d bytes=%d queue_ms=%d write_ms=%d active=%d err=%v", s.sid, frameTypeName(req.typ), req.streamID, len(req.payload), queueWait.Milliseconds(), writeDur.Milliseconds(), active, err)
 		}
 		req.finish(err)
@@ -1054,9 +1101,53 @@ func (s *MuxSession) readLoop(gen uint64, conn net.Conn) {
 				stream.markRemoteClosed()
 				s.removeStream(fr.streamID)
 			}
+		case framePing:
+			if err := s.sendControl(framePong, 0, nil); err != nil && !errors.Is(err, net.ErrClosed) {
+				logEvent("[CLIENT] session=%s pong_failed err=%v", s.sid, err)
+				s.closeSession(gen, err)
+				return
+			}
+		case framePong:
 		default:
 			s.closeSession(gen, fmt.Errorf("unexpected frame type=%d", fr.typ))
 			return
+		}
+	}
+}
+
+func (s *MuxSession) heartbeatLoop(gen uint64, stop <-chan struct{}) {
+	ticker := time.NewTicker(heartbeatInterval / 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+		}
+
+		s.mu.Lock()
+		connected := s.conn != nil
+		currentGen := s.sessionGen
+		s.mu.Unlock()
+		if !connected || currentGen != gen {
+			return
+		}
+
+		now := time.Now()
+		lastIn := time.Unix(atomic.LoadInt64(&s.lastFrameInUnix), 0)
+		if now.Sub(lastIn) > heartbeatTimeout {
+			s.closeSession(gen, errors.New("heartbeat timeout"))
+			return
+		}
+
+		lastOut := time.Unix(atomic.LoadInt64(&s.lastFrameOutUnix), 0)
+		if now.Sub(lastOut) >= heartbeatInterval {
+			if err := s.sendControl(framePing, 0, nil); err != nil && !errors.Is(err, net.ErrClosed) {
+				logEvent("[CLIENT] session=%s heartbeat_ping_failed err=%v", s.sid, err)
+				s.closeSession(gen, err)
+				return
+			}
 		}
 	}
 }
@@ -1098,6 +1189,7 @@ func (s *MuxSession) markRequestSuccess() {
 	s.retryDelay = 0
 	s.lastRequestErr = ""
 	s.mu.Unlock()
+	s.notifyLoop()
 }
 
 func (s *MuxSession) markRequestFailure(reason string) time.Duration {
@@ -1108,6 +1200,7 @@ func (s *MuxSession) markRequestFailure(reason string) time.Duration {
 	s.lastRequestErr = reason
 	delay := s.retryDelay
 	s.mu.Unlock()
+	s.notifyLoop()
 	return delay
 }
 
@@ -1159,6 +1252,7 @@ func (s *MuxSession) requestSession() {
 		s.mu.Lock()
 		s.requestRunning = false
 		s.mu.Unlock()
+		s.notifyLoop()
 	}()
 
 	values := url.Values{}
@@ -1220,7 +1314,15 @@ func (s *MuxSession) loop() {
 		if retryWait > 0 && retryWait < sleepFor {
 			sleepFor = retryWait
 		}
-		time.Sleep(sleepFor)
+
+		timer := time.NewTimer(sleepFor)
+		select {
+		case <-timer.C:
+		case <-s.loopWake:
+			if !timer.Stop() {
+				<-timer.C
+			}
+		}
 	}
 }
 
@@ -1233,10 +1335,12 @@ type SessionPool struct {
 }
 
 type sessionLoadSnapshot struct {
-	session       *MuxSession
-	activeStreams int
-	pendingBytes  int64
-	pendingFrames int64
+	session           *MuxSession
+	activeStreams     int
+	pendingBytes      int64
+	pendingFrames     int64
+	requestFailures   int
+	lastSlowWriteUnix int64
 }
 
 type clientRelayRequestStats struct {
@@ -1472,16 +1576,19 @@ func (s *MuxSession) loadSnapshot() sessionLoadSnapshot {
 	s.mu.Lock()
 	ready := s.ready && s.conn != nil
 	active := len(s.streams)
+	requestFailures := s.requestFailures
 	s.mu.Unlock()
 	if !ready {
 		return sessionLoadSnapshot{}
 	}
 
 	return sessionLoadSnapshot{
-		session:       s,
-		activeStreams: active,
-		pendingBytes:  atomic.LoadInt64(&s.pendingBytes),
-		pendingFrames: atomic.LoadInt64(&s.pendingFrames),
+		session:           s,
+		activeStreams:     active,
+		pendingBytes:      atomic.LoadInt64(&s.pendingBytes),
+		pendingFrames:     atomic.LoadInt64(&s.pendingFrames),
+		requestFailures:   requestFailures,
+		lastSlowWriteUnix: atomic.LoadInt64(&s.lastSlowWriteUnix),
 	}
 }
 
@@ -1490,7 +1597,14 @@ func (snap sessionLoadSnapshot) isIdle() bool {
 }
 
 func (snap sessionLoadSnapshot) score() int64 {
-	return snap.pendingBytes + int64(snap.activeStreams*maxFramePayload) + snap.pendingFrames*1024
+	score := snap.pendingBytes + int64(snap.activeStreams*adaptiveFramePayload(snap.activeStreams, snap.pendingBytes)) + snap.pendingFrames*1024
+	if snap.requestFailures > 0 {
+		score += int64(snap.requestFailures) * 64 * 1024
+	}
+	if snap.lastSlowWriteUnix != 0 && time.Since(time.Unix(snap.lastSlowWriteUnix, 0)) < recentSlowPenaltyAge {
+		score += 64 * 1024
+	}
+	return score
 }
 
 func (p *SessionPool) pickLeastLoaded(candidates []sessionLoadSnapshot) *MuxSession {
