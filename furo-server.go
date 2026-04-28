@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -26,16 +27,23 @@ const (
 	frameOpenErr
 	frameData
 	frameClose
+	framePing
+	framePong
 )
 
 const (
 	frameHeaderSize        = 9
 	maxFramePayload        = 128 * 1024
+	minAdaptiveFrameSize   = 32 * 1024
+	midAdaptiveFrameSize   = 64 * 1024
 	streamWriteQueueDepth  = 32
 	controlWriteQueueDepth = 256
 	slowWriteThreshold     = 200 * time.Millisecond
 	sessionStatsInterval   = 15 * time.Second
 	adminReadHeaderTimeout = 5 * time.Second
+	heartbeatInterval      = 15 * time.Second
+	heartbeatTimeout       = 45 * time.Second
+	pooledFrameThreshold   = 32 * 1024
 )
 
 var (
@@ -127,6 +135,11 @@ var (
 	rejectedSessions uint64
 	closedSessions   uint64
 	serverRegistry   = newServerSessionRegistry()
+	largeFramePool   = sync.Pool{
+		New: func() any {
+			return make([]byte, maxFramePayload)
+		},
+	}
 )
 
 func logEvent(format string, args ...any) {
@@ -283,8 +296,38 @@ func frameTypeName(typ byte) string {
 		return "data"
 	case frameClose:
 		return "close"
+	case framePing:
+		return "ping"
+	case framePong:
+		return "pong"
 	default:
 		return fmt.Sprintf("unknown_%d", typ)
+	}
+}
+
+func allocateFramePayload(src []byte) ([]byte, func()) {
+	if len(src) >= pooledFrameThreshold {
+		buf := largeFramePool.Get().([]byte)
+		payload := buf[:len(src)]
+		copy(payload, src)
+		return payload, func() {
+			largeFramePool.Put(buf)
+		}
+	}
+
+	payload := make([]byte, len(src))
+	copy(payload, src)
+	return payload, nil
+}
+
+func adaptiveFramePayload(activeStreams int) int {
+	switch {
+	case activeStreams >= 6:
+		return minAdaptiveFrameSize
+	case activeStreams >= 2:
+		return midAdaptiveFrameSize
+	default:
+		return maxFramePayload
 	}
 }
 
@@ -369,6 +412,15 @@ type outboundFrame struct {
 	payload    []byte
 	enqueuedAt time.Time
 	result     chan error
+	release    func()
+}
+
+func (f *outboundFrame) finish(err error) {
+	if f.release != nil {
+		f.release()
+		f.release = nil
+	}
+	f.result <- err
 }
 
 func (t *TargetStream) close() {
@@ -389,8 +441,6 @@ func (t *TargetStream) enqueue(payload []byte) error {
 			logEvent("[SERVER] stream=%d target_writeq_depth=%d bytes_from_relay=%d", t.id, depth, atomic.LoadUint64(&t.bytesFromRelay))
 		}
 		return nil
-	case <-time.After(2 * time.Second):
-		return errors.New("stream write queue full")
 	}
 }
 
@@ -408,6 +458,7 @@ type Session struct {
 	schedMu          sync.Mutex
 	dataQueues       map[uint32][]*outboundFrame
 	readyStreams     []uint32
+	pendingOpens     map[uint32]context.CancelFunc
 	framesIn         uint64
 	framesOut        uint64
 	bytesIn          uint64
@@ -442,28 +493,95 @@ func (s *Session) snapshot() serverSessionSnapshot {
 func newSession(sid string, conn net.Conn) *Session {
 	setTCPOptions(conn)
 	s := &Session{
-		sid:        sid,
-		conn:       conn,
-		streams:    make(map[uint32]*TargetStream),
-		controlQ:   make(chan *outboundFrame, controlWriteQueueDepth),
-		wakeWriter: make(chan struct{}, 1),
-		closed:     make(chan struct{}),
-		dataQueues: make(map[uint32][]*outboundFrame),
+		sid:          sid,
+		conn:         conn,
+		streams:      make(map[uint32]*TargetStream),
+		controlQ:     make(chan *outboundFrame, controlWriteQueueDepth),
+		wakeWriter:   make(chan struct{}, 1),
+		closed:       make(chan struct{}),
+		dataQueues:   make(map[uint32][]*outboundFrame),
+		pendingOpens: make(map[uint32]context.CancelFunc),
 	}
+	now := time.Now().Unix()
+	atomic.StoreInt64(&s.lastFrameInUnix, now)
+	atomic.StoreInt64(&s.lastFrameOutUnix, now)
 	go s.writeLoop()
+	go s.heartbeatLoop()
 	return s
 }
 
+func (s *Session) startOpen(streamID uint32) (context.Context, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return nil, false
+	}
+	if _, exists := s.streams[streamID]; exists {
+		return nil, false
+	}
+	if _, exists := s.pendingOpens[streamID]; exists {
+		return nil, false
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.pendingOpens[streamID] = cancel
+	return ctx, true
+}
+
+func (s *Session) finishOpen(streamID uint32) {
+	s.mu.Lock()
+	cancel := s.pendingOpens[streamID]
+	delete(s.pendingOpens, streamID)
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (s *Session) cancelPendingOpen(streamID uint32) bool {
+	s.mu.Lock()
+	cancel := s.pendingOpens[streamID]
+	delete(s.pendingOpens, streamID)
+	s.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func (s *Session) cancelAllPendingOpens() {
+	s.mu.Lock()
+	pending := make([]context.CancelFunc, 0, len(s.pendingOpens))
+	for streamID, cancel := range s.pendingOpens {
+		pending = append(pending, cancel)
+		delete(s.pendingOpens, streamID)
+	}
+	s.mu.Unlock()
+	for _, cancel := range pending {
+		cancel()
+	}
+}
+
 func (s *Session) sendFrame(typ byte, streamID uint32, payload []byte) error {
+	return s.sendFrameWithRelease(typ, streamID, payload, nil)
+}
+
+func (s *Session) sendFrameWithRelease(typ byte, streamID uint32, payload []byte, release func()) error {
 	s.mu.Lock()
 	conn := s.conn
 	authOK := s.authOK
 	s.mu.Unlock()
 
 	if conn == nil {
+		if release != nil {
+			release()
+		}
 		return errors.New("session not connected")
 	}
 	if typ != frameHelloAck && !authOK {
+		if release != nil {
+			release()
+		}
 		return errors.New("session not authenticated")
 	}
 
@@ -473,19 +591,24 @@ func (s *Session) sendFrame(typ byte, streamID uint32, payload []byte) error {
 		payload:    payload,
 		enqueuedAt: time.Now(),
 		result:     make(chan error, 1),
+		release:    release,
 	}
 
 	if typ == frameData {
 		if err := s.enqueueData(req); err != nil {
+			if release != nil {
+				release()
+			}
 			return err
 		}
 	} else {
 		select {
 		case <-s.closed:
+			if release != nil {
+				release()
+			}
 			return net.ErrClosed
 		case s.controlQ <- req:
-		case <-time.After(2 * time.Second):
-			return errors.New("control write queue full")
 		}
 	}
 
@@ -563,7 +686,7 @@ func (s *Session) writeLoop() {
 		s.mu.Unlock()
 
 		if conn == nil {
-			req.result <- net.ErrClosed
+			req.finish(net.ErrClosed)
 			continue
 		}
 
@@ -579,7 +702,7 @@ func (s *Session) writeLoop() {
 			atomic.AddUint64(&s.slowWrites, 1)
 			logEvent("[SERVER] session=%s slow_send type=%s stream=%d bytes=%d lock_ms=%d write_ms=%d active=%d err=%v", s.sid, frameTypeName(req.typ), req.streamID, len(req.payload), queueWait.Milliseconds(), writeDur.Milliseconds(), active, err)
 		}
-		req.result <- err
+		req.finish(err)
 		if err != nil {
 			s.closeAll(err)
 			return
@@ -591,7 +714,7 @@ func (s *Session) failPending(err error) {
 	for {
 		select {
 		case req := <-s.controlQ:
-			req.result <- err
+			req.finish(err)
 		default:
 			goto drainData
 		}
@@ -602,7 +725,7 @@ drainData:
 	defer s.schedMu.Unlock()
 	for streamID, queue := range s.dataQueues {
 		for _, req := range queue {
-			req.result <- err
+			req.finish(err)
 		}
 		delete(s.dataQueues, streamID)
 	}
@@ -680,6 +803,7 @@ func (s *Session) closeAll(err error) {
 		if conn != nil {
 			_ = conn.Close()
 		}
+		s.cancelAllPendingOpens()
 		s.failPending(net.ErrClosed)
 		for _, stream := range streams {
 			stream.close()
@@ -728,7 +852,12 @@ func (s *Session) readLoop(conn net.Conn) {
 
 		switch fr.typ {
 		case frameOpen:
-			s.handleOpen(fr.streamID, fr.payload)
+			openCtx, ok := s.startOpen(fr.streamID)
+			if !ok {
+				_ = s.sendFrame(frameOpenErr, fr.streamID, []byte("open-already-pending"))
+				continue
+			}
+			go s.handleOpen(openCtx, fr.streamID, fr.payload)
 		case frameData:
 			stream := s.getStream(fr.streamID)
 			if stream == nil {
@@ -740,7 +869,16 @@ func (s *Session) readLoop(conn net.Conn) {
 				s.closeStream(fr.streamID, true)
 			}
 		case frameClose:
+			if s.cancelPendingOpen(fr.streamID) {
+				continue
+			}
 			s.closeStream(fr.streamID, false)
+		case framePing:
+			if err := s.sendFrame(framePong, 0, nil); err != nil && !errors.Is(err, net.ErrClosed) {
+				logEvent("[SERVER] session=%s pong_failed err=%v", s.sid, err)
+				return
+			}
+		case framePong:
 		default:
 			logEvent("[SERVER] session=%s unexpected_frame type=%d", s.sid, fr.typ)
 			return
@@ -748,7 +886,9 @@ func (s *Session) readLoop(conn net.Conn) {
 	}
 }
 
-func (s *Session) handleOpen(streamID uint32, payload []byte) {
+func (s *Session) handleOpen(ctx context.Context, streamID uint32, payload []byte) {
+	defer s.finishOpen(streamID)
+
 	host, port, err := decodeOpenPayload(payload)
 	if err != nil {
 		_ = s.sendFrame(frameOpenErr, streamID, []byte(err.Error()))
@@ -758,10 +898,18 @@ func (s *Session) handleOpen(streamID uint32, payload []byte) {
 	targetAddr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
 	dialer := net.Dialer{Timeout: dialTimeout, KeepAlive: keepalivePeriod}
 	start := time.Now()
-	targetConn, err := dialer.Dial("tcp", targetAddr)
+	targetConn, err := dialer.DialContext(ctx, "tcp", targetAddr)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			logEvent("[SERVER] session=%s stream=%d dial_canceled target=%s", s.sid, streamID, targetAddr)
+			return
+		}
 		logEvent("[SERVER] session=%s stream=%d dial_failed target=%s dur_ms=%d err=%v", s.sid, streamID, targetAddr, time.Since(start).Milliseconds(), err)
 		_ = s.sendFrame(frameOpenErr, streamID, []byte("dial-failed"))
+		return
+	}
+	if ctx.Err() != nil {
+		_ = targetConn.Close()
 		return
 	}
 	setTCPOptions(targetConn)
@@ -786,15 +934,17 @@ func (s *Session) handleOpen(streamID uint32, payload []byte) {
 }
 
 func (s *Session) pumpTarget(stream *TargetStream, targetAddr string) {
-	buf := make([]byte, maxFramePayload)
+	buf := largeFramePool.Get().([]byte)
+	defer largeFramePool.Put(buf)
+
 	for {
-		n, err := stream.conn.Read(buf)
+		chunkSize := adaptiveFramePayload(s.activeCount())
+		n, err := stream.conn.Read(buf[:chunkSize])
 		if n > 0 {
-			payload := make([]byte, n)
-			copy(payload, buf[:n])
+			payload, release := allocateFramePayload(buf[:n])
 			atomic.AddUint64(&stream.bytesToRelay, uint64(n))
 			atomic.AddUint64(&stream.framesToRelay, 1)
-			if err := s.sendFrame(frameData, stream.id, payload); err != nil {
+			if err := s.sendFrameWithRelease(frameData, stream.id, payload, release); err != nil {
 				logEvent("[SERVER] session=%s stream=%d send_data_failed err=%v", s.sid, stream.id, err)
 				break
 			}
@@ -849,6 +999,46 @@ func (s *Session) statsLoop() {
 			atomic.LoadInt64(&s.lastFrameInUnix),
 			atomic.LoadInt64(&s.lastFrameOutUnix),
 		)
+	}
+}
+
+func (s *Session) heartbeatLoop() {
+	ticker := time.NewTicker(heartbeatInterval / 2)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.closed:
+			return
+		case <-ticker.C:
+		}
+
+		s.mu.Lock()
+		connected := s.conn != nil
+		authOK := s.authOK
+		s.mu.Unlock()
+		if !connected {
+			return
+		}
+
+		now := time.Now()
+		lastIn := time.Unix(atomic.LoadInt64(&s.lastFrameInUnix), 0)
+		if now.Sub(lastIn) > heartbeatTimeout {
+			logEvent("[SERVER] session=%s heartbeat_timeout last_in=%d", s.sid, atomic.LoadInt64(&s.lastFrameInUnix))
+			s.closeAll(errors.New("heartbeat timeout"))
+			return
+		}
+
+		if !authOK {
+			continue
+		}
+		lastOut := time.Unix(atomic.LoadInt64(&s.lastFrameOutUnix), 0)
+		if now.Sub(lastOut) >= heartbeatInterval {
+			if err := s.sendFrame(framePing, 0, nil); err != nil && !errors.Is(err, net.ErrClosed) {
+				logEvent("[SERVER] session=%s heartbeat_ping_failed err=%v", s.sid, err)
+				return
+			}
+		}
 	}
 }
 
