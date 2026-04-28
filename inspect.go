@@ -45,7 +45,7 @@ const (
 var (
 	inspectConfigPath = flag.String("c", "config.client.json", "Path to client config JSON")
 	speedTestEnabled  = flag.Bool("speed-test", false, "Run a download speed test through the relay")
-	speedTestURL      = flag.String("speed-test-url", "https://cachefly.cachefly.net/50mb.test", "URL used for the optional speed test")
+	speedTestURL      = flag.String("speed-test-url", "https://nbg1-speed.hetzner.com/100MB.bin", "URL used for the optional speed test")
 )
 
 func init() {
@@ -127,27 +127,136 @@ type inspectStep struct {
 }
 
 type inspectReport struct {
-	Steps []inspectStep
+	w               io.Writer
+	mu              sync.Mutex
+	steps           []inspectStep
+	progressActive  bool
+	lastProgressLen int
+}
+
+func newInspectReport(w io.Writer) *inspectReport {
+	return &inspectReport{w: w}
+}
+
+func (r *inspectReport) start() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	fmt.Fprintln(r.w, "FURO inspect running")
+	fmt.Fprintln(r.w)
+}
+
+func (r *inspectReport) clearProgressLocked() {
+	if !r.progressActive {
+		return
+	}
+	fmt.Fprint(r.w, "\n")
+	r.progressActive = false
+	r.lastProgressLen = 0
+}
+
+func (r *inspectReport) printStepLocked(prefix, title, value string) {
+	fmt.Fprintf(r.w, "%s %s: %s\n", prefix, title, value)
 }
 
 func (r *inspectReport) add(title, value string) {
-	r.Steps = append(r.Steps, inspectStep{Title: title, Value: value})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearProgressLocked()
+	r.steps = append(r.steps, inspectStep{Title: title, Value: value})
+	r.printStepLocked("✓", title, value)
 }
 
-func (r *inspectReport) print(w io.Writer, failed error) {
-	if failed == nil {
-		fmt.Fprintln(w, "FURO inspect succeeded")
+func (r *inspectReport) note(title, value string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearProgressLocked()
+	r.printStepLocked("•", title, value)
+}
+
+func (r *inspectReport) updateProgress(title string, downloaded, total int64, elapsed time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if elapsed <= 0 {
+		elapsed = time.Millisecond
+	}
+
+	mibPerSec := float64(downloaded) / elapsed.Seconds() / (1024 * 1024)
+	mbps := float64(downloaded*8) / elapsed.Seconds() / 1_000_000
+
+	var line string
+	if total > 0 {
+		ratio := float64(downloaded) / float64(total)
+		if ratio > 1 {
+			ratio = 1
+		}
+		line = fmt.Sprintf(
+			"\r⏬ %s: [%s] %5.1f%% %s / %s  %.2f MiB/s (%.2f Mbps)",
+			title,
+			inspectRenderProgressBar(ratio, 24),
+			ratio*100,
+			inspectFormatBytes(downloaded),
+			inspectFormatBytes(total),
+			mibPerSec,
+			mbps,
+		)
 	} else {
-		fmt.Fprintln(w, "FURO inspect failed")
+		line = fmt.Sprintf(
+			"\r⏬ %s: %s downloaded  %.2f MiB/s (%.2f Mbps)",
+			title,
+			inspectFormatBytes(downloaded),
+			mibPerSec,
+			mbps,
+		)
 	}
-	fmt.Fprintln(w)
-	for _, step := range r.Steps {
-		fmt.Fprintf(w, "- %s: %s\n", step.Title, step.Value)
+
+	if pad := r.lastProgressLen - len([]rune(line)); pad > 0 {
+		line += strings.Repeat(" ", pad)
 	}
-	if failed != nil {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "Failure: %v\n", failed)
+	fmt.Fprint(r.w, line)
+	r.progressActive = true
+	r.lastProgressLen = len([]rune(line))
+}
+
+func (r *inspectReport) printResult(failed error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearProgressLocked()
+	if failed == nil {
+		fmt.Fprintln(r.w)
+		fmt.Fprintln(r.w, "✓ FURO inspect succeeded")
+	} else {
+		fmt.Fprintln(r.w)
+		fmt.Fprintln(r.w, "✗ FURO inspect failed")
+		fmt.Fprintln(r.w)
+		fmt.Fprintf(r.w, "Failure: %v\n", failed)
 	}
+}
+
+func inspectRenderProgressBar(ratio float64, width int) string {
+	if ratio < 0 {
+		ratio = 0
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	filled := int(ratio * float64(width))
+	if filled > width {
+		filled = width
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+}
+
+func inspectFormatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for value := n / unit; value >= unit && exp < 5; value /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 type inspectFrame struct {
@@ -732,6 +841,9 @@ func inspectStartRelayRequest(ctx context.Context, cfg inspectClientConfig, sid 
 			if detail == "" {
 				detail = fmt.Sprintf("unexpected status %d", resp.StatusCode)
 			}
+			if strings.Contains(detail, "ERR session-limit") {
+				detail = "server session limit reached; increase server max_sessions so it stays above client session_count when inspect runs alongside furo-client"
+			}
 
 			results <- inspectRelayResult{err: inspectStageError("relay request", fmt.Errorf("status %d: %s", resp.StatusCode, detail))}
 			return
@@ -833,7 +945,7 @@ func inspectApplicationPings(ctx context.Context, session *inspectSession) (time
 	return total / time.Duration(len(samples)), samples, nil
 }
 
-func inspectRunSpeedTest(ctx context.Context, session *inspectSession, rawURL string, openTimeout time.Duration) (string, error) {
+func inspectRunSpeedTest(ctx context.Context, session *inspectSession, report *inspectReport, rawURL string, openTimeout time.Duration) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return "", inspectStageError("speed test", fmt.Errorf("parse url: %w", err))
@@ -907,27 +1019,45 @@ func inspectRunSpeedTest(ctx context.Context, session *inspectSession, rawURL st
 		return "", inspectStageError("speed test", fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 
+	report.note("Speed test", fmt.Sprintf("downloading from %s", rawURL))
+
 	start := time.Now()
-	n, err := io.Copy(io.Discard, resp.Body)
-	if err != nil {
-		return "", inspectStageError("speed test", fmt.Errorf("download: %w", err))
+	totalBytes := resp.ContentLength
+	var downloaded int64
+	buf := make([]byte, 32*1024)
+	lastUpdate := time.Time{}
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			downloaded += int64(n)
+			now := time.Now()
+			if lastUpdate.IsZero() || now.Sub(lastUpdate) >= 200*time.Millisecond {
+				report.updateProgress("Speed test", downloaded, totalBytes, now.Sub(start))
+				lastUpdate = now
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return "", inspectStageError("speed test", fmt.Errorf("download: %w", readErr))
+		}
 	}
 	elapsed := time.Since(start)
 	if elapsed <= 0 {
 		elapsed = time.Nanosecond
 	}
+	report.updateProgress("Speed test", downloaded, totalBytes, elapsed)
 
-	mbps := float64(n*8) / elapsed.Seconds() / 1_000_000
-	mibps := float64(n) / elapsed.Seconds() / (1024 * 1024)
-	return fmt.Sprintf("%.2f Mbps (%.2f MiB/s over %d bytes in %s)", mbps, mibps, n, elapsed.Round(time.Millisecond)), nil
+	mbps := float64(downloaded*8) / elapsed.Seconds() / 1_000_000
+	mibps := float64(downloaded) / elapsed.Seconds() / (1024 * 1024)
+	return fmt.Sprintf("%.2f Mbps (%.2f MiB/s over %s in %s)", mbps, mibps, inspectFormatBytes(downloaded), elapsed.Round(time.Millisecond)), nil
 }
 
-func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.Duration, runSpeedTest bool, speedURL string) (*inspectReport, error) {
-	report := &inspectReport{}
-
+func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.Duration, runSpeedTest bool, speedURL string, report *inspectReport) error {
 	ln, listenPort, listenSummary, err := inspectListen(cfg)
 	if err != nil {
-		return report, inspectStageError("listener bind", fmt.Errorf("listen on %s: %w", cfg.AgentListen, err))
+		return inspectStageError("listener bind", fmt.Errorf("listen on %s: %w", cfg.AgentListen, err))
 	}
 	defer ln.Close()
 	report.add("Listener", listenSummary)
@@ -969,15 +1099,15 @@ func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.D
 		case result := <-acceptCh:
 			if result.err != nil {
 				if relayErr != nil {
-					return report, relayErr
+					return relayErr
 				}
-				return report, inspectStageError("relay callback", result.err)
+				return inspectStageError("relay callback", result.err)
 			}
 			if conn == nil {
 				conn = result.conn
 				if err := inspectAttachRelay(conn, cfg.APIKey, sid); err != nil {
 					conn.Close()
-					return report, inspectStageError("relay callback", err)
+					return inspectStageError("relay callback", err)
 				}
 				report.add("Relay callback", "relay connected back and session attach succeeded")
 			}
@@ -985,24 +1115,24 @@ func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.D
 			if result.err != nil {
 				relayErr = result.err
 				if conn == nil {
-					return report, relayErr
+					return relayErr
 				}
-				return report, relayErr
+				return relayErr
 			}
 			relayReady = true
 			relayBody = result.body
 			report.add("Relay request", "relay accepted the session and connected both sides")
 		case <-waitCtx.Done():
 			if relayErr != nil {
-				return report, relayErr
+				return relayErr
 			}
 			if conn == nil {
-				return report, inspectStageError("relay callback", errors.New("timed out waiting for relay to connect back to agent_listen"))
+				return inspectStageError("relay callback", errors.New("timed out waiting for relay to connect back to agent_listen"))
 			}
 			if !relayReady {
-				return report, inspectStageError("relay request", errors.New("timed out waiting for relay to confirm the bridged session"))
+				return inspectStageError("relay request", errors.New("timed out waiting for relay to confirm the bridged session"))
 			}
-			return report, waitCtx.Err()
+			return waitCtx.Err()
 		}
 	}
 
@@ -1012,19 +1142,19 @@ func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.D
 	go session.readLoop()
 
 	if err := session.sendFrame(inspectFrameHello, 0, []byte(cfg.APIKey)); err != nil {
-		return report, inspectStageError("server handshake", fmt.Errorf("send hello: %w", err))
+		return inspectStageError("server handshake", fmt.Errorf("send hello: %w", err))
 	}
 	helloCtx, cancel := context.WithTimeout(ctx, inspectHelloTimeout)
 	err = session.waitHelloAck(helloCtx)
 	cancel()
 	if err != nil {
-		return report, inspectStageError("server handshake", fmt.Errorf("wait hello ack: %w", err))
+		return inspectStageError("server handshake", fmt.Errorf("wait hello ack: %w", err))
 	}
 	report.add("Server handshake", "received HELLO_ACK from the server agent")
 
 	avgPing, samples, err := inspectApplicationPings(ctx, session)
 	if err != nil {
-		return report, err
+		return err
 	}
 	parts := make([]string, 0, len(samples))
 	for _, sample := range samples {
@@ -1033,28 +1163,29 @@ func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.D
 	report.add("Ping", fmt.Sprintf("avg=%s samples=%s", avgPing.Round(time.Millisecond), strings.Join(parts, ", ")))
 
 	if runSpeedTest {
-		speedSummary, err := inspectRunSpeedTest(ctx, session, speedURL, openTimeout)
+		speedSummary, err := inspectRunSpeedTest(ctx, session, report, speedURL, openTimeout)
 		if err != nil {
-			return report, err
+			return err
 		}
 		report.add("Speed test", speedSummary)
 	}
 
-	return report, nil
+	return nil
 }
 
 func main() {
 	flag.Parse()
+	report := newInspectReport(os.Stdout)
+	report.start()
 
 	cfg, openTimeout, err := inspectLoadClientConfig(*inspectConfigPath)
 	if err != nil {
-		report := &inspectReport{}
-		report.print(os.Stdout, inspectStageError("config", err))
+		report.printResult(inspectStageError("config", err))
 		os.Exit(1)
 	}
 
-	report, err := inspectRun(context.Background(), cfg, openTimeout, *speedTestEnabled, *speedTestURL)
-	report.print(os.Stdout, err)
+	err = inspectRun(context.Background(), cfg, openTimeout, *speedTestEnabled, *speedTestURL, report)
+	report.printResult(err)
 	if err != nil {
 		os.Exit(1)
 	}

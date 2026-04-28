@@ -124,7 +124,7 @@ Key fields in `config.server.json`:
 - `keepalive`
   TCP keepalive period for server-side sockets.
 - `max_sessions`
-  Maximum active relay sessions. Set this at or above the client `session_count`.
+  Maximum active relay sessions. If `inspect` may run while `furo-client` is already running, set this above the client `session_count` so one extra session remains available.
 - `log_file`
   Optional debug log path. Empty disables debug logs.
 
@@ -181,7 +181,9 @@ Relay path inspection from the client-side VPS:
 ./inspect --help
 ```
 
-`inspect` binds `agent_listen` itself, asks the relay for a single session, verifies the server-side `HELLO/HELLO_ACK`, reports relay ping, and optionally downloads `https://cachefly.cachefly.net/50mb.test` through the tunnel. If it fails, it reports the failing stage directly, for example relay request TLS failure, relay callback timeout, server handshake failure, or speed-test stream failure.
+`inspect` binds `agent_listen` itself, asks the relay for a single session, verifies the server-side `HELLO/HELLO_ACK`, reports relay ping, and optionally downloads `https://nbg1-speed.hetzner.com/100MB.bin` through the tunnel. If it fails, it reports the failing stage directly, for example relay request TLS failure, relay callback timeout, server handshake failure, or speed-test stream failure.
+
+If `furo-client` is already running, `inspect` will first try `agent_listen` and then fall back to a temporary free port if that listener is busy. The server still needs spare session capacity for this extra inspection session, so keep `max_sessions` above the client `session_count`.
 
 Deploy `furo-relay.php` on the PHP host, then make sure `relay_url` in `config.client.json` points to the deployed URL.
 

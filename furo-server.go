@@ -81,7 +81,7 @@ func defaultServerConfig() serverConfigFile {
 		AdminListen: "",
 		DialTimeout: "10s",
 		Keepalive:   "30s",
-		MaxSessions: 8,
+		MaxSessions: 10,
 		LogFile:     "",
 	}
 }

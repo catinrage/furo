@@ -4,6 +4,6 @@
   "admin_listen": "127.0.0.1:19081",
   "dial_timeout": "10s",
   "keepalive": "30s",
-  "max_sessions": 8,
+  "max_sessions": 10,
   "log_file": ""
 }
