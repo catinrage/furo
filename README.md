@@ -177,6 +177,8 @@ Relay path inspection from the client-side VPS:
 ```bash
 ./inspect -c config.client.json
 ./inspect -c config.client.json --speed-test
+./inspect -c config.client.json --speed-test --speed-test-url https://example.com/test.bin
+./inspect --help
 ```
 
 `inspect` binds `agent_listen` itself, asks the relay for a single session, verifies the server-side `HELLO/HELLO_ACK`, reports relay ping, and optionally downloads `https://cachefly.cachefly.net/50mb.test` through the tunnel. If it fails, it reports the failing stage directly, for example relay request TLS failure, relay callback timeout, server handshake failure, or speed-test stream failure.

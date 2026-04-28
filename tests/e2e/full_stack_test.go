@@ -127,8 +127,13 @@ func runEchoServer(t *testing.T, addr string) {
 
 func writeServerConfig(t *testing.T, path, agentAddr, adminAddr string) {
 	t.Helper()
+	writeServerConfigWithMaxSessions(t, path, agentAddr, adminAddr, 1)
+}
 
-	payload := fmt.Sprintf("{\n  \"api_key\": %q,\n  \"agent_listen\": %q,\n  \"admin_listen\": %q,\n  \"dial_timeout\": \"5s\",\n  \"keepalive\": \"5s\",\n  \"max_sessions\": 1,\n  \"log_file\": \"\"\n}\n", testutil.DefaultAPIKey, agentAddr, adminAddr)
+func writeServerConfigWithMaxSessions(t *testing.T, path, agentAddr, adminAddr string, maxSessions int) {
+	t.Helper()
+
+	payload := fmt.Sprintf("{\n  \"api_key\": %q,\n  \"agent_listen\": %q,\n  \"admin_listen\": %q,\n  \"dial_timeout\": \"5s\",\n  \"keepalive\": \"5s\",\n  \"max_sessions\": %d,\n  \"log_file\": \"\"\n}\n", testutil.DefaultAPIKey, agentAddr, adminAddr, maxSessions)
 	if err := os.WriteFile(path, []byte(payload), 0644); err != nil {
 		t.Fatalf("write server config: %v", err)
 	}

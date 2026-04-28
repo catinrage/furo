@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -20,8 +21,10 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	inspectBin := filepath.Join(tmpDir, "inspect")
+	clientBin := filepath.Join(tmpDir, "furo-client")
 	serverBin := filepath.Join(tmpDir, "furo-server")
 	testutil.BuildBinary(t, repoRoot, "./inspect.go", inspectBin)
+	testutil.BuildBinary(t, repoRoot, "./furo-client.go", clientBin)
 	testutil.BuildBinary(t, repoRoot, "./furo-server.go", serverBin)
 
 	speedPayload := strings.Repeat("furo-speed-test-", 16*1024)
@@ -39,16 +42,19 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 	serverAgentAddr := testutil.FreeAddr(t)
 	serverAdminAddr := testutil.FreeAddr(t)
 	clientAgentAddr := testutil.FreeAddr(t)
+	clientAdminAddr := testutil.FreeAddr(t)
+	clientSocksAddr := testutil.FreeAddr(t)
 	phpAddr := testutil.FreeAddr(t)
 
 	serverConfigPath := filepath.Join(tmpDir, "config.server.json")
 	clientConfigPath := filepath.Join(tmpDir, "config.client.json")
 
-	writeServerConfig(t, serverConfigPath, serverAgentAddr, serverAdminAddr)
-	writeClientConfig(t, clientConfigPath, "127.0.0.1:0", clientAgentAddr, "", phpAddr, serverAgentAddr)
+	writeServerConfigWithMaxSessions(t, serverConfigPath, serverAgentAddr, serverAdminAddr, 2)
+	writeClientConfig(t, clientConfigPath, clientSocksAddr, clientAgentAddr, clientAdminAddr, phpAddr, serverAgentAddr)
 
 	serverProc := testutil.StartProcess(t, serverBin, []string{"-c", serverConfigPath}, repoRoot, nil)
-	phpProc := testutil.StartProcess(t, php, []string{"-S", phpAddr, "-t", repoRoot}, repoRoot, nil)
+	phpProc := testutil.StartProcess(t, php, []string{"-S", phpAddr, "-t", repoRoot}, repoRoot, append(os.Environ(), "PHP_CLI_SERVER_WORKERS=4"))
+	clientProc := testutil.StartProcess(t, clientBin, []string{"-c", clientConfigPath}, repoRoot, nil)
 
 	testutil.WaitForHTTP(t, fmt.Sprintf("http://%s/healthz", serverAdminAddr), 10*time.Second, func(resp *http.Response) error {
 		if resp.StatusCode != http.StatusOK {
@@ -57,6 +63,13 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 		return nil
 	}, serverProc)
 
+	testutil.WaitForHTTP(t, fmt.Sprintf("http://%s/healthz", clientAdminAddr), 20*time.Second, func(resp *http.Response) error {
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		}
+		return nil
+	}, clientProc, serverProc, phpProc)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 
@@ -64,7 +77,7 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("inspect failed: %v\noutput:\n%s\nserver:\n%s\nphp:\n%s", err, output, serverProc.Logs(), phpProc.Logs())
+		t.Fatalf("inspect failed: %v\noutput:\n%s\nclient:\n%s\nserver:\n%s\nphp:\n%s", err, output, clientProc.Logs(), serverProc.Logs(), phpProc.Logs())
 	}
 
 	stdout := string(output)
@@ -78,6 +91,37 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 	} {
 		if !strings.Contains(stdout, token) {
 			t.Fatalf("inspect output missing %q\noutput:\n%s", token, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "primary "+clientAgentAddr+" is busy; using temporary listener") {
+		t.Fatalf("inspect output did not report temporary listener fallback\noutput:\n%s", stdout)
+	}
+}
+
+func TestInspectBinaryHelpOutput(t *testing.T) {
+	repoRoot := testutil.RepoRoot(t)
+	tmpDir := t.TempDir()
+
+	inspectBin := filepath.Join(tmpDir, "inspect")
+	testutil.BuildBinary(t, repoRoot, "./inspect.go", inspectBin)
+
+	cmd := exec.Command(inspectBin, "--help")
+	cmd.Dir = repoRoot
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect --help failed: %v\noutput:\n%s", err, output)
+	}
+
+	stdout := string(output)
+	for _, token := range []string{
+		"Usage:",
+		"--speed-test",
+		"--speed-test-url",
+		"config.client.json",
+		"Reports the exact failure stage",
+	} {
+		if !strings.Contains(stdout, token) {
+			t.Fatalf("inspect help output missing %q\noutput:\n%s", token, stdout)
 		}
 	}
 }

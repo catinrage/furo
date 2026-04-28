@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -46,6 +47,31 @@ var (
 	speedTestEnabled  = flag.Bool("speed-test", false, "Run a download speed test through the relay")
 	speedTestURL      = flag.String("speed-test-url", "https://cachefly.cachefly.net/50mb.test", "URL used for the optional speed test")
 )
+
+func init() {
+	flag.Usage = func() {
+		out := flag.CommandLine.Output()
+		bin := os.Args[0]
+		fmt.Fprintf(out, "Usage: %s [flags]\n\n", bin)
+		fmt.Fprintln(out, "Inspect verifies the relay -> server path using config.client.json settings.")
+		fmt.Fprintln(out, "It opens one temporary relay session, measures relay ping, and can optionally run")
+		fmt.Fprintln(out, "a download speed test through the tunnel.")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Behavior:")
+		fmt.Fprintln(out, "- Reads relay/server/api_key/public_host settings from the client config.")
+		fmt.Fprintln(out, "- Tries agent_listen first; if furo-client is already using it, inspect falls back")
+		fmt.Fprintln(out, "  to a temporary free port and advertises that port to the relay.")
+		fmt.Fprintln(out, "- Reports the exact failure stage if setup breaks.")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Flags:")
+		flag.PrintDefaults()
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Examples:")
+		fmt.Fprintf(out, "  %s -c config.client.json\n", bin)
+		fmt.Fprintf(out, "  %s -c config.client.json --speed-test\n", bin)
+		fmt.Fprintf(out, "  %s -c config.client.json --speed-test --speed-test-url https://example.com/test.bin\n", bin)
+	}
+}
 
 type inspectClientConfig struct {
 	RelayURL    string `json:"relay_url"`
@@ -648,14 +674,14 @@ func inspectEncodeOpenPayload(host string, port uint16) []byte {
 	return payload
 }
 
-func inspectStartRelayRequest(ctx context.Context, cfg inspectClientConfig, sid string) <-chan inspectRelayResult {
+func inspectStartRelayRequest(ctx context.Context, cfg inspectClientConfig, sid string, clientPort int) <-chan inspectRelayResult {
 	results := make(chan inspectRelayResult, 1)
 	go func() {
 		values := url.Values{}
 		values.Set("action", "session")
 		values.Set("sid", sid)
 		values.Set("client_host", cfg.PublicHost)
-		values.Set("client_port", fmt.Sprintf("%d", cfg.PublicPort))
+		values.Set("client_port", fmt.Sprintf("%d", clientPort))
 		values.Set("server_host", cfg.ServerHost)
 		values.Set("server_port", fmt.Sprintf("%d", cfg.ServerPort))
 
@@ -727,6 +753,45 @@ func inspectStartRelayRequest(ctx context.Context, cfg inspectClientConfig, sid 
 		results <- inspectRelayResult{body: resp.Body}
 	}()
 	return results
+}
+
+func inspectListen(cfg inspectClientConfig) (net.Listener, int, string, error) {
+	ln, err := net.Listen("tcp", cfg.AgentListen)
+	if err == nil {
+		port := cfg.PublicPort
+		if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok && tcpAddr.Port != 0 {
+			port = tcpAddr.Port
+		}
+		return ln, port, fmt.Sprintf("listening on %s", ln.Addr().String()), nil
+	}
+	if !errors.Is(err, syscall.EADDRINUSE) {
+		return nil, 0, "", err
+	}
+
+	host, _, splitErr := net.SplitHostPort(cfg.AgentListen)
+	if splitErr != nil {
+		return nil, 0, "", fmt.Errorf("split %s: %w", cfg.AgentListen, splitErr)
+	}
+
+	fallbackAddr := net.JoinHostPort(host, "0")
+	ln, fallbackErr := net.Listen("tcp", fallbackAddr)
+	if fallbackErr != nil {
+		return nil, 0, "", fmt.Errorf("primary listen failed (%v), fallback listen on %s failed: %w", err, fallbackAddr, fallbackErr)
+	}
+
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok || tcpAddr.Port == 0 {
+		_ = ln.Close()
+		return nil, 0, "", fmt.Errorf("fallback listener returned unexpected addr %s", ln.Addr().String())
+	}
+
+	summary := fmt.Sprintf(
+		"primary %s is busy; using temporary listener %s and advertising public port %d",
+		cfg.AgentListen,
+		ln.Addr().String(),
+		tcpAddr.Port,
+	)
+	return ln, tcpAddr.Port, summary, nil
 }
 
 func inspectAttachRelay(conn net.Conn, apiKey, sid string) error {
@@ -860,19 +925,19 @@ func inspectRunSpeedTest(ctx context.Context, session *inspectSession, rawURL st
 func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.Duration, runSpeedTest bool, speedURL string) (*inspectReport, error) {
 	report := &inspectReport{}
 
-	ln, err := net.Listen("tcp", cfg.AgentListen)
+	ln, listenPort, listenSummary, err := inspectListen(cfg)
 	if err != nil {
 		return report, inspectStageError("listener bind", fmt.Errorf("listen on %s: %w", cfg.AgentListen, err))
 	}
 	defer ln.Close()
-	report.add("Listener", fmt.Sprintf("listening on %s", cfg.AgentListen))
+	report.add("Listener", listenSummary)
 
 	sid := fmt.Sprintf("inspect_%d", time.Now().UnixNano())
 	report.add("Session", sid)
 
 	relayCtx, relayCancel := context.WithCancel(ctx)
 	defer relayCancel()
-	relayResults := inspectStartRelayRequest(relayCtx, cfg, sid)
+	relayResults := inspectStartRelayRequest(relayCtx, cfg, sid, listenPort)
 
 	acceptCh := make(chan inspectAcceptResult, 1)
 	go func() {
