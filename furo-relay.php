@@ -10,6 +10,8 @@ $RELAY_API_KEY = 'my_super_secret_123456789';
 $RELAY_CONNECT_TIMEOUT_SEC = 8;
 $RELAY_IDLE_TIMEOUT_SEC = 300;
 $RELAY_BUFFER_SIZE = 256 * 1024;
+$RELAY_IO_CHUNK_SIZE = 128 * 1024;
+$RELAY_MAX_PENDING_BYTES = 4 * 1024 * 1024;
 $RELAY_ENABLE_LOGS = false;
 
 ignore_user_abort(true);
@@ -52,6 +54,18 @@ function isConnectInProgressError(int $errorCode): bool
 {
     $pending = [];
     foreach (['SOCKET_EINPROGRESS', 'SOCKET_EALREADY', 'SOCKET_EWOULDBLOCK'] as $name) {
+        if (defined($name)) {
+            $pending[] = constant($name);
+        }
+    }
+
+    return in_array($errorCode, $pending, true);
+}
+
+function isWouldBlockError(int $errorCode): bool
+{
+    $pending = [];
+    foreach (['SOCKET_EAGAIN', 'SOCKET_EWOULDBLOCK', 'SOCKET_EINPROGRESS'] as $name) {
         if (defined($name)) {
             $pending[] = constant($name);
         }
@@ -169,15 +183,71 @@ function closeSocket(?Socket $socket): void
     }
 }
 
-function bridgeSockets(Socket $left, Socket $right, int $bufferSize, int $idleTimeoutSec): array
+function setSocketNonBlocking(Socket $socket): void
+{
+    @socket_set_nonblock($socket);
+}
+
+function flushSocketBuffer(Socket $socket, string &$buffer, int $chunkSize): int
+{
+    $flushed = 0;
+    while ($buffer !== '') {
+        $writeLen = min(strlen($buffer), $chunkSize);
+        $written = @socket_write($socket, $buffer, $writeLen);
+        if ($written === false) {
+            $err = socket_last_error($socket);
+            if (isWouldBlockError($err)) {
+                return $flushed;
+            }
+            throw new RuntimeException('socket_write failed: ' . socket_strerror($err));
+        }
+        if ($written === 0) {
+            throw new RuntimeException('socket_write returned 0');
+        }
+
+        $flushed += $written;
+        if ($written === strlen($buffer)) {
+            $buffer = '';
+            return $flushed;
+        }
+        $buffer = (string)substr($buffer, $written);
+    }
+
+    return $flushed;
+}
+
+function bridgeSockets(Socket $left, Socket $right, int $bufferSize, int $idleTimeoutSec, int $chunkSize, int $maxPendingBytes): array
 {
     $leftToRight = 0;
     $rightToLeft = 0;
     $lastActivity = time();
+    $leftClosed = false;
+    $rightClosed = false;
+    $leftWriteShutdown = false;
+    $rightWriteShutdown = false;
+    $leftToRightBuffer = '';
+    $rightToLeftBuffer = '';
+
+    setSocketNonBlocking($left);
+    setSocketNonBlocking($right);
+    $chunkSize = max(4096, min($bufferSize, $chunkSize));
 
     while (true) {
-        $read = [$left, $right];
-        $write = null;
+        $read = [];
+        if (!$leftClosed && strlen($leftToRightBuffer) < $maxPendingBytes) {
+            $read[] = $left;
+        }
+        if (!$rightClosed && strlen($rightToLeftBuffer) < $maxPendingBytes) {
+            $read[] = $right;
+        }
+
+        $write = [];
+        if ($leftToRightBuffer !== '') {
+            $write[] = $right;
+        }
+        if ($rightToLeftBuffer !== '') {
+            $write[] = $left;
+        }
         $except = null;
         $changed = @socket_select($read, $write, $except, 1, 0);
         if ($changed === false) {
@@ -203,25 +273,68 @@ function bridgeSockets(Socket $left, Socket $right, int $bufferSize, int $idleTi
         }
 
         foreach ($read as $source) {
-            $data = @socket_read($source, $bufferSize, PHP_BINARY_READ);
-            if ($data === false || $data === '') {
-                shutdownWrite($left);
-                shutdownWrite($right);
-                return [
-                    'left_to_right_bytes' => $leftToRight,
-                    'right_to_left_bytes' => $rightToLeft,
-                    'reason' => $source === $left ? 'client-closed' : 'server-closed',
-                ];
+            $data = @socket_read($source, $chunkSize, PHP_BINARY_READ);
+            if ($data === false) {
+                $err = socket_last_error($source);
+                if (isWouldBlockError($err)) {
+                    continue;
+                }
+                throw new RuntimeException('socket_read failed: ' . socket_strerror($err));
+            }
+            if ($data === '') {
+                if ($source === $left) {
+                    $leftClosed = true;
+                    if ($leftToRightBuffer === '' && !$rightWriteShutdown) {
+                        shutdownWrite($right);
+                        $rightWriteShutdown = true;
+                    }
+                } else {
+                    $rightClosed = true;
+                    if ($rightToLeftBuffer === '' && !$leftWriteShutdown) {
+                        shutdownWrite($left);
+                        $leftWriteShutdown = true;
+                    }
+                }
+                continue;
             }
 
             $lastActivity = time();
             if ($source === $left) {
-                socket_write_all($right, $data);
                 $leftToRight += strlen($data);
+                $leftToRightBuffer .= $data;
             } else {
-                socket_write_all($left, $data);
                 $rightToLeft += strlen($data);
+                $rightToLeftBuffer .= $data;
             }
+        }
+
+        if ($leftToRightBuffer !== '') {
+            $written = flushSocketBuffer($right, $leftToRightBuffer, $chunkSize);
+            if ($written > 0) {
+                $lastActivity = time();
+            }
+            if ($leftClosed && $leftToRightBuffer === '' && !$rightWriteShutdown) {
+                shutdownWrite($right);
+                $rightWriteShutdown = true;
+            }
+        }
+        if ($rightToLeftBuffer !== '') {
+            $written = flushSocketBuffer($left, $rightToLeftBuffer, $chunkSize);
+            if ($written > 0) {
+                $lastActivity = time();
+            }
+            if ($rightClosed && $rightToLeftBuffer === '' && !$leftWriteShutdown) {
+                shutdownWrite($left);
+                $leftWriteShutdown = true;
+            }
+        }
+
+        if ($leftClosed && $rightClosed && $leftToRightBuffer === '' && $rightToLeftBuffer === '') {
+            return [
+                'left_to_right_bytes' => $leftToRight,
+                'right_to_left_bytes' => $rightToLeft,
+                'reason' => 'both-closed',
+            ];
         }
     }
 
@@ -305,7 +418,14 @@ try {
     @ob_flush();
     @flush();
 
-    $stats = bridgeSockets($clientSocket, $serverSocket, $RELAY_BUFFER_SIZE, $RELAY_IDLE_TIMEOUT_SEC);
+    $stats = bridgeSockets(
+        $clientSocket,
+        $serverSocket,
+        $RELAY_BUFFER_SIZE,
+        $RELAY_IDLE_TIMEOUT_SEC,
+        $RELAY_IO_CHUNK_SIZE,
+        $RELAY_MAX_PENDING_BYTES
+    );
     closeSocket($clientSocket);
     closeSocket($serverSocket);
     relayLog(sprintf(
