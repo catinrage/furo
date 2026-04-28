@@ -38,3 +38,4 @@ jobs:
           set -euo pipefail
           go build -o /tmp/furo-client ./furo-client.go
           go build -o /tmp/furo-server ./furo-server.go
+          go build -o /tmp/inspect ./inspect.go

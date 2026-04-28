@@ -78,6 +78,7 @@ jobs:
 
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-client" ./furo-client.go
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-server" ./furo-server.go
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/inspect" ./inspect.go
 
           cp furo-relay.php "${RELEASE_DIR}/"
           cp config.client.json.example "${RELEASE_DIR}/"

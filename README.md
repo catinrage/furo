@@ -136,6 +136,8 @@ Top-of-file variables in `furo-relay.php`:
 - `$RELAY_CONNECT_TIMEOUT_SEC`
 - `$RELAY_IDLE_TIMEOUT_SEC`
 - `$RELAY_BUFFER_SIZE`
+- `$RELAY_IO_CHUNK_SIZE`
+- `$RELAY_MAX_PENDING_BYTES`
 - `$RELAY_ENABLE_LOGS`
 
 ## Build
@@ -145,6 +147,7 @@ If `go` is on `PATH`:
 ```bash
 go build -o furo-client ./furo-client.go
 go build -o furo-server ./furo-server.go
+go build -o inspect ./inspect.go
 ```
 
 Print embedded build metadata:
@@ -152,6 +155,7 @@ Print embedded build metadata:
 ```bash
 ./furo-client --version
 ./furo-server --version
+./inspect --help
 ```
 
 ## Run
@@ -167,6 +171,15 @@ Client on the client-side VPS:
 ```bash
 ./furo-client -c config.client.json
 ```
+
+Relay path inspection from the client-side VPS:
+
+```bash
+./inspect -c config.client.json
+./inspect -c config.client.json --speed-test
+```
+
+`inspect` binds `agent_listen` itself, asks the relay for a single session, verifies the server-side `HELLO/HELLO_ACK`, reports relay ping, and optionally downloads `https://cachefly.cachefly.net/50mb.test` through the tunnel. If it fails, it reports the failing stage directly, for example relay request TLS failure, relay callback timeout, server handshake failure, or speed-test stream failure.
 
 Deploy `furo-relay.php` on the PHP host, then make sure `relay_url` in `config.client.json` points to the deployed URL.
 
@@ -229,7 +242,7 @@ Test layout:
 - `tests/integration`
   PHP relay validation tests
 - `tests/e2e`
-  Full-stack client + PHP relay + server tunnel test
+  Full-stack client + PHP relay + server tunnel tests, including the standalone `inspect` binary
 
 The integration and E2E suites require:
 
@@ -250,6 +263,7 @@ The tarball contains:
 
 - `furo-client`
 - `furo-server`
+- `inspect`
 - `furo-relay.php`
 - `config.client.json.example`
 - `config.server.json.example`
