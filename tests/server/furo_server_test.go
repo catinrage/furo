@@ -77,8 +77,15 @@ func TestServerSessionRegistrySnapshotsSorted(t *testing.T) {
 }
 
 func TestBuildServerStatusIncludesCounters(t *testing.T) {
-	t.Parallel()
-
+	originalStartedAt := serverStartedAt
+	originalAgentListen := agentListen
+	originalAdminListen := adminListen
+	originalDialTimeout := dialTimeout
+	originalMaxSessions := maxSessions
+	originalActiveSessions := activeSessions.Load()
+	originalAccepted := atomic.LoadUint64(&acceptedSessions)
+	originalRejected := atomic.LoadUint64(&rejectedSessions)
+	originalClosed := atomic.LoadUint64(&closedSessions)
 	serverStartedAt = time.Now().Add(-10 * time.Second)
 	agentListen = "0.0.0.0:28081"
 	adminListen = "127.0.0.1:19081"
@@ -92,6 +99,15 @@ func TestBuildServerStatusIncludesCounters(t *testing.T) {
 	originalRegistry := serverRegistry
 	serverRegistry = newServerSessionRegistry()
 	t.Cleanup(func() {
+		serverStartedAt = originalStartedAt
+		agentListen = originalAgentListen
+		adminListen = originalAdminListen
+		dialTimeout = originalDialTimeout
+		maxSessions = originalMaxSessions
+		activeSessions.Store(originalActiveSessions)
+		atomic.StoreUint64(&acceptedSessions, originalAccepted)
+		atomic.StoreUint64(&rejectedSessions, originalRejected)
+		atomic.StoreUint64(&closedSessions, originalClosed)
 		serverRegistry = originalRegistry
 	})
 
@@ -112,8 +128,6 @@ func TestBuildServerStatusIncludesCounters(t *testing.T) {
 }
 
 func TestReserveSessionSlotHonorsLimit(t *testing.T) {
-	t.Parallel()
-
 	originalMaxSessions := maxSessions
 	originalActive := activeSessions.Load()
 	t.Cleanup(func() {
