@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -58,7 +59,6 @@ const (
 var (
 	configPath      = flag.String("c", "config.client.json", "Path to client config JSON")
 	showVersion     = flag.Bool("version", false, "Print version and exit")
-	relayURL        string
 	apiKey          string
 	socksListen     string
 	agentListen     string
@@ -71,6 +71,10 @@ var (
 	keepalivePeriod time.Duration
 	sessionCount    int
 	logFilePath     string
+	clientID        string
+	routeSelection  routeSelectionStrategy
+	relayURL        string
+	clientRoutes    []clientRouteConfig
 )
 
 var (
@@ -80,35 +84,213 @@ var (
 )
 
 type clientConfigFile struct {
+	ClientID       string                  `json:"client_id"`
+	RouteSelection string                  `json:"route_selection"`
+	Routes         []clientRouteConfigFile `json:"routes"`
+	RelayURL       string                  `json:"relay_url"`
+	APIKey         string                  `json:"api_key"`
+	SOCKSListen    string                  `json:"socks_listen"`
+	AgentListen    string                  `json:"agent_listen"`
+	PublicHost     string                  `json:"public_host"`
+	PublicPort     int                     `json:"public_port"`
+	ServerHost     string                  `json:"server_host"`
+	ServerPort     int                     `json:"server_port"`
+	AdminListen    string                  `json:"admin_listen"`
+	OpenTimeout    string                  `json:"open_timeout"`
+	Keepalive      string                  `json:"keepalive"`
+	SessionCount   int                     `json:"session_count"`
+	LogFile        string                  `json:"log_file"`
+}
+
+type clientRouteConfigFile struct {
+	ID           string `json:"id"`
 	RelayURL     string `json:"relay_url"`
-	APIKey       string `json:"api_key"`
-	SOCKSListen  string `json:"socks_listen"`
-	AgentListen  string `json:"agent_listen"`
 	PublicHost   string `json:"public_host"`
 	PublicPort   int    `json:"public_port"`
 	ServerHost   string `json:"server_host"`
 	ServerPort   int    `json:"server_port"`
-	AdminListen  string `json:"admin_listen"`
-	OpenTimeout  string `json:"open_timeout"`
-	Keepalive    string `json:"keepalive"`
 	SessionCount int    `json:"session_count"`
-	LogFile      string `json:"log_file"`
+	Enabled      *bool  `json:"enabled"`
+}
+
+type routeSelectionStrategy string
+
+const (
+	routeSelectionRoundRobin routeSelectionStrategy = "round_robin"
+	routeSelectionRandom     routeSelectionStrategy = "random"
+	routeSelectionLeastLoad  routeSelectionStrategy = "least_load"
+	routeSelectionLeastRTT   routeSelectionStrategy = "least_latency"
+)
+
+type clientRouteConfig struct {
+	ID           string
+	RelayURL     string
+	PublicHost   string
+	PublicPort   int
+	ServerHost   string
+	ServerPort   int
+	SessionCount int
+	Enabled      bool
+}
+
+type clientRouteState struct {
+	cfg clientRouteConfig
+
+	latencyMicros int64
+}
+
+func (r *clientRouteState) observeRequestSuccess(duration time.Duration) {
+	if duration <= 0 {
+		return
+	}
+	sample := duration.Microseconds()
+	current := atomic.LoadInt64(&r.latencyMicros)
+	if current == 0 {
+		atomic.StoreInt64(&r.latencyMicros, sample)
+		return
+	}
+	atomic.StoreInt64(&r.latencyMicros, ((current*7)+sample)/8)
+}
+
+func (r *clientRouteState) latency() time.Duration {
+	micros := atomic.LoadInt64(&r.latencyMicros)
+	if micros <= 0 {
+		return 0
+	}
+	return time.Duration(micros) * time.Microsecond
 }
 
 func defaultClientConfig() clientConfigFile {
 	return clientConfigFile{
-		RelayURL:     "https://hidaco.site/tools/rel/soc/furo-relay.php",
-		APIKey:       "my_super_secret_123456789",
-		SOCKSListen:  "0.0.0.0:18713",
-		AgentListen:  "0.0.0.0:28080",
-		PublicPort:   28080,
-		ServerPort:   28081,
-		AdminListen:  "",
-		OpenTimeout:  "45s",
-		Keepalive:    "30s",
-		SessionCount: 8,
-		LogFile:      "",
+		RouteSelection: string(routeSelectionLeastLoad),
+		RelayURL:       "https://hidaco.site/tools/rel/soc/furo-relay.php",
+		APIKey:         "my_super_secret_123456789",
+		SOCKSListen:    "0.0.0.0:18713",
+		AgentListen:    "0.0.0.0:28080",
+		PublicPort:     28080,
+		ServerPort:     28081,
+		AdminListen:    "",
+		OpenTimeout:    "45s",
+		Keepalive:      "30s",
+		SessionCount:   8,
+		LogFile:        "",
 	}
+}
+
+func defaultClientID() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return "client"
+	}
+	return sanitizeSessionComponent(hostname)
+}
+
+func sanitizeSessionComponent(value string) string {
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '_' || r == '-' || r == '.':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func parseRouteSelection(value string) (routeSelectionStrategy, error) {
+	switch routeSelectionStrategy(value) {
+	case routeSelectionRoundRobin, routeSelectionRandom, routeSelectionLeastLoad, routeSelectionLeastRTT:
+		return routeSelectionStrategy(value), nil
+	default:
+		return "", fmt.Errorf("unsupported route_selection %q", value)
+	}
+}
+
+func buildClientRoutes(cfg clientConfigFile) ([]clientRouteConfig, int, error) {
+	if len(cfg.Routes) == 0 {
+		return []clientRouteConfig{{
+			ID:           "primary",
+			RelayURL:     cfg.RelayURL,
+			PublicHost:   cfg.PublicHost,
+			PublicPort:   cfg.PublicPort,
+			ServerHost:   cfg.ServerHost,
+			ServerPort:   cfg.ServerPort,
+			SessionCount: cfg.SessionCount,
+			Enabled:      true,
+		}}, cfg.SessionCount, nil
+	}
+
+	routes := make([]clientRouteConfig, 0, len(cfg.Routes))
+	totalSessions := 0
+	seenIDs := make(map[string]struct{}, len(cfg.Routes))
+	for idx, route := range cfg.Routes {
+		routeID := sanitizeSessionComponent(route.ID)
+		if routeID == "" {
+			routeID = fmt.Sprintf("route_%d", idx+1)
+		}
+		if _, exists := seenIDs[routeID]; exists {
+			return nil, 0, fmt.Errorf("duplicate route id %q", routeID)
+		}
+		seenIDs[routeID] = struct{}{}
+
+		enabled := true
+		if route.Enabled != nil {
+			enabled = *route.Enabled
+		}
+
+		publicHostValue := route.PublicHost
+		if publicHostValue == "" {
+			publicHostValue = cfg.PublicHost
+		}
+		publicPortValue := route.PublicPort
+		if publicPortValue == 0 {
+			publicPortValue = cfg.PublicPort
+		}
+
+		switch {
+		case route.RelayURL == "":
+			return nil, 0, fmt.Errorf("routes[%d].relay_url is required", idx)
+		case publicHostValue == "":
+			return nil, 0, fmt.Errorf("routes[%d].public_host is required", idx)
+		case publicPortValue < 1 || publicPortValue > 65535:
+			return nil, 0, fmt.Errorf("routes[%d].public_port must be between 1 and 65535", idx)
+		case route.ServerHost == "":
+			return nil, 0, fmt.Errorf("routes[%d].server_host is required", idx)
+		case route.ServerPort < 1 || route.ServerPort > 65535:
+			return nil, 0, fmt.Errorf("routes[%d].server_port must be between 1 and 65535", idx)
+		case route.SessionCount < 1:
+			return nil, 0, fmt.Errorf("routes[%d].session_count must be >= 1", idx)
+		}
+
+		routeCfg := clientRouteConfig{
+			ID:           routeID,
+			RelayURL:     route.RelayURL,
+			PublicHost:   publicHostValue,
+			PublicPort:   publicPortValue,
+			ServerHost:   route.ServerHost,
+			ServerPort:   route.ServerPort,
+			SessionCount: route.SessionCount,
+			Enabled:      enabled,
+		}
+		routes = append(routes, routeCfg)
+		if routeCfg.Enabled {
+			totalSessions += routeCfg.SessionCount
+		}
+	}
+
+	if totalSessions < 1 {
+		return nil, 0, errors.New("at least one enabled route with session_count >= 1 is required")
+	}
+	return routes, totalSessions, nil
 }
 
 func loadClientConfig(path string) error {
@@ -122,9 +304,6 @@ func loadClientConfig(path string) error {
 		return fmt.Errorf("parse config: %w", err)
 	}
 
-	if cfg.RelayURL == "" {
-		return errors.New("relay_url is required")
-	}
 	if cfg.APIKey == "" {
 		return errors.New("api_key is required")
 	}
@@ -134,22 +313,6 @@ func loadClientConfig(path string) error {
 	if cfg.AgentListen == "" {
 		return errors.New("agent_listen is required")
 	}
-	if cfg.PublicHost == "" {
-		return errors.New("public_host is required")
-	}
-	if cfg.PublicPort < 1 || cfg.PublicPort > 65535 {
-		return errors.New("public_port must be between 1 and 65535")
-	}
-	if cfg.ServerHost == "" {
-		return errors.New("server_host is required")
-	}
-	if cfg.ServerPort < 1 || cfg.ServerPort > 65535 {
-		return errors.New("server_port must be between 1 and 65535")
-	}
-	if cfg.SessionCount < 1 {
-		return errors.New("session_count must be >= 1")
-	}
-
 	parsedOpenTimeout, err := time.ParseDuration(cfg.OpenTimeout)
 	if err != nil {
 		return fmt.Errorf("parse open_timeout: %w", err)
@@ -159,19 +322,35 @@ func loadClientConfig(path string) error {
 		return fmt.Errorf("parse keepalive: %w", err)
 	}
 
-	relayURL = cfg.RelayURL
+	parsedRouteSelection, err := parseRouteSelection(cfg.RouteSelection)
+	if err != nil {
+		return err
+	}
+	parsedRoutes, totalSessions, err := buildClientRoutes(cfg)
+	if err != nil {
+		return err
+	}
+	resolvedClientID := sanitizeSessionComponent(cfg.ClientID)
+	if resolvedClientID == "" {
+		resolvedClientID = defaultClientID()
+	}
+
 	apiKey = cfg.APIKey
 	socksListen = cfg.SOCKSListen
 	agentListen = cfg.AgentListen
-	publicHost = cfg.PublicHost
-	publicPort = cfg.PublicPort
-	serverHost = cfg.ServerHost
-	serverPort = cfg.ServerPort
+	publicHost = parsedRoutes[0].PublicHost
+	publicPort = parsedRoutes[0].PublicPort
+	serverHost = parsedRoutes[0].ServerHost
+	serverPort = parsedRoutes[0].ServerPort
 	adminListen = cfg.AdminListen
 	openTimeout = parsedOpenTimeout
 	keepalivePeriod = parsedKeepalive
-	sessionCount = cfg.SessionCount
+	sessionCount = totalSessions
 	logFilePath = cfg.LogFile
+	clientID = resolvedClientID
+	routeSelection = parsedRouteSelection
+	relayURL = parsedRoutes[0].RelayURL
+	clientRoutes = parsedRoutes
 	return nil
 }
 
@@ -667,9 +846,10 @@ func (f *outboundFrame) finish(err error) {
 }
 
 type MuxSession struct {
-	pool *SessionPool
-	sid  string
-	idx  int
+	pool  *SessionPool
+	sid   string
+	idx   int
+	route *clientRouteState
 
 	mu                sync.Mutex
 	conn              net.Conn
@@ -701,9 +881,10 @@ type MuxSession struct {
 	lastRequestErr    string
 }
 
-func newMuxSession(pool *SessionPool, idx int, sid string) *MuxSession {
+func newMuxSession(pool *SessionPool, route *clientRouteState, idx int, sid string) *MuxSession {
 	return &MuxSession{
 		pool:       pool,
+		route:      route,
 		idx:        idx,
 		sid:        sid,
 		streams:    make(map[uint32]*MuxConn),
@@ -1259,18 +1440,18 @@ func (s *MuxSession) requestSession() {
 	values := url.Values{}
 	values.Set("action", "session")
 	values.Set("sid", s.sid)
-	values.Set("client_host", publicHost)
-	values.Set("client_port", fmt.Sprintf("%d", publicPort))
-	values.Set("server_host", serverHost)
-	values.Set("server_port", fmt.Sprintf("%d", serverPort))
+	values.Set("client_host", s.route.cfg.PublicHost)
+	values.Set("client_port", fmt.Sprintf("%d", s.route.cfg.PublicPort))
+	values.Set("server_host", s.route.cfg.ServerHost)
+	values.Set("server_port", fmt.Sprintf("%d", s.route.cfg.ServerPort))
 
 	requestCtx, cancel := context.WithTimeout(context.Background(), openTimeout+relayRequestTimeoutPad)
 	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, relayURL+"?"+values.Encode(), nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, s.route.cfg.RelayURL+"?"+values.Encode(), nil)
 	if err != nil {
 		delay := s.markRequestFailure(err.Error())
 		atomic.AddUint64(&relayRequestsFailed, 1)
-		logEvent("[CLIENT] session=%s request_build_failed next_retry_ms=%d err=%v", s.sid, delay.Milliseconds(), err)
+		logEvent("[CLIENT] route=%s session=%s request_build_failed next_retry_ms=%d err=%v", s.route.cfg.ID, s.sid, delay.Milliseconds(), err)
 		return
 	}
 	req.Header.Set("X-API-KEY", apiKey)
@@ -1281,7 +1462,7 @@ func (s *MuxSession) requestSession() {
 	if err != nil {
 		delay := s.markRequestFailure(err.Error())
 		atomic.AddUint64(&relayRequestsFailed, 1)
-		logEvent("[CLIENT] session=%s request_failed dur_ms=%d next_retry_ms=%d err=%v", s.sid, time.Since(start).Milliseconds(), delay.Milliseconds(), err)
+		logEvent("[CLIENT] route=%s session=%s request_failed dur_ms=%d next_retry_ms=%d err=%v", s.route.cfg.ID, s.sid, time.Since(start).Milliseconds(), delay.Milliseconds(), err)
 		return
 	}
 	defer resp.Body.Close()
@@ -1290,15 +1471,16 @@ func (s *MuxSession) requestSession() {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		delay := s.markRequestFailure(fmt.Sprintf("relay rejected with status %d", resp.StatusCode))
 		atomic.AddUint64(&relayRequestsRejected, 1)
-		logEvent("[CLIENT] session=%s request_rejected status=%d next_retry_ms=%d body=%q", s.sid, resp.StatusCode, delay.Milliseconds(), strings.TrimSpace(string(body)))
+		logEvent("[CLIENT] route=%s session=%s request_rejected status=%d next_retry_ms=%d body=%q", s.route.cfg.ID, s.sid, resp.StatusCode, delay.Milliseconds(), strings.TrimSpace(string(body)))
 		return
 	}
 
 	s.markRequestSuccess()
+	s.route.observeRequestSuccess(time.Since(start))
 	atomic.AddUint64(&relayRequestsSucceeded, 1)
-	logEvent("[CLIENT] session=%s request_ok dur_ms=%d", s.sid, time.Since(start).Milliseconds())
+	logEvent("[CLIENT] route=%s session=%s request_ok dur_ms=%d", s.route.cfg.ID, s.sid, time.Since(start).Milliseconds())
 	_, _ = io.Copy(io.Discard, resp.Body)
-	logEvent("[CLIENT] session=%s request_body_closed", s.sid)
+	logEvent("[CLIENT] route=%s session=%s request_body_closed", s.route.cfg.ID, s.sid)
 }
 
 func (s *MuxSession) loop() {
@@ -1330,11 +1512,12 @@ func (s *MuxSession) loop() {
 }
 
 type SessionPool struct {
-	sessions         map[string]*MuxSession
-	order            []*MuxSession
-	rr               uint32
-	stateChange      chan struct{}
-	reservedSessions int
+	sessions    map[string]*MuxSession
+	order       []*MuxSession
+	routes      []*clientRouteState
+	strategy    routeSelectionStrategy
+	rr          uint32
+	stateChange chan struct{}
 }
 
 type sessionLoadSnapshot struct {
@@ -1385,37 +1568,88 @@ type clientSessionStatus struct {
 	SlowWrites       uint64 `json:"slow_writes"`
 	LastFrameInUnix  int64  `json:"last_frame_in_unix"`
 	LastFrameOutUnix int64  `json:"last_frame_out_unix"`
+	RouteID          string `json:"route_id"`
 }
 
 type clientStatusResponse struct {
-	Service       string                  `json:"service"`
-	Version       string                  `json:"version"`
-	Commit        string                  `json:"commit"`
-	BuildDate     string                  `json:"build_date"`
-	StartedAt     string                  `json:"started_at"`
-	UptimeSec     int64                   `json:"uptime_sec"`
-	RelayURL      string                  `json:"relay_url"`
-	SOCKSListen   string                  `json:"socks_listen"`
-	AgentListen   string                  `json:"agent_listen"`
-	AdminListen   string                  `json:"admin_listen,omitempty"`
-	SessionCount  int                     `json:"session_count"`
-	RelayRequests clientRelayRequestStats `json:"relay_requests"`
-	Totals        clientTotals            `json:"totals"`
-	Sessions      []clientSessionStatus   `json:"sessions"`
+	Service        string                  `json:"service"`
+	Version        string                  `json:"version"`
+	Commit         string                  `json:"commit"`
+	BuildDate      string                  `json:"build_date"`
+	StartedAt      string                  `json:"started_at"`
+	UptimeSec      int64                   `json:"uptime_sec"`
+	RelayURL       string                  `json:"relay_url"`
+	SOCKSListen    string                  `json:"socks_listen"`
+	AgentListen    string                  `json:"agent_listen"`
+	AdminListen    string                  `json:"admin_listen,omitempty"`
+	ClientID       string                  `json:"client_id"`
+	RouteSelection string                  `json:"route_selection"`
+	SessionCount   int                     `json:"session_count"`
+	RelayRequests  clientRelayRequestStats `json:"relay_requests"`
+	Totals         clientTotals            `json:"totals"`
+	Routes         []clientRouteStatus     `json:"routes"`
+	Sessions       []clientSessionStatus   `json:"sessions"`
+}
+
+type clientRouteStatus struct {
+	RouteID            string `json:"route_id"`
+	RelayURL           string `json:"relay_url"`
+	ServerHost         string `json:"server_host"`
+	ServerPort         int    `json:"server_port"`
+	SessionCount       int    `json:"session_count"`
+	Enabled            bool   `json:"enabled"`
+	ConnectedSessions  int    `json:"connected_sessions"`
+	ReadySessions      int    `json:"ready_sessions"`
+	ActiveStreams      int    `json:"active_streams"`
+	PendingFrames      int64  `json:"pending_frames"`
+	PendingBytes       int64  `json:"pending_bytes"`
+	EstimatedLatencyMs int64  `json:"estimated_latency_ms"`
 }
 
 func newSessionPool(count int) *SessionPool {
-	p := &SessionPool{
-		sessions:         make(map[string]*MuxSession, count),
-		order:            make([]*MuxSession, 0, count),
-		stateChange:      make(chan struct{}, 1),
-		reservedSessions: reserveSessionCount(count),
+	defaultRoute := clientRouteConfig{
+		ID:           "primary",
+		RelayURL:     relayURL,
+		PublicHost:   publicHost,
+		PublicPort:   publicPort,
+		ServerHost:   serverHost,
+		ServerPort:   serverPort,
+		SessionCount: count,
+		Enabled:      true,
 	}
-	for i := 0; i < count; i++ {
-		sid := fmt.Sprintf("sess_%d", i+1)
-		s := newMuxSession(p, i, sid)
-		p.sessions[sid] = s
-		p.order = append(p.order, s)
+	return newSessionPoolForRoutes([]clientRouteConfig{defaultRoute}, routeSelectionLeastLoad)
+}
+
+func newSessionPoolForRoutes(routeCfgs []clientRouteConfig, strategy routeSelectionStrategy) *SessionPool {
+	resolvedClientID := clientID
+	if resolvedClientID == "" {
+		resolvedClientID = "client"
+	}
+	totalSessions := 0
+	for _, routeCfg := range routeCfgs {
+		if routeCfg.Enabled {
+			totalSessions += routeCfg.SessionCount
+		}
+	}
+	p := &SessionPool{
+		sessions:    make(map[string]*MuxSession, totalSessions),
+		order:       make([]*MuxSession, 0, totalSessions),
+		routes:      make([]*clientRouteState, 0, len(routeCfgs)),
+		strategy:    strategy,
+		stateChange: make(chan struct{}, 1),
+	}
+	for _, routeCfg := range routeCfgs {
+		routeState := &clientRouteState{cfg: routeCfg}
+		p.routes = append(p.routes, routeState)
+		if !routeCfg.Enabled {
+			continue
+		}
+		for i := 0; i < routeCfg.SessionCount; i++ {
+			sid := fmt.Sprintf("%s__%s__sess_%d", resolvedClientID, routeCfg.ID, i+1)
+			s := newMuxSession(p, routeState, i, sid)
+			p.sessions[sid] = s
+			p.order = append(p.order, s)
+		}
 	}
 	return p
 }
@@ -1470,6 +1704,7 @@ func (s *MuxSession) snapshot() clientSessionStatus {
 
 	status := clientSessionStatus{
 		SessionID:        s.sid,
+		RouteID:          s.route.cfg.ID,
 		Connected:        connected,
 		Ready:            ready,
 		RequestRunning:   running,
@@ -1495,24 +1730,41 @@ func (s *MuxSession) snapshot() clientSessionStatus {
 
 func buildClientStatus(pool *SessionPool) clientStatusResponse {
 	status := clientStatusResponse{
-		Service:      "furo-client",
-		Version:      appVersion,
-		Commit:       appCommit,
-		BuildDate:    appBuildDate,
-		StartedAt:    clientStartedAt.UTC().Format(time.RFC3339),
-		UptimeSec:    int64(time.Since(clientStartedAt).Seconds()),
-		RelayURL:     relayURL,
-		SOCKSListen:  socksListen,
-		AgentListen:  agentListen,
-		AdminListen:  adminListen,
-		SessionCount: sessionCount,
+		Service:        "furo-client",
+		Version:        appVersion,
+		Commit:         appCommit,
+		BuildDate:      appBuildDate,
+		StartedAt:      clientStartedAt.UTC().Format(time.RFC3339),
+		UptimeSec:      int64(time.Since(clientStartedAt).Seconds()),
+		RelayURL:       relayURL,
+		SOCKSListen:    socksListen,
+		AgentListen:    agentListen,
+		AdminListen:    adminListen,
+		ClientID:       clientID,
+		RouteSelection: string(pool.strategy),
+		SessionCount:   sessionCount,
 		RelayRequests: clientRelayRequestStats{
 			Started:   atomic.LoadUint64(&relayRequestsStarted),
 			Succeeded: atomic.LoadUint64(&relayRequestsSucceeded),
 			Failed:    atomic.LoadUint64(&relayRequestsFailed),
 			Rejected:  atomic.LoadUint64(&relayRequestsRejected),
 		},
+		Routes:   make([]clientRouteStatus, len(pool.routes)),
 		Sessions: make([]clientSessionStatus, 0, len(pool.order)),
+	}
+
+	routeStatusByID := make(map[string]*clientRouteStatus, len(pool.routes))
+	for idx, route := range pool.routes {
+		status.Routes[idx] = clientRouteStatus{
+			RouteID:            route.cfg.ID,
+			RelayURL:           route.cfg.RelayURL,
+			ServerHost:         route.cfg.ServerHost,
+			ServerPort:         route.cfg.ServerPort,
+			SessionCount:       route.cfg.SessionCount,
+			Enabled:            route.cfg.Enabled,
+			EstimatedLatencyMs: route.latency().Milliseconds(),
+		}
+		routeStatusByID[route.cfg.ID] = &status.Routes[idx]
 	}
 
 	for _, session := range pool.order {
@@ -1532,6 +1784,17 @@ func buildClientStatus(pool *SessionPool) clientStatusResponse {
 		status.Totals.BytesIn += snapshot.BytesIn
 		status.Totals.BytesOut += snapshot.BytesOut
 		status.Totals.SlowWrites += snapshot.SlowWrites
+		if routeStatus := routeStatusByID[snapshot.RouteID]; routeStatus != nil {
+			if snapshot.Connected {
+				routeStatus.ConnectedSessions++
+			}
+			if snapshot.Ready {
+				routeStatus.ReadySessions++
+			}
+			routeStatus.ActiveStreams += snapshot.ActiveStreams
+			routeStatus.PendingFrames += snapshot.PendingFrames
+			routeStatus.PendingBytes += snapshot.PendingBytes
+		}
 	}
 
 	return status
@@ -1595,26 +1858,29 @@ func (s *MuxSession) loadSnapshot() sessionLoadSnapshot {
 	}
 }
 
-func (snap sessionLoadSnapshot) isIdle() bool {
-	return snap.activeStreams == 0 && snap.pendingBytes == 0 && snap.pendingFrames == 0
+func (p *SessionPool) readySnapshotsForRoute(route *clientRouteState) ([]sessionLoadSnapshot, int) {
+	ready := make([]sessionLoadSnapshot, 0, route.cfg.SessionCount)
+	idleCount := 0
+	for _, session := range p.order {
+		if session.route != route {
+			continue
+		}
+		snapshot := session.loadSnapshot()
+		if snapshot.session == nil {
+			continue
+		}
+		if snapshot.isIdle() {
+			idleCount++
+		}
+		ready = append(ready, snapshot)
+	}
+	return ready, idleCount
 }
 
-func (snap sessionLoadSnapshot) score() int64 {
-	score := snap.pendingBytes + int64(snap.activeStreams*adaptiveFramePayload(snap.activeStreams, snap.pendingBytes)) + snap.pendingFrames*1024
-	if snap.requestFailures > 0 {
-		score += int64(snap.requestFailures) * 64 * 1024
-	}
-	if snap.lastSlowWriteUnix != 0 && time.Since(time.Unix(snap.lastSlowWriteUnix, 0)) < recentSlowPenaltyAge {
-		score += 64 * 1024
-	}
-	return score
-}
-
-func (p *SessionPool) pickLeastLoaded(candidates []sessionLoadSnapshot) *MuxSession {
+func (p *SessionPool) pickLeastLoadedSnapshot(candidates []sessionLoadSnapshot) (sessionLoadSnapshot, bool) {
 	if len(candidates) == 0 {
-		return nil
+		return sessionLoadSnapshot{}, false
 	}
-
 	start := 0
 	if len(candidates) > 1 {
 		start = int(atomic.AddUint32(&p.rr, 1)) % len(candidates)
@@ -1630,39 +1896,104 @@ func (p *SessionPool) pickLeastLoaded(candidates []sessionLoadSnapshot) *MuxSess
 			best = candidate
 		}
 	}
-	return best.session
+	return best, true
 }
 
-func (p *SessionPool) selectReadySession() (*MuxSession, int) {
-	ready := make([]sessionLoadSnapshot, 0, len(p.order))
-	idleCount := 0
-	for _, session := range p.order {
-		snapshot := session.loadSnapshot()
-		if snapshot.session == nil {
-			continue
-		}
-		if snapshot.isIdle() {
-			idleCount++
-		}
-		ready = append(ready, snapshot)
+func (snap sessionLoadSnapshot) isIdle() bool {
+	return snap.activeStreams == 0 && snap.pendingBytes == 0 && snap.pendingFrames == 0
+}
+
+func (snap sessionLoadSnapshot) score() int64 {
+	score := snap.pendingBytes + int64(snap.activeStreams*adaptiveFramePayload(snap.activeStreams, snap.pendingBytes)) + snap.pendingFrames*1024
+	if snap.requestFailures > 0 {
+		score += int64(snap.requestFailures) * 64 * 1024
 	}
+	if snap.lastSlowWriteUnix != 0 && time.Since(time.Unix(snap.lastSlowWriteUnix, 0)) < recentSlowPenaltyAge {
+		score += 64 * 1024
+	}
+	return score
+}
+
+func (p *SessionPool) selectReadySnapshotForRoute(route *clientRouteState) (sessionLoadSnapshot, int, bool) {
+	ready, idleCount := p.readySnapshotsForRoute(route)
 	if len(ready) == 0 {
-		return nil, 0
+		return sessionLoadSnapshot{}, 0, false
 	}
 
-	if p.reservedSessions > 0 && idleCount > p.reservedSessions {
+	reservedSessions := reserveSessionCount(route.cfg.SessionCount)
+	if reservedSessions > 0 && idleCount > reservedSessions {
 		warm := make([]sessionLoadSnapshot, 0, len(ready))
 		for _, snapshot := range ready {
 			if !snapshot.isIdle() {
 				warm = append(warm, snapshot)
 			}
 		}
-		if chosen := p.pickLeastLoaded(warm); chosen != nil {
-			return chosen, len(ready)
+		if chosen, ok := p.pickLeastLoadedSnapshot(warm); ok {
+			return chosen, len(ready), true
 		}
 	}
 
-	return p.pickLeastLoaded(ready), len(ready)
+	chosen, ok := p.pickLeastLoadedSnapshot(ready)
+	return chosen, len(ready), ok
+}
+
+type routeCandidate struct {
+	route      *clientRouteState
+	snapshot   sessionLoadSnapshot
+	readyCount int
+}
+
+func (p *SessionPool) selectReadySession() (*MuxSession, int) {
+	candidates := make([]routeCandidate, 0, len(p.routes))
+	totalReady := 0
+	for _, route := range p.routes {
+		if !route.cfg.Enabled {
+			continue
+		}
+		snapshot, readyCount, ok := p.selectReadySnapshotForRoute(route)
+		totalReady += readyCount
+		if !ok {
+			continue
+		}
+		candidates = append(candidates, routeCandidate{route: route, snapshot: snapshot, readyCount: readyCount})
+	}
+	if len(candidates) == 0 {
+		return nil, totalReady
+	}
+
+	var chosen routeCandidate
+	switch p.strategy {
+	case routeSelectionRoundRobin:
+		chosen = candidates[int(atomic.AddUint32(&p.rr, 1))%len(candidates)]
+	case routeSelectionRandom:
+		chosen = candidates[rand.Intn(len(candidates))]
+	case routeSelectionLeastRTT:
+		chosen = candidates[0]
+		for _, candidate := range candidates[1:] {
+			chosenLatency := chosen.route.latency()
+			candidateLatency := candidate.route.latency()
+			switch {
+			case chosenLatency == 0 && candidateLatency > 0:
+				chosen = candidate
+			case candidateLatency > 0 && candidateLatency < chosenLatency:
+				chosen = candidate
+			case candidateLatency == chosenLatency && candidate.snapshot.score() < chosen.snapshot.score():
+				chosen = candidate
+			}
+		}
+	default:
+		chosen = candidates[0]
+		for _, candidate := range candidates[1:] {
+			if candidate.snapshot.score() < chosen.snapshot.score() {
+				chosen = candidate
+				continue
+			}
+			if candidate.snapshot.score() == chosen.snapshot.score() && candidate.snapshot.activeStreams < chosen.snapshot.activeStreams {
+				chosen = candidate
+			}
+		}
+	}
+	return chosen.snapshot.session, totalReady
 }
 
 func (p *SessionPool) chooseReadySession(ctx context.Context) (*MuxSession, error) {
@@ -1778,9 +2109,10 @@ func main() {
 		log.Printf("[FURO-CLIENT] debug log file: %s", logFilePath)
 	}
 
+	rand.Seed(time.Now().UnixNano())
 	httpClient.Transport.(*http.Transport).ResponseHeaderTimeout = openTimeout
-	pool := newSessionPool(sessionCount)
-	logEvent("[CLIENT] startup version=%s relay=%s socks_listen=%s agent_listen=%s admin_listen=%s public=%s:%d server=%s:%d open_timeout=%s session_count=%d", appVersion, relayURL, socksListen, agentListen, adminListen, publicHost, publicPort, serverHost, serverPort, openTimeout.String(), sessionCount)
+	pool := newSessionPoolForRoutes(clientRoutes, routeSelection)
+	logEvent("[CLIENT] startup version=%s client_id=%s route_selection=%s routes=%d socks_listen=%s agent_listen=%s admin_listen=%s open_timeout=%s session_count=%d", appVersion, clientID, routeSelection, len(clientRoutes), socksListen, agentListen, adminListen, openTimeout.String(), sessionCount)
 
 	go func() {
 		if err := runAgentListener(pool); err != nil {

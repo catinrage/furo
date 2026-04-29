@@ -1,15 +1,31 @@
 {
-  "relay_url": "https://hidaco.site/tools/rel/soc/furo-relay.php",
+  "client_id": "client-tehran-1",
+  "route_selection": "least_load",
   "api_key": "my_super_secret_123456789",
   "socks_listen": "0.0.0.0:18713",
   "agent_listen": "0.0.0.0:28080",
   "public_host": "37.32.14.205",
   "public_port": 28080,
-  "server_host": "185.250.41.30",
-  "server_port": 28081,
   "admin_listen": "127.0.0.1:19080",
   "open_timeout": "45s",
   "keepalive": "30s",
-  "session_count": 8,
-  "log_file": ""
+  "log_file": "",
+  "routes": [
+    {
+      "id": "relay-primary",
+      "relay_url": "https://hidaco.site/tools/rel/soc/furo-relay.php",
+      "server_host": "185.250.41.30",
+      "server_port": 28081,
+      "session_count": 4,
+      "enabled": true
+    },
+    {
+      "id": "relay-backup",
+      "relay_url": "https://backup.example.com/furo-relay.php",
+      "server_host": "203.0.113.20",
+      "server_port": 28081,
+      "session_count": 4,
+      "enabled": true
+    }
+  ]
 }

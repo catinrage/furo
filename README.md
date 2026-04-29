@@ -42,7 +42,7 @@ Application / Browser / Xray / 3x-ui
 
 ## Protocol
 
-1. `furo-client` keeps `session_count` relay requests open against `furo-relay.php`.
+1. `furo-client` keeps a pool of relay requests open against `furo-relay.php`, split across one or more configured routes.
 2. For each request, `furo-relay.php` connects back to the client agent port and the server agent port.
 3. Both Go binaries authenticate the session with the shared `api_key`.
 4. Streams are multiplexed over the session using binary frames:
@@ -86,8 +86,11 @@ cp config.server.json.example config.server.json
 
 Key fields in `config.client.json`:
 
-- `relay_url`
-  URL of the deployed `furo-relay.php`.
+- `client_id`
+  Stable client identifier used as part of generated session ids. Set this when multiple client instances may share the same relay and server backend.
+- `route_selection`
+  How FURO chooses among healthy ready routes. Supported values:
+  `round_robin`, `random`, `least_load`, `least_latency`.
 - `api_key`
   Shared secret. Must match the server and relay.
 - `socks_listen`
@@ -95,19 +98,36 @@ Key fields in `config.client.json`:
 - `agent_listen`
   TCP listener that the PHP host connects back to.
 - `public_host` / `public_port`
-  Public address of the client agent as seen by the PHP host.
-- `server_host` / `server_port`
-  Public address of the server agent as seen by the PHP host.
+  Public callback address of the client agent as seen by the PHP host. This is the default for all routes unless a route overrides it.
 - `admin_listen`
   Optional local admin HTTP listener. Recommended on loopback only.
 - `open_timeout`
   Timeout for relay HTTP response headers and stream open waits.
 - `keepalive`
   TCP keepalive period for session and stream sockets.
-- `session_count`
-  Number of multiplexed sessions to keep open.
 - `log_file`
   Optional debug log path. Empty disables debug logs.
+- `routes`
+  List of `relay -> server` paths that the client may use.
+
+Each route entry supports:
+
+- `id`
+  Route identifier used in status output and `inspect --route-id`.
+- `relay_url`
+  URL of the deployed `furo-relay.php` for that route.
+- `server_host` / `server_port`
+  Public address of the server agent for that route, as seen by the PHP host.
+- `session_count`
+  Number of multiplexed sessions to keep open on that route.
+- `enabled`
+  Whether the route should be used.
+- `public_host` / `public_port`
+  Optional per-route override for the client callback address. If omitted, the top-level values are used.
+
+Route selection always filters to healthy ready paths first, so dead routes automatically drop out of consideration. `least_load` chooses the least busy ready session, while `least_latency` chooses the route with the best recent relay request latency and then the least busy session on that route.
+
+Legacy single-route configs using top-level `relay_url`, `server_host`, `server_port`, and `session_count` are still accepted for backward compatibility.
 
 ### Server config
 
@@ -124,7 +144,7 @@ Key fields in `config.server.json`:
 - `keepalive`
   TCP keepalive period for server-side sockets.
 - `max_sessions`
-  Maximum active relay sessions. If `inspect` may run while `furo-client` is already running, set this above the client `session_count` so one extra session remains available.
+  Maximum active relay sessions. Set this above the total client-side sessions across all enabled routes if `inspect` may run while `furo-client` is already running, so one extra session remains available.
 - `log_file`
   Optional debug log path. Empty disables debug logs.
 
@@ -176,6 +196,7 @@ Relay path inspection from the client-side VPS:
 
 ```bash
 ./inspect -c config.client.json
+./inspect -c config.client.json --route-id relay-primary
 ./inspect -c config.client.json --speed-test
 ./inspect -c config.client.json --speed-test --speed-test-url https://example.com/test.bin
 ./inspect --help
@@ -183,7 +204,7 @@ Relay path inspection from the client-side VPS:
 
 `inspect` binds `agent_listen` itself, asks the relay for a single session, verifies the server-side `HELLO/HELLO_ACK`, reports relay ping, and optionally downloads `https://nbg1-speed.hetzner.com/100MB.bin` through the tunnel. If it fails, it reports the failing stage directly, for example relay request TLS failure, relay callback timeout, server handshake failure, or speed-test stream failure.
 
-If `furo-client` is already running, `inspect` will first try `agent_listen` and then fall back to a temporary free port if that listener is busy. The server still needs spare session capacity for this extra inspection session, so keep `max_sessions` above the client `session_count`.
+If `furo-client` is already running, `inspect` will first try `agent_listen` and then fall back to a temporary free port if that listener is busy. The server still needs spare session capacity for this extra inspection session, so keep `max_sessions` above the client session total across all enabled routes. When `routes` are present, `inspect` uses the first enabled route by default, or a specific route when `--route-id` is passed.
 
 Deploy `furo-relay.php` on the PHP host, then make sure `relay_url` in `config.client.json` points to the deployed URL.
 
@@ -206,6 +227,7 @@ curl http://127.0.0.1:19081/status
 The client status includes:
 
 - ready and connected session counts
+- configured route selection and per-route health snapshots
 - per-session reconnect backoff state
 - relay request success/failure counters
 - stream, frame, byte, and slow-write counters
@@ -241,6 +263,8 @@ Test layout:
 
 - `tests/client`
   Unit tests for `furo-client.go`
+- `tests/inspect`
+  Unit tests for `inspect.go`
 - `tests/server`
   Unit tests for `furo-server.go`
 - `tests/integration`

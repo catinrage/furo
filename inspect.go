@@ -44,6 +44,7 @@ const (
 
 var (
 	inspectConfigPath = flag.String("c", "config.client.json", "Path to client config JSON")
+	inspectRouteID    = flag.String("route-id", "", "Route id to inspect when config.client.json contains multiple routes")
 	speedTestEnabled  = flag.Bool("speed-test", false, "Run a download speed test through the relay")
 	speedTestURL      = flag.String("speed-test-url", "https://nbg1-speed.hetzner.com/100MB.bin", "URL used for the optional speed test")
 )
@@ -68,21 +69,34 @@ func init() {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "Examples:")
 		fmt.Fprintf(out, "  %s -c config.client.json\n", bin)
+		fmt.Fprintf(out, "  %s -c config.client.json --route-id route_1\n", bin)
 		fmt.Fprintf(out, "  %s -c config.client.json --speed-test\n", bin)
 		fmt.Fprintf(out, "  %s -c config.client.json --speed-test --speed-test-url https://example.com/test.bin\n", bin)
 	}
 }
 
 type inspectClientConfig struct {
-	RelayURL    string `json:"relay_url"`
-	APIKey      string `json:"api_key"`
-	AgentListen string `json:"agent_listen"`
-	PublicHost  string `json:"public_host"`
-	PublicPort  int    `json:"public_port"`
-	ServerHost  string `json:"server_host"`
-	ServerPort  int    `json:"server_port"`
-	OpenTimeout string `json:"open_timeout"`
-	Keepalive   string `json:"keepalive"`
+	Routes      []inspectRouteConfigFile `json:"routes"`
+	RelayURL    string                   `json:"relay_url"`
+	APIKey      string                   `json:"api_key"`
+	AgentListen string                   `json:"agent_listen"`
+	PublicHost  string                   `json:"public_host"`
+	PublicPort  int                      `json:"public_port"`
+	ServerHost  string                   `json:"server_host"`
+	ServerPort  int                      `json:"server_port"`
+	OpenTimeout string                   `json:"open_timeout"`
+	Keepalive   string                   `json:"keepalive"`
+}
+
+type inspectRouteConfigFile struct {
+	ID           string `json:"id"`
+	RelayURL     string `json:"relay_url"`
+	PublicHost   string `json:"public_host"`
+	PublicPort   int    `json:"public_port"`
+	ServerHost   string `json:"server_host"`
+	ServerPort   int    `json:"server_port"`
+	SessionCount int    `json:"session_count"`
+	Enabled      *bool  `json:"enabled"`
 }
 
 type inspectRelayResult struct {
@@ -675,21 +689,11 @@ func inspectLoadClientConfig(path string) (inspectClientConfig, time.Duration, e
 		return inspectClientConfig{}, 0, fmt.Errorf("parse config: %w", err)
 	}
 
-	switch {
-	case cfg.RelayURL == "":
-		return inspectClientConfig{}, 0, errors.New("relay_url is required")
-	case cfg.APIKey == "":
+	if cfg.APIKey == "" {
 		return inspectClientConfig{}, 0, errors.New("api_key is required")
-	case cfg.AgentListen == "":
+	}
+	if cfg.AgentListen == "" {
 		return inspectClientConfig{}, 0, errors.New("agent_listen is required")
-	case cfg.PublicHost == "":
-		return inspectClientConfig{}, 0, errors.New("public_host is required")
-	case cfg.PublicPort < 1 || cfg.PublicPort > 65535:
-		return inspectClientConfig{}, 0, errors.New("public_port must be between 1 and 65535")
-	case cfg.ServerHost == "":
-		return inspectClientConfig{}, 0, errors.New("server_host is required")
-	case cfg.ServerPort < 1 || cfg.ServerPort > 65535:
-		return inspectClientConfig{}, 0, errors.New("server_port must be between 1 and 65535")
 	}
 
 	openTimeout, err := time.ParseDuration(cfg.OpenTimeout)
@@ -699,7 +703,69 @@ func inspectLoadClientConfig(path string) (inspectClientConfig, time.Duration, e
 	if _, err := time.ParseDuration(cfg.Keepalive); err != nil {
 		return inspectClientConfig{}, 0, fmt.Errorf("parse keepalive: %w", err)
 	}
+
+	if len(cfg.Routes) > 0 {
+		selected, err := inspectSelectRoute(cfg, *inspectRouteID)
+		if err != nil {
+			return inspectClientConfig{}, 0, err
+		}
+		cfg.RelayURL = selected.RelayURL
+		cfg.PublicHost = selected.PublicHost
+		cfg.PublicPort = selected.PublicPort
+		cfg.ServerHost = selected.ServerHost
+		cfg.ServerPort = selected.ServerPort
+	}
+
+	switch {
+	case cfg.RelayURL == "":
+		return inspectClientConfig{}, 0, errors.New("relay_url is required")
+	case cfg.PublicHost == "":
+		return inspectClientConfig{}, 0, errors.New("public_host is required")
+	case cfg.PublicPort < 1 || cfg.PublicPort > 65535:
+		return inspectClientConfig{}, 0, errors.New("public_port must be between 1 and 65535")
+	case cfg.ServerHost == "":
+		return inspectClientConfig{}, 0, errors.New("server_host is required")
+	case cfg.ServerPort < 1 || cfg.ServerPort > 65535:
+		return inspectClientConfig{}, 0, errors.New("server_port must be between 1 and 65535")
+	}
 	return cfg, openTimeout, nil
+}
+
+func inspectSelectRoute(cfg inspectClientConfig, requestedID string) (inspectRouteConfigFile, error) {
+	var fallback inspectRouteConfigFile
+	foundFallback := false
+	for idx, route := range cfg.Routes {
+		enabled := true
+		if route.Enabled != nil {
+			enabled = *route.Enabled
+		}
+		if !enabled {
+			continue
+		}
+		if route.PublicHost == "" {
+			route.PublicHost = cfg.PublicHost
+		}
+		if route.PublicPort == 0 {
+			route.PublicPort = cfg.PublicPort
+		}
+		if route.ID == "" {
+			route.ID = fmt.Sprintf("route_%d", idx+1)
+		}
+		if requestedID != "" && route.ID == requestedID {
+			return route, nil
+		}
+		if !foundFallback {
+			fallback = route
+			foundFallback = true
+		}
+	}
+	if requestedID != "" {
+		return inspectRouteConfigFile{}, fmt.Errorf("route_id %q not found or not enabled", requestedID)
+	}
+	if !foundFallback {
+		return inspectRouteConfigFile{}, errors.New("no enabled routes found in config")
+	}
+	return fallback, nil
 }
 
 func inspectReadLine(conn net.Conn, limit int) (string, error) {

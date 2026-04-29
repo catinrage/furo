@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,7 +142,8 @@ func TestSelectReadySessionPreservesReserveCapacity(t *testing.T) {
 func TestMuxSessionPopDataFrameFairness(t *testing.T) {
 	t.Parallel()
 
-	session := newMuxSession(newSessionPool(1), 0, "sess_1")
+	pool := newSessionPool(1)
+	session := newMuxSession(pool, pool.routes[0], 0, "sess_1")
 	session.mu.Lock()
 	session.conn = &stubConn{}
 	session.ready = true
@@ -181,8 +184,35 @@ func TestMuxSessionPopDataFrameFairness(t *testing.T) {
 }
 
 func TestBuildClientStatusAggregatesSessions(t *testing.T) {
-	t.Parallel()
+	originalClientID := clientID
+	originalRouteSelection := routeSelection
+	originalRelayURL := relayURL
+	originalSocksListen := socksListen
+	originalAgentListen := agentListen
+	originalAdminListen := adminListen
+	originalSessionCount := sessionCount
+	originalStartedAt := clientStartedAt
+	originalStarted := atomic.LoadUint64(&relayRequestsStarted)
+	originalSucceeded := atomic.LoadUint64(&relayRequestsSucceeded)
+	originalFailed := atomic.LoadUint64(&relayRequestsFailed)
+	originalRejected := atomic.LoadUint64(&relayRequestsRejected)
+	t.Cleanup(func() {
+		clientID = originalClientID
+		routeSelection = originalRouteSelection
+		relayURL = originalRelayURL
+		socksListen = originalSocksListen
+		agentListen = originalAgentListen
+		adminListen = originalAdminListen
+		sessionCount = originalSessionCount
+		clientStartedAt = originalStartedAt
+		atomic.StoreUint64(&relayRequestsStarted, originalStarted)
+		atomic.StoreUint64(&relayRequestsSucceeded, originalSucceeded)
+		atomic.StoreUint64(&relayRequestsFailed, originalFailed)
+		atomic.StoreUint64(&relayRequestsRejected, originalRejected)
+	})
 
+	clientID = "client-test"
+	routeSelection = routeSelectionLeastLoad
 	relayURL = "https://relay.example/furo-relay.php"
 	socksListen = "127.0.0.1:18713"
 	agentListen = "0.0.0.0:28080"
@@ -246,6 +276,154 @@ func TestBuildClientStatusAggregatesSessions(t *testing.T) {
 	}
 	if status.Sessions[1].RetryDelayMs != 4000 {
 		t.Fatalf("second session retry delay = %d, want 4000", status.Sessions[1].RetryDelayMs)
+	}
+	if status.RouteSelection != string(routeSelectionLeastLoad) {
+		t.Fatalf("route selection = %q, want %q", status.RouteSelection, routeSelectionLeastLoad)
+	}
+	if len(status.Routes) != 1 || status.Routes[0].RouteID != "primary" {
+		t.Fatalf("unexpected route status = %#v", status.Routes)
+	}
+}
+
+func TestLoadClientConfigRoutes(t *testing.T) {
+	originalClientID := clientID
+	originalRouteSelection := routeSelection
+	originalRoutes := clientRoutes
+	originalRelayURL := relayURL
+	originalAPIKey := apiKey
+	originalSocksListen := socksListen
+	originalAgentListen := agentListen
+	originalPublicHost := publicHost
+	originalPublicPort := publicPort
+	originalServerHost := serverHost
+	originalServerPort := serverPort
+	originalAdminListen := adminListen
+	originalOpenTimeout := openTimeout
+	originalKeepalive := keepalivePeriod
+	originalSessionCount := sessionCount
+	originalLogFilePath := logFilePath
+	t.Cleanup(func() {
+		clientID = originalClientID
+		routeSelection = originalRouteSelection
+		clientRoutes = originalRoutes
+		relayURL = originalRelayURL
+		apiKey = originalAPIKey
+		socksListen = originalSocksListen
+		agentListen = originalAgentListen
+		publicHost = originalPublicHost
+		publicPort = originalPublicPort
+		serverHost = originalServerHost
+		serverPort = originalServerPort
+		adminListen = originalAdminListen
+		openTimeout = originalOpenTimeout
+		keepalivePeriod = originalKeepalive
+		sessionCount = originalSessionCount
+		logFilePath = originalLogFilePath
+	})
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.client.json")
+	payload := `{
+  "client_id": "client-a",
+  "route_selection": "least_latency",
+  "api_key": "secret",
+  "socks_listen": "127.0.0.1:18713",
+  "agent_listen": "0.0.0.0:28080",
+  "public_host": "198.51.100.10",
+  "public_port": 28080,
+  "admin_listen": "127.0.0.1:19080",
+  "open_timeout": "12s",
+  "keepalive": "7s",
+  "log_file": "",
+  "routes": [
+    {
+      "id": "relay_a",
+      "relay_url": "https://relay-a.example/furo.php",
+      "server_host": "203.0.113.10",
+      "server_port": 8443,
+      "session_count": 2
+    },
+    {
+      "id": "relay_b",
+      "relay_url": "https://relay-b.example/furo.php",
+      "public_host": "198.51.100.11",
+      "public_port": 29080,
+      "server_host": "203.0.113.11",
+      "server_port": 9443,
+      "session_count": 3
+    }
+  ]
+}`
+	if err := os.WriteFile(configPath, []byte(payload), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if err := loadClientConfig(configPath); err != nil {
+		t.Fatalf("loadClientConfig() error = %v", err)
+	}
+
+	if clientID != "client-a" {
+		t.Fatalf("clientID = %q, want %q", clientID, "client-a")
+	}
+	if routeSelection != routeSelectionLeastRTT {
+		t.Fatalf("routeSelection = %q, want %q", routeSelection, routeSelectionLeastRTT)
+	}
+	if sessionCount != 5 {
+		t.Fatalf("sessionCount = %d, want 5", sessionCount)
+	}
+	if len(clientRoutes) != 2 {
+		t.Fatalf("clientRoutes count = %d, want 2", len(clientRoutes))
+	}
+	if clientRoutes[0].PublicHost != "198.51.100.10" || clientRoutes[0].PublicPort != 28080 {
+		t.Fatalf("first route public = %s:%d, want 198.51.100.10:28080", clientRoutes[0].PublicHost, clientRoutes[0].PublicPort)
+	}
+	if clientRoutes[1].PublicHost != "198.51.100.11" || clientRoutes[1].PublicPort != 29080 {
+		t.Fatalf("second route public = %s:%d, want 198.51.100.11:29080", clientRoutes[1].PublicHost, clientRoutes[1].PublicPort)
+	}
+}
+
+func TestSelectReadySessionRoundRobinAcrossRoutes(t *testing.T) {
+	originalClientID := clientID
+	t.Cleanup(func() { clientID = originalClientID })
+	clientID = "client-test"
+	routes := []clientRouteConfig{
+		{ID: "route_a", RelayURL: "https://relay-a.example", PublicHost: "198.51.100.10", PublicPort: 28080, ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 1, Enabled: true},
+		{ID: "route_b", RelayURL: "https://relay-b.example", PublicHost: "198.51.100.10", PublicPort: 28080, ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 1, Enabled: true},
+	}
+	pool := newSessionPoolForRoutes(routes, routeSelectionRoundRobin)
+	markSessionReady(pool.order[0], 0, 0)
+	markSessionReady(pool.order[1], 0, 0)
+
+	first, _ := pool.selectReadySession()
+	second, _ := pool.selectReadySession()
+	if first == nil || second == nil {
+		t.Fatal("expected ready sessions")
+	}
+	if first.route.cfg.ID == second.route.cfg.ID {
+		t.Fatalf("round robin selected same route twice: %s then %s", first.route.cfg.ID, second.route.cfg.ID)
+	}
+}
+
+func TestSelectReadySessionPrefersLowestLatencyRoute(t *testing.T) {
+	originalClientID := clientID
+	t.Cleanup(func() { clientID = originalClientID })
+	clientID = "client-test"
+	routes := []clientRouteConfig{
+		{ID: "slow", RelayURL: "https://relay-slow.example", PublicHost: "198.51.100.10", PublicPort: 28080, ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 1, Enabled: true},
+		{ID: "fast", RelayURL: "https://relay-fast.example", PublicHost: "198.51.100.10", PublicPort: 28080, ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 1, Enabled: true},
+	}
+	pool := newSessionPoolForRoutes(routes, routeSelectionLeastRTT)
+	markSessionReady(pool.order[0], 0, 0)
+	markSessionReady(pool.order[1], 0, 0)
+	pool.routes[0].observeRequestSuccess(40 * time.Millisecond)
+	pool.routes[1].observeRequestSuccess(10 * time.Millisecond)
+
+	chosen, _ := pool.selectReadySession()
+	if chosen == nil {
+		t.Fatal("expected ready session")
+	}
+	if chosen.route.cfg.ID != "fast" {
+		t.Fatalf("selected route %s, want fast", chosen.route.cfg.ID)
 	}
 }
 

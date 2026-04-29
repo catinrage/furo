@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,7 +51,7 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 	clientConfigPath := filepath.Join(tmpDir, "config.client.json")
 
 	writeServerConfigWithMaxSessions(t, serverConfigPath, serverAgentAddr, serverAdminAddr, 2)
-	writeClientConfig(t, clientConfigPath, clientSocksAddr, clientAgentAddr, clientAdminAddr, phpAddr, serverAgentAddr)
+	writeMultiRouteClientConfig(t, clientConfigPath, clientSocksAddr, clientAgentAddr, clientAdminAddr, phpAddr, serverAgentAddr)
 
 	serverProc := testutil.StartProcess(t, serverBin, []string{"-c", serverConfigPath}, repoRoot, nil)
 	phpProc := testutil.StartProcess(t, php, []string{"-S", phpAddr, "-t", repoRoot}, repoRoot, append(os.Environ(), "PHP_CLI_SERVER_WORKERS=4"))
@@ -73,7 +74,7 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, inspectBin, "-c", clientConfigPath, "--speed-test", "--speed-test-url", speedSrv.URL+"/50mb.test")
+	cmd := exec.CommandContext(ctx, inspectBin, "-c", clientConfigPath, "--route-id", "relay_primary", "--speed-test", "--speed-test-url", speedSrv.URL+"/50mb.test")
 	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -117,11 +118,47 @@ func TestInspectBinaryHelpOutput(t *testing.T) {
 		"Usage:",
 		"--speed-test",
 		"--speed-test-url",
+		"--route-id",
 		"config.client.json",
 		"Reports the exact failure stage",
 	} {
 		if !strings.Contains(stdout, token) {
 			t.Fatalf("inspect help output missing %q\noutput:\n%s", token, stdout)
 		}
+	}
+}
+
+func writeMultiRouteClientConfig(t *testing.T, path, socksAddr, agentAddr, adminAddr, phpAddr, serverAgentAddr string) {
+	t.Helper()
+
+	serverHost, serverPort, err := net.SplitHostPort(serverAgentAddr)
+	if err != nil {
+		t.Fatalf("split server agent addr: %v", err)
+	}
+	clientHost, clientPort, err := net.SplitHostPort(agentAddr)
+	if err != nil {
+		t.Fatalf("split client agent addr: %v", err)
+	}
+
+	payload := fmt.Sprintf("{\n  \"client_id\": %q,\n  \"route_selection\": %q,\n  \"api_key\": %q,\n  \"socks_listen\": %q,\n  \"agent_listen\": %q,\n  \"public_host\": %q,\n  \"public_port\": %s,\n  \"admin_listen\": %q,\n  \"open_timeout\": \"10s\",\n  \"keepalive\": \"5s\",\n  \"log_file\": \"\",\n  \"routes\": [\n    {\n      \"id\": %q,\n      \"relay_url\": %q,\n      \"server_host\": %q,\n      \"server_port\": %s,\n      \"session_count\": 1,\n      \"enabled\": true\n    },\n    {\n      \"id\": %q,\n      \"relay_url\": %q,\n      \"server_host\": %q,\n      \"server_port\": %s,\n      \"session_count\": 1,\n      \"enabled\": false\n    }\n  ]\n}\n",
+		"client-e2e",
+		"least_load",
+		testutil.DefaultAPIKey,
+		socksAddr,
+		agentAddr,
+		clientHost,
+		clientPort,
+		adminAddr,
+		"relay_primary",
+		"http://"+phpAddr+"/furo-relay.php",
+		serverHost,
+		serverPort,
+		"relay_disabled",
+		"http://"+phpAddr+"/unused.php",
+		serverHost,
+		serverPort,
+	)
+	if err := os.WriteFile(path, []byte(payload), 0644); err != nil {
+		t.Fatalf("write multi-route client config: %v", err)
 	}
 }
