@@ -208,6 +208,21 @@ If `furo-client` is already running, `inspect` will first try `agent_listen` and
 
 Deploy `furo-relay.php` on the PHP host, then make sure `relay_url` in `config.client.json` points to the deployed URL.
 
+### Relay-side diagnostics page
+
+The repo also ships `furo-route-diagnostics.php`, a separate PHP page intended to live next to `furo-relay.php` on the same host.
+
+- It prompts for a hardcoded in-file passkey before showing the UI.
+- It accepts pasted `config.client.json` content instead of reading a file from disk.
+- It tests TCP reachability and connect latency from the PHP host to:
+  - each route's relay origin host/port
+  - each route's client callback `public_host:public_port`
+  - each route's server agent `server_host:server_port`
+- It supports both multi-route configs and the legacy single-route fields.
+- It includes a light/dark theme toggle and stores only the theme choice in `localStorage`.
+
+Before deployment, change `$DIAGNOSTICS_PASSKEY` near the top of `furo-route-diagnostics.php`.
+
 ## Observability
 
 Both Go binaries now support a small admin HTTP surface when `admin_listen` is set.
