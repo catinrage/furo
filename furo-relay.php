@@ -384,6 +384,7 @@ if ($clientHost === '' || $clientPort < 1 || $clientPort > 65535 || $serverHost 
 $clientSocket = null;
 $serverSocket = null;
 $startedAt = microtime(true);
+$responseCommitted = false;
 
 try {
     relayLog(sprintf(
@@ -417,6 +418,7 @@ try {
     echo "OK\n";
     @ob_flush();
     @flush();
+    $responseCommitted = true;
 
     $stats = bridgeSockets(
         $clientSocket,
@@ -446,5 +448,8 @@ try {
         (microtime(true) - $startedAt) * 1000,
         $e->getMessage()
     ));
+    if ($responseCommitted) {
+        exit;
+    }
     failJson('Session bridge failed', 502, ['detail' => $e->getMessage()]);
 }

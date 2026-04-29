@@ -28,6 +28,22 @@ func TestClientWriteReadFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestClientReadFrameRejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	header := make([]byte, frameHeaderSize)
+	header[0] = frameData
+	binary.BigEndian.PutUint32(header[5:9], uint32(maxFramePayload+1))
+	if _, err := buf.Write(header); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+
+	if _, err := readFrame(&buf); err == nil {
+		t.Fatal("readFrame() error = nil, want oversized frame error")
+	}
+}
+
 func TestClientEncodeOpenPayload(t *testing.T) {
 	t.Parallel()
 

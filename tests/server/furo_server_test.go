@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +24,22 @@ func TestServerWriteReadFrameRoundTrip(t *testing.T) {
 
 	if got.typ != frameOpenOK || got.streamID != 7 || !bytes.Equal(got.payload, payload) {
 		t.Fatalf("unexpected frame = %#v", got)
+	}
+}
+
+func TestServerReadFrameRejectsOversizedPayload(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	header := make([]byte, frameHeaderSize)
+	header[0] = frameData
+	binary.BigEndian.PutUint32(header[5:9], uint32(maxFramePayload+1))
+	if _, err := buf.Write(header); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+
+	if _, err := readFrame(&buf); err == nil {
+		t.Fatal("readFrame() error = nil, want oversized frame error")
 	}
 }
 
@@ -91,5 +108,29 @@ func TestBuildServerStatusIncludesCounters(t *testing.T) {
 	}
 	if len(status.Sessions) != 2 {
 		t.Fatalf("session count = %d, want 2", len(status.Sessions))
+	}
+}
+
+func TestReserveSessionSlotHonorsLimit(t *testing.T) {
+	t.Parallel()
+
+	originalMaxSessions := maxSessions
+	originalActive := activeSessions.Load()
+	t.Cleanup(func() {
+		maxSessions = originalMaxSessions
+		activeSessions.Store(originalActive)
+	})
+
+	maxSessions = 2
+	activeSessions.Store(0)
+
+	if !reserveSessionSlot() {
+		t.Fatal("first reserveSessionSlot() = false, want true")
+	}
+	if !reserveSessionSlot() {
+		t.Fatal("second reserveSessionSlot() = false, want true")
+	}
+	if reserveSessionSlot() {
+		t.Fatal("third reserveSessionSlot() = true, want false")
 	}
 }

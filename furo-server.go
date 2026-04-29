@@ -351,7 +351,7 @@ func readFrame(r io.Reader) (frame, error) {
 		return frame{}, err
 	}
 	n := binary.BigEndian.Uint32(hdr[5:9])
-	if n > 16*1024*1024 {
+	if n > maxFramePayload {
 		return frame{}, fmt.Errorf("frame too large: %d", n)
 	}
 	payload := make([]byte, n)
@@ -979,7 +979,12 @@ func (s *Session) pumpToTarget(stream *TargetStream, targetAddr string) {
 func (s *Session) statsLoop() {
 	ticker := time.NewTicker(sessionStatsInterval)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-s.closed:
+			return
+		case <-ticker.C:
+		}
 		s.mu.Lock()
 		connected := s.conn != nil
 		authOK := s.authOK
@@ -1092,6 +1097,23 @@ func runServerAdminServer() error {
 	return server.ListenAndServe()
 }
 
+func reserveSessionSlot() bool {
+	if maxSessions <= 0 {
+		return true
+	}
+
+	limit := int32(maxSessions)
+	for {
+		current := activeSessions.Load()
+		if current >= limit {
+			return false
+		}
+		if activeSessions.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
+}
+
 func handleRelayConn(conn net.Conn) {
 	defer func() {
 		if conn != nil {
@@ -1122,12 +1144,18 @@ func handleRelayConn(conn net.Conn) {
 		return
 	}
 
-	if maxSessions > 0 && int(activeSessions.Load()) >= maxSessions {
+	slotReserved := reserveSessionSlot()
+	if !slotReserved {
 		_ = writeString(conn, "ERR session-limit\n")
 		atomic.AddUint64(&rejectedSessions, 1)
 		logEvent("[SERVER] reject sid=%s reason=session-limit active_sessions=%d", parts[2], activeSessions.Load())
 		return
 	}
+	defer func() {
+		if slotReserved {
+			activeSessions.Add(-1)
+		}
+	}()
 
 	if err := writeString(conn, "OK\n"); err != nil {
 		logEvent("[SERVER] handshake_ack_failed sid=%s err=%v", parts[2], err)
@@ -1138,7 +1166,7 @@ func handleRelayConn(conn net.Conn) {
 	session := newSession(parts[2], conn)
 	conn = nil
 	serverRegistry.add(session)
-	activeSessions.Add(1)
+	slotReserved = false
 	atomic.AddUint64(&acceptedSessions, 1)
 	logEvent("[SERVER] session=%s accepted remote=%s active_sessions=%d", session.sid, session.conn.RemoteAddr(), activeSessions.Load())
 	go session.statsLoop()

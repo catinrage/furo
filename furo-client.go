@@ -52,6 +52,7 @@ const (
 	heartbeatInterval      = 15 * time.Second
 	heartbeatTimeout       = 45 * time.Second
 	recentSlowPenaltyAge   = 30 * time.Second
+	relayRequestTimeoutPad = 15 * time.Second
 )
 
 var (
@@ -396,7 +397,7 @@ func readFrame(r io.Reader) (frame, error) {
 		return frame{}, err
 	}
 	n := binary.BigEndian.Uint32(hdr[5:9])
-	if n > 16*1024*1024 {
+	if n > maxFramePayload {
 		return frame{}, fmt.Errorf("frame too large: %d", n)
 	}
 	payload := make([]byte, n)
@@ -1263,7 +1264,9 @@ func (s *MuxSession) requestSession() {
 	values.Set("server_host", serverHost)
 	values.Set("server_port", fmt.Sprintf("%d", serverPort))
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, relayURL+"?"+values.Encode(), nil)
+	requestCtx, cancel := context.WithTimeout(context.Background(), openTimeout+relayRequestTimeoutPad)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, relayURL+"?"+values.Encode(), nil)
 	if err != nil {
 		delay := s.markRequestFailure(err.Error())
 		atomic.AddUint64(&relayRequestsFailed, 1)
