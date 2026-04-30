@@ -10,8 +10,6 @@ import (
 )
 
 func TestPHPRelayAuthAndValidation(t *testing.T) {
-	t.Parallel()
-
 	php := testutil.RequirePHP(t)
 	repoRoot := testutil.RepoRoot(t)
 	addr := testutil.FreeAddr(t)

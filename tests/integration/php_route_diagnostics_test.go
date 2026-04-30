@@ -15,21 +15,14 @@ import (
 )
 
 func TestPHPRouteDiagnosticsUnlockAndProbe(t *testing.T) {
-	t.Parallel()
-
 	php := testutil.RequirePHP(t)
 	repoRoot := testutil.RepoRoot(t)
 	phpAddr := testutil.FreeAddr(t)
 
-	clientAddrA := testutil.FreeAddr(t)
-	clientAddrB := testutil.FreeAddr(t)
-	serverAddrA := testutil.FreeAddr(t)
-	serverAddrB := testutil.FreeAddr(t)
-
-	runAcceptCloseServer(t, clientAddrA)
-	runAcceptCloseServer(t, clientAddrB)
-	runAcceptCloseServer(t, serverAddrA)
-	runAcceptCloseServer(t, serverAddrB)
+	clientAddrA := runAcceptCloseServer(t)
+	clientAddrB := runAcceptCloseServer(t)
+	serverAddrA := runAcceptCloseServer(t)
+	serverAddrB := runAcceptCloseServer(t)
 
 	phpServer := testutil.StartProcess(t, php, []string{"-S", phpAddr, "-t", repoRoot}, repoRoot, append(os.Environ(), "PHP_CLI_SERVER_WORKERS=4"))
 	pageURL := "http://" + phpAddr + "/furo-route-diagnostics.php"
@@ -110,12 +103,12 @@ func TestPHPRouteDiagnosticsUnlockAndProbe(t *testing.T) {
 	}
 }
 
-func runAcceptCloseServer(t *testing.T, addr string) {
+func runAcceptCloseServer(t *testing.T) string {
 	t.Helper()
 
-	ln, err := net.Listen("tcp", addr)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("listen %s: %v", addr, err)
+		t.Fatalf("listen test server: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
 
@@ -128,6 +121,8 @@ func runAcceptCloseServer(t *testing.T, addr string) {
 			_ = conn.Close()
 		}
 	}()
+
+	return ln.Addr().String()
 }
 
 func splitPort(t *testing.T, addr string) string {
