@@ -108,8 +108,8 @@ func TestSelectReadySessionPrefersLeastLoaded(t *testing.T) {
 	t.Parallel()
 
 	pool := newSessionPool(3)
-	markSessionReady(pool.order[0], 3, 3*maxFramePayload)
-	markSessionReady(pool.order[1], 1, maxFramePayload/2)
+	markSessionReady(pool.order[0], 3, int64(3*maxFramePayload))
+	markSessionReady(pool.order[1], 1, int64(maxFramePayload/2))
 	markSessionReady(pool.order[2], 0, 0)
 
 	chosen, readyCount := pool.selectReadySession()
@@ -125,7 +125,7 @@ func TestSelectReadySessionPreservesReserveCapacity(t *testing.T) {
 	t.Parallel()
 
 	pool := newSessionPool(4)
-	markSessionReady(pool.order[0], 2, maxFramePayload)
+	markSessionReady(pool.order[0], 2, int64(maxFramePayload))
 	markSessionReady(pool.order[1], 0, 0)
 	markSessionReady(pool.order[2], 0, 0)
 	markSessionReady(pool.order[3], 0, 0)
@@ -300,6 +300,10 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	originalAdminListen := adminListen
 	originalOpenTimeout := openTimeout
 	originalKeepalive := keepalivePeriod
+	originalWriteTimeout := writeTimeout
+	originalMinFramePayload := minFramePayload
+	originalMidFramePayload := midFramePayload
+	originalMaxFramePayload := maxFramePayload
 	originalSessionCount := sessionCount
 	originalLogFilePath := logFilePath
 	t.Cleanup(func() {
@@ -317,6 +321,10 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 		adminListen = originalAdminListen
 		openTimeout = originalOpenTimeout
 		keepalivePeriod = originalKeepalive
+		writeTimeout = originalWriteTimeout
+		minFramePayload = originalMinFramePayload
+		midFramePayload = originalMidFramePayload
+		maxFramePayload = originalMaxFramePayload
 		sessionCount = originalSessionCount
 		logFilePath = originalLogFilePath
 	})
@@ -334,6 +342,10 @@ func TestLoadClientConfigRoutes(t *testing.T) {
   "admin_listen": "127.0.0.1:19080",
   "open_timeout": "12s",
   "keepalive": "7s",
+  "write_timeout": "9s",
+  "frame_min_size": 16384,
+  "frame_mid_size": 32768,
+  "frame_max_size": 262144,
   "log_file": "",
   "routes": [
     {
@@ -370,6 +382,12 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	}
 	if sessionCount != 5 {
 		t.Fatalf("sessionCount = %d, want 5", sessionCount)
+	}
+	if writeTimeout != 9*time.Second {
+		t.Fatalf("writeTimeout = %s, want 9s", writeTimeout)
+	}
+	if minFramePayload != 16384 || midFramePayload != 32768 || maxFramePayload != 262144 {
+		t.Fatalf("frame sizes = %d/%d/%d, want 16384/32768/262144", minFramePayload, midFramePayload, maxFramePayload)
 	}
 	if len(clientRoutes) != 2 {
 		t.Fatalf("clientRoutes count = %d, want 2", len(clientRoutes))

@@ -33,9 +33,11 @@ const (
 
 const (
 	frameHeaderSize        = 9
-	maxFramePayload        = 128 * 1024
-	minAdaptiveFrameSize   = 32 * 1024
-	midAdaptiveFrameSize   = 64 * 1024
+	defaultMaxFramePayload = 128 * 1024
+	defaultMinFramePayload = 32 * 1024
+	defaultMidFramePayload = 64 * 1024
+	defaultMaxPendingBytes = 4 * 1024 * 1024
+	defaultWriteTimeout    = 30 * time.Second
 	streamWriteQueueDepth  = 32
 	controlWriteQueueDepth = 256
 	slowWriteThreshold     = 200 * time.Millisecond
@@ -43,7 +45,6 @@ const (
 	adminReadHeaderTimeout = 5 * time.Second
 	heartbeatInterval      = 15 * time.Second
 	heartbeatTimeout       = 45 * time.Second
-	pooledFrameThreshold   = 32 * 1024
 )
 
 var (
@@ -54,7 +55,12 @@ var (
 	adminListen     string
 	dialTimeout     time.Duration
 	keepalivePeriod time.Duration
+	writeTimeout    = defaultWriteTimeout
 	maxSessions     int
+	minFramePayload = defaultMinFramePayload
+	midFramePayload = defaultMidFramePayload
+	maxFramePayload = defaultMaxFramePayload
+	maxPendingBytes = int64(defaultMaxPendingBytes)
 	logFilePath     string
 )
 
@@ -65,24 +71,34 @@ var (
 )
 
 type serverConfigFile struct {
-	APIKey      string `json:"api_key"`
-	AgentListen string `json:"agent_listen"`
-	AdminListen string `json:"admin_listen"`
-	DialTimeout string `json:"dial_timeout"`
-	Keepalive   string `json:"keepalive"`
-	MaxSessions int    `json:"max_sessions"`
-	LogFile     string `json:"log_file"`
+	APIKey          string `json:"api_key"`
+	AgentListen     string `json:"agent_listen"`
+	AdminListen     string `json:"admin_listen"`
+	DialTimeout     string `json:"dial_timeout"`
+	Keepalive       string `json:"keepalive"`
+	WriteTimeout    string `json:"write_timeout"`
+	FrameMinSize    int    `json:"frame_min_size"`
+	FrameMidSize    int    `json:"frame_mid_size"`
+	FrameMaxSize    int    `json:"frame_max_size"`
+	MaxPendingBytes int64  `json:"max_pending_bytes"`
+	MaxSessions     int    `json:"max_sessions"`
+	LogFile         string `json:"log_file"`
 }
 
 func defaultServerConfig() serverConfigFile {
 	return serverConfigFile{
-		APIKey:      "my_super_secret_123456789",
-		AgentListen: "0.0.0.0:28081",
-		AdminListen: "",
-		DialTimeout: "10s",
-		Keepalive:   "30s",
-		MaxSessions: 10,
-		LogFile:     "",
+		APIKey:          "my_super_secret_123456789",
+		AgentListen:     "0.0.0.0:28081",
+		AdminListen:     "",
+		DialTimeout:     "10s",
+		Keepalive:       "30s",
+		WriteTimeout:    defaultWriteTimeout.String(),
+		FrameMinSize:    defaultMinFramePayload,
+		FrameMidSize:    defaultMidFramePayload,
+		FrameMaxSize:    defaultMaxFramePayload,
+		MaxPendingBytes: defaultMaxPendingBytes,
+		MaxSessions:     10,
+		LogFile:         "",
 	}
 }
 
@@ -115,32 +131,75 @@ func loadServerConfig(path string) error {
 	if err != nil {
 		return fmt.Errorf("parse keepalive: %w", err)
 	}
+	parsedWriteTimeout, err := time.ParseDuration(cfg.WriteTimeout)
+	if err != nil {
+		return fmt.Errorf("parse write_timeout: %w", err)
+	}
+	if err := validateFrameConfig(cfg.FrameMinSize, cfg.FrameMidSize, cfg.FrameMaxSize, cfg.MaxPendingBytes); err != nil {
+		return err
+	}
 
 	apiKey = cfg.APIKey
 	agentListen = cfg.AgentListen
 	adminListen = cfg.AdminListen
 	dialTimeout = parsedDialTimeout
 	keepalivePeriod = parsedKeepalive
+	writeTimeout = parsedWriteTimeout
+	minFramePayload = cfg.FrameMinSize
+	midFramePayload = cfg.FrameMidSize
+	maxFramePayload = cfg.FrameMaxSize
+	maxPendingBytes = cfg.MaxPendingBytes
 	maxSessions = cfg.MaxSessions
 	logFilePath = cfg.LogFile
 	return nil
 }
 
+func validateFrameConfig(minSize, midSize, maxSize int, pendingLimit int64) error {
+	switch {
+	case minSize < 4096:
+		return errors.New("frame_min_size must be >= 4096")
+	case midSize < minSize:
+		return errors.New("frame_mid_size must be >= frame_min_size")
+	case maxSize < midSize:
+		return errors.New("frame_max_size must be >= frame_mid_size")
+	case maxSize > 1024*1024:
+		return errors.New("frame_max_size must be <= 1048576")
+	case pendingLimit < int64(maxSize):
+		return errors.New("max_pending_bytes must be >= frame_max_size")
+	}
+	return nil
+}
+
 var (
-	logMu            sync.Mutex
-	logger           = log.New(io.Discard, "", log.LstdFlags|log.Lmicroseconds)
-	serverStartedAt  = time.Now()
-	activeSessions   atomic.Int32
-	acceptedSessions uint64
-	rejectedSessions uint64
-	closedSessions   uint64
-	serverRegistry   = newServerSessionRegistry()
-	largeFramePool   = sync.Pool{
+	logMu             sync.Mutex
+	logger            = log.New(io.Discard, "", log.LstdFlags|log.Lmicroseconds)
+	serverStartedAt   = time.Now()
+	activeSessions    atomic.Int32
+	acceptedSessions  uint64
+	rejectedSessions  uint64
+	closedSessions    uint64
+	serverRegistry    = newServerSessionRegistry()
+	framePayloadPools = []payloadPool{
+		{size: 4 * 1024},
+		{size: 16 * 1024},
+		{size: 32 * 1024},
+		{size: 64 * 1024},
+		{size: 128 * 1024},
+		{size: 256 * 1024},
+		{size: 512 * 1024},
+		{size: 1024 * 1024},
+	}
+	outboundFramePool = sync.Pool{
 		New: func() any {
-			return make([]byte, maxFramePayload)
+			return &outboundFrame{result: make(chan error, 1)}
 		},
 	}
 )
+
+type payloadPool struct {
+	size int
+	pool sync.Pool
+}
 
 func logEvent(format string, args ...any) {
 	logMu.Lock()
@@ -157,6 +216,8 @@ type serverSessionSnapshot struct {
 	Connected        bool   `json:"connected"`
 	Authenticated    bool   `json:"authenticated"`
 	ActiveStreams    int    `json:"active_streams"`
+	PendingFrames    int64  `json:"pending_frames"`
+	PendingBytes     int64  `json:"pending_bytes"`
 	FramesIn         uint64 `json:"frames_in"`
 	FramesOut        uint64 `json:"frames_out"`
 	BytesIn          uint64 `json:"bytes_in"`
@@ -176,6 +237,11 @@ type serverStatusResponse struct {
 	AgentListen      string                  `json:"agent_listen"`
 	AdminListen      string                  `json:"admin_listen,omitempty"`
 	DialTimeout      string                  `json:"dial_timeout"`
+	WriteTimeout     string                  `json:"write_timeout"`
+	FrameMinSize     int                     `json:"frame_min_size"`
+	FrameMidSize     int                     `json:"frame_mid_size"`
+	FrameMaxSize     int                     `json:"frame_max_size"`
+	MaxPendingBytes  int64                   `json:"max_pending_bytes"`
 	MaxSessions      int                     `json:"max_sessions"`
 	ActiveSessions   int32                   `json:"active_sessions"`
 	AcceptedSessions uint64                  `json:"accepted_sessions"`
@@ -274,6 +340,20 @@ func writeFull(w io.Writer, buf []byte) error {
 	return nil
 }
 
+func setWriteDeadline(conn net.Conn) {
+	if writeTimeout <= 0 {
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+}
+
+func clearWriteDeadline(conn net.Conn) {
+	if writeTimeout <= 0 {
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Time{})
+}
+
 type frame struct {
 	typ      byte
 	streamID uint32
@@ -305,38 +385,54 @@ func frameTypeName(typ byte) string {
 	}
 }
 
-func allocateFramePayload(src []byte) ([]byte, func()) {
-	if len(src) >= pooledFrameThreshold {
-		buf := largeFramePool.Get().([]byte)
-		payload := buf[:len(src)]
-		copy(payload, src)
-		return payload, func() {
-			largeFramePool.Put(buf)
+func getPooledPayload(size int) ([]byte, int, bool) {
+	for idx := range framePayloadPools {
+		if size <= framePayloadPools[idx].size {
+			buf, ok := framePayloadPools[idx].pool.Get().([]byte)
+			if !ok || cap(buf) < framePayloadPools[idx].size {
+				buf = make([]byte, framePayloadPools[idx].size)
+			}
+			return buf[:size], idx, true
 		}
 	}
-
-	payload := make([]byte, len(src))
-	copy(payload, src)
-	return payload, nil
+	return make([]byte, size), -1, false
 }
 
-func adaptiveFramePayload(activeStreams int) int {
+func putPooledPayload(idx int, buf []byte) {
+	if idx < 0 || idx >= len(framePayloadPools) {
+		return
+	}
+	framePayloadPools[idx].pool.Put(buf[:framePayloadPools[idx].size])
+}
+
+func allocateFramePayload(src []byte) ([]byte, func()) {
+	payload, poolIdx, pooled := getPooledPayload(len(src))
+	copy(payload, src)
+	if !pooled {
+		return payload, nil
+	}
+	return payload, func() {
+		putPooledPayload(poolIdx, payload)
+	}
+}
+
+func adaptiveFramePayload(activeStreams int, pendingBytes int64) int {
 	switch {
-	case activeStreams >= 6:
-		return minAdaptiveFrameSize
-	case activeStreams >= 2:
-		return midAdaptiveFrameSize
+	case activeStreams >= 6 || pendingBytes >= 512*1024:
+		return minFramePayload
+	case activeStreams >= 2 || pendingBytes >= 128*1024:
+		return midFramePayload
 	default:
 		return maxFramePayload
 	}
 }
 
 func writeFrame(w io.Writer, typ byte, streamID uint32, payload []byte) error {
-	header := make([]byte, frameHeaderSize)
+	var header [frameHeaderSize]byte
 	header[0] = typ
 	binary.BigEndian.PutUint32(header[1:5], streamID)
 	binary.BigEndian.PutUint32(header[5:9], uint32(len(payload)))
-	if err := writeFull(w, header); err != nil {
+	if err := writeFull(w, header[:]); err != nil {
 		return err
 	}
 	if len(payload) == 0 {
@@ -351,7 +447,7 @@ func readFrame(r io.Reader) (frame, error) {
 		return frame{}, err
 	}
 	n := binary.BigEndian.Uint32(hdr[5:9])
-	if n > maxFramePayload {
+	if n > uint32(maxFramePayload) {
 		return frame{}, fmt.Errorf("frame too large: %d", n)
 	}
 	payload := make([]byte, n)
@@ -383,9 +479,14 @@ func decodeOpenPayload(payload []byte) (string, uint16, error) {
 
 func writeAll(conn net.Conn, data []byte) error {
 	for len(data) > 0 {
+		setWriteDeadline(conn)
 		n, err := conn.Write(data)
+		clearWriteDeadline(conn)
 		if err != nil {
 			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
 		}
 		data = data[n:]
 	}
@@ -413,6 +514,29 @@ type outboundFrame struct {
 	enqueuedAt time.Time
 	result     chan error
 	release    func()
+}
+
+func acquireOutboundFrame(typ byte, streamID uint32, payload []byte, release func()) *outboundFrame {
+	req := outboundFramePool.Get().(*outboundFrame)
+	select {
+	case <-req.result:
+	default:
+	}
+	req.typ = typ
+	req.streamID = streamID
+	req.payload = payload
+	req.enqueuedAt = time.Now()
+	req.release = release
+	return req
+}
+
+func releaseOutboundFrame(req *outboundFrame) {
+	req.typ = 0
+	req.streamID = 0
+	req.payload = nil
+	req.enqueuedAt = time.Time{}
+	req.release = nil
+	outboundFramePool.Put(req)
 }
 
 func (f *outboundFrame) finish(err error) {
@@ -459,6 +583,8 @@ type Session struct {
 	dataQueues       map[uint32][]*outboundFrame
 	readyStreams     []uint32
 	pendingOpens     map[uint32]context.CancelFunc
+	pendingFrames    int64
+	pendingBytes     int64
 	framesIn         uint64
 	framesOut        uint64
 	bytesIn          uint64
@@ -480,6 +606,8 @@ func (s *Session) snapshot() serverSessionSnapshot {
 		Connected:        connected,
 		Authenticated:    authOK,
 		ActiveStreams:    active,
+		PendingFrames:    atomic.LoadInt64(&s.pendingFrames),
+		PendingBytes:     atomic.LoadInt64(&s.pendingBytes),
 		FramesIn:         atomic.LoadUint64(&s.framesIn),
 		FramesOut:        atomic.LoadUint64(&s.framesOut),
 		BytesIn:          atomic.LoadUint64(&s.bytesIn),
@@ -585,20 +713,14 @@ func (s *Session) sendFrameWithRelease(typ byte, streamID uint32, payload []byte
 		return errors.New("session not authenticated")
 	}
 
-	req := &outboundFrame{
-		typ:        typ,
-		streamID:   streamID,
-		payload:    payload,
-		enqueuedAt: time.Now(),
-		result:     make(chan error, 1),
-		release:    release,
-	}
+	req := acquireOutboundFrame(typ, streamID, payload, release)
 
 	if typ == frameData {
 		if err := s.enqueueData(req); err != nil {
 			if release != nil {
 				release()
 			}
+			releaseOutboundFrame(req)
 			return err
 		}
 	} else {
@@ -607,12 +729,15 @@ func (s *Session) sendFrameWithRelease(typ byte, streamID uint32, payload []byte
 			if release != nil {
 				release()
 			}
+			releaseOutboundFrame(req)
 			return net.ErrClosed
 		case s.controlQ <- req:
 		}
 	}
 
-	return <-req.result
+	err := <-req.result
+	releaseOutboundFrame(req)
+	return err
 }
 
 func (s *Session) enqueueData(req *outboundFrame) error {
@@ -621,10 +746,17 @@ func (s *Session) enqueueData(req *outboundFrame) error {
 		s.schedMu.Unlock()
 		return net.ErrClosed
 	}
+	pendingAfter := atomic.LoadInt64(&s.pendingBytes) + int64(len(req.payload))
+	if pendingAfter > maxPendingBytes {
+		s.schedMu.Unlock()
+		return fmt.Errorf("session pending bytes limit exceeded: %d > %d", pendingAfter, maxPendingBytes)
+	}
 	if len(s.dataQueues[req.streamID]) == 0 {
 		s.readyStreams = append(s.readyStreams, req.streamID)
 	}
 	s.dataQueues[req.streamID] = append(s.dataQueues[req.streamID], req)
+	atomic.AddInt64(&s.pendingBytes, int64(len(req.payload)))
+	atomic.AddInt64(&s.pendingFrames, 1)
 	s.schedMu.Unlock()
 	select {
 	case s.wakeWriter <- struct{}{}:
@@ -650,6 +782,8 @@ func (s *Session) popDataFrame() *outboundFrame {
 		s.dataQueues[streamID] = queue
 		s.readyStreams = append(s.readyStreams, streamID)
 	}
+	atomic.AddInt64(&s.pendingBytes, -int64(len(req.payload)))
+	atomic.AddInt64(&s.pendingFrames, -1)
 	return req
 }
 
@@ -691,7 +825,9 @@ func (s *Session) writeLoop() {
 		}
 
 		writeStart := time.Now()
+		setWriteDeadline(conn)
 		err := writeFrame(conn, req.typ, req.streamID, req.payload)
+		clearWriteDeadline(conn)
 		writeDur := time.Since(writeStart)
 		if err == nil {
 			atomic.AddUint64(&s.framesOut, 1)
@@ -730,6 +866,8 @@ drainData:
 		delete(s.dataQueues, streamID)
 	}
 	s.readyStreams = nil
+	atomic.StoreInt64(&s.pendingBytes, 0)
+	atomic.StoreInt64(&s.pendingFrames, 0)
 }
 
 func (s *Session) addStream(stream *TargetStream) {
@@ -784,6 +922,13 @@ func (s *Session) activeCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.streams)
+}
+
+func (s *Session) recommendedChunkSize() int {
+	s.mu.Lock()
+	active := len(s.streams)
+	s.mu.Unlock()
+	return adaptiveFramePayload(active, atomic.LoadInt64(&s.pendingBytes))
 }
 
 func (s *Session) closeAll(err error) {
@@ -934,11 +1079,11 @@ func (s *Session) handleOpen(ctx context.Context, streamID uint32, payload []byt
 }
 
 func (s *Session) pumpTarget(stream *TargetStream, targetAddr string) {
-	buf := largeFramePool.Get().([]byte)
-	defer largeFramePool.Put(buf)
+	buf, poolIdx, _ := getPooledPayload(maxFramePayload)
+	defer putPooledPayload(poolIdx, buf)
 
 	for {
-		chunkSize := adaptiveFramePayload(s.activeCount())
+		chunkSize := s.recommendedChunkSize()
 		n, err := stream.conn.Read(buf[:chunkSize])
 		if n > 0 {
 			payload, release := allocateFramePayload(buf[:n])
@@ -1058,6 +1203,11 @@ func buildServerStatus() serverStatusResponse {
 		AgentListen:      agentListen,
 		AdminListen:      adminListen,
 		DialTimeout:      dialTimeout.String(),
+		WriteTimeout:     writeTimeout.String(),
+		FrameMinSize:     minFramePayload,
+		FrameMidSize:     midFramePayload,
+		FrameMaxSize:     maxFramePayload,
+		MaxPendingBytes:  maxPendingBytes,
 		MaxSessions:      maxSessions,
 		ActiveSessions:   activeSessions.Load(),
 		AcceptedSessions: atomic.LoadUint64(&acceptedSessions),
@@ -1193,7 +1343,7 @@ func main() {
 		logger = log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
 		log.Printf("[FURO-SERVER] debug log file: %s", logFilePath)
 	}
-	logEvent("[SERVER] startup version=%s agent_listen=%s admin_listen=%s dial_timeout=%s max_sessions=%d", appVersion, agentListen, adminListen, dialTimeout.String(), maxSessions)
+	logEvent("[SERVER] startup version=%s agent_listen=%s admin_listen=%s dial_timeout=%s write_timeout=%s frame_min=%d frame_mid=%d frame_max=%d max_pending_bytes=%d max_sessions=%d", appVersion, agentListen, adminListen, dialTimeout.String(), writeTimeout.String(), minFramePayload, midFramePayload, maxFramePayload, maxPendingBytes, maxSessions)
 
 	ln, err := net.Listen("tcp", agentListen)
 	if err != nil {

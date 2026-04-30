@@ -9,6 +9,10 @@
   "admin_listen": "127.0.0.1:19080",
   "open_timeout": "45s",
   "keepalive": "30s",
+  "write_timeout": "30s",
+  "frame_min_size": 32768,
+  "frame_mid_size": 65536,
+  "frame_max_size": 131072,
   "log_file": "",
   "routes": [
     {

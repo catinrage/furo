@@ -105,6 +105,10 @@ Key fields in `config.client.json`:
   Timeout for relay HTTP response headers and stream open waits.
 - `keepalive`
   TCP keepalive period for session and stream sockets.
+- `write_timeout`
+  Per-write deadline for relay session writes. Set to `0s` to disable write deadlines.
+- `frame_min_size` / `frame_mid_size` / `frame_max_size`
+  Adaptive DATA frame payload sizes in bytes. Keep client and server `frame_max_size` compatible; the defaults preserve the built-in 32 KiB / 64 KiB / 128 KiB behavior.
 - `log_file`
   Optional debug log path. Empty disables debug logs.
 - `routes`
@@ -143,6 +147,12 @@ Key fields in `config.server.json`:
   Timeout for outbound target dials.
 - `keepalive`
   TCP keepalive period for server-side sockets.
+- `write_timeout`
+  Per-write deadline for relay session and target writes. Set to `0s` to disable write deadlines.
+- `frame_min_size` / `frame_mid_size` / `frame_max_size`
+  Adaptive DATA frame payload sizes in bytes. Keep this compatible with the client-side `frame_max_size`.
+- `max_pending_bytes`
+  Maximum queued outbound session DATA bytes before the server closes the affected stream to protect the session from unbounded buffering.
 - `max_sessions`
   Maximum active relay sessions. Set this above the total client-side sessions across all enabled routes if `inspect` may run while `furo-client` is already running, so one extra session remains available.
 - `log_file`
@@ -294,6 +304,7 @@ Local test commands:
 
 ```bash
 go test -v ./tests/...
+go test -run '^$' -bench BenchmarkFullStackTunnelThroughput ./tests/e2e
 ```
 
 Test layout:

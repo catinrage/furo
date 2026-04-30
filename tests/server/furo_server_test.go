@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"net"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,6 +49,63 @@ func TestServerDecodeOpenPayloadRejectsMalformed(t *testing.T) {
 
 	if _, _, err := decodeOpenPayload([]byte{0, 3, 'a'}); err == nil {
 		t.Fatal("decodeOpenPayload() error = nil, want malformed payload error")
+	}
+}
+
+func TestServerAdaptiveFramePayloadHonorsPendingBytes(t *testing.T) {
+	originalMin := minFramePayload
+	originalMid := midFramePayload
+	originalMax := maxFramePayload
+	t.Cleanup(func() {
+		minFramePayload = originalMin
+		midFramePayload = originalMid
+		maxFramePayload = originalMax
+	})
+
+	minFramePayload = 8 * 1024
+	midFramePayload = 16 * 1024
+	maxFramePayload = 64 * 1024
+
+	if got := adaptiveFramePayload(1, 0); got != maxFramePayload {
+		t.Fatalf("idle chunk = %d, want %d", got, maxFramePayload)
+	}
+	if got := adaptiveFramePayload(2, 0); got != midFramePayload {
+		t.Fatalf("multi-stream chunk = %d, want %d", got, midFramePayload)
+	}
+	if got := adaptiveFramePayload(1, 512*1024); got != minFramePayload {
+		t.Fatalf("backlogged chunk = %d, want %d", got, minFramePayload)
+	}
+}
+
+func TestServerEnqueueDataHonorsPendingByteLimit(t *testing.T) {
+	originalLimit := maxPendingBytes
+	t.Cleanup(func() { maxPendingBytes = originalLimit })
+	maxPendingBytes = 8
+
+	session := &Session{
+		conn:       &serverStubConn{},
+		dataQueues: make(map[uint32][]*outboundFrame),
+	}
+
+	first := &outboundFrame{streamID: 1, payload: []byte("12345"), result: make(chan error, 1)}
+	if err := session.enqueueData(first); err != nil {
+		t.Fatalf("first enqueueData() error = %v", err)
+	}
+
+	second := &outboundFrame{streamID: 1, payload: []byte("6789"), result: make(chan error, 1)}
+	if err := session.enqueueData(second); err == nil {
+		t.Fatal("second enqueueData() error = nil, want pending byte limit error")
+	}
+	if pending := atomic.LoadInt64(&session.pendingBytes); pending != 5 {
+		t.Fatalf("pendingBytes = %d, want 5", pending)
+	}
+
+	popped := session.popDataFrame()
+	if popped != first {
+		t.Fatal("popDataFrame() did not return the first enqueued frame")
+	}
+	if pending := atomic.LoadInt64(&session.pendingBytes); pending != 0 {
+		t.Fatalf("pendingBytes after pop = %d, want 0", pending)
 	}
 }
 
@@ -148,3 +206,14 @@ func TestReserveSessionSlotHonorsLimit(t *testing.T) {
 		t.Fatal("third reserveSessionSlot() = true, want false")
 	}
 }
+
+type serverStubConn struct{}
+
+func (*serverStubConn) Read([]byte) (int, error)         { return 0, nil }
+func (*serverStubConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (*serverStubConn) Close() error                     { return nil }
+func (*serverStubConn) LocalAddr() net.Addr              { return nil }
+func (*serverStubConn) RemoteAddr() net.Addr             { return nil }
+func (*serverStubConn) SetDeadline(time.Time) error      { return nil }
+func (*serverStubConn) SetReadDeadline(time.Time) error  { return nil }
+func (*serverStubConn) SetWriteDeadline(time.Time) error { return nil }

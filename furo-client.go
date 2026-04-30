@@ -37,9 +37,10 @@ const (
 
 const (
 	frameHeaderSize        = 9
-	maxFramePayload        = 128 * 1024
-	minAdaptiveFrameSize   = 32 * 1024
-	midAdaptiveFrameSize   = 64 * 1024
+	defaultMaxFramePayload = 128 * 1024
+	defaultMinFramePayload = 32 * 1024
+	defaultMidFramePayload = 64 * 1024
+	defaultWriteTimeout    = 30 * time.Second
 	sessionPollDelay       = 1200 * time.Millisecond
 	streamWriteQueueDepth  = 32
 	controlWriteQueueDepth = 256
@@ -48,7 +49,6 @@ const (
 	reconnectBackoffMin    = 1 * time.Second
 	reconnectBackoffMax    = 30 * time.Second
 	adminReadHeaderTimeout = 5 * time.Second
-	pooledFrameThreshold   = 32 * 1024
 	maxReservedSessions    = 2
 	heartbeatInterval      = 15 * time.Second
 	heartbeatTimeout       = 45 * time.Second
@@ -69,6 +69,10 @@ var (
 	adminListen     string
 	openTimeout     time.Duration
 	keepalivePeriod time.Duration
+	writeTimeout    = defaultWriteTimeout
+	minFramePayload = defaultMinFramePayload
+	midFramePayload = defaultMidFramePayload
+	maxFramePayload = defaultMaxFramePayload
 	sessionCount    int
 	logFilePath     string
 	clientID        string
@@ -98,6 +102,10 @@ type clientConfigFile struct {
 	AdminListen    string                  `json:"admin_listen"`
 	OpenTimeout    string                  `json:"open_timeout"`
 	Keepalive      string                  `json:"keepalive"`
+	WriteTimeout   string                  `json:"write_timeout"`
+	FrameMinSize   int                     `json:"frame_min_size"`
+	FrameMidSize   int                     `json:"frame_mid_size"`
+	FrameMaxSize   int                     `json:"frame_max_size"`
 	SessionCount   int                     `json:"session_count"`
 	LogFile        string                  `json:"log_file"`
 }
@@ -172,9 +180,27 @@ func defaultClientConfig() clientConfigFile {
 		AdminListen:    "",
 		OpenTimeout:    "45s",
 		Keepalive:      "30s",
+		WriteTimeout:   defaultWriteTimeout.String(),
+		FrameMinSize:   defaultMinFramePayload,
+		FrameMidSize:   defaultMidFramePayload,
+		FrameMaxSize:   defaultMaxFramePayload,
 		SessionCount:   8,
 		LogFile:        "",
 	}
+}
+
+func validateFrameConfig(minSize, midSize, maxSize int) error {
+	switch {
+	case minSize < 4096:
+		return errors.New("frame_min_size must be >= 4096")
+	case midSize < minSize:
+		return errors.New("frame_mid_size must be >= frame_min_size")
+	case maxSize < midSize:
+		return errors.New("frame_max_size must be >= frame_mid_size")
+	case maxSize > 1024*1024:
+		return errors.New("frame_max_size must be <= 1048576")
+	}
+	return nil
 }
 
 func defaultClientID() string {
@@ -321,6 +347,13 @@ func loadClientConfig(path string) error {
 	if err != nil {
 		return fmt.Errorf("parse keepalive: %w", err)
 	}
+	parsedWriteTimeout, err := time.ParseDuration(cfg.WriteTimeout)
+	if err != nil {
+		return fmt.Errorf("parse write_timeout: %w", err)
+	}
+	if err := validateFrameConfig(cfg.FrameMinSize, cfg.FrameMidSize, cfg.FrameMaxSize); err != nil {
+		return err
+	}
 
 	parsedRouteSelection, err := parseRouteSelection(cfg.RouteSelection)
 	if err != nil {
@@ -345,6 +378,10 @@ func loadClientConfig(path string) error {
 	adminListen = cfg.AdminListen
 	openTimeout = parsedOpenTimeout
 	keepalivePeriod = parsedKeepalive
+	writeTimeout = parsedWriteTimeout
+	minFramePayload = cfg.FrameMinSize
+	midFramePayload = cfg.FrameMidSize
+	maxFramePayload = cfg.FrameMaxSize
 	sessionCount = totalSessions
 	logFilePath = cfg.LogFile
 	clientID = resolvedClientID
@@ -378,12 +415,27 @@ var (
 		},
 	}
 
-	largeFramePool = sync.Pool{
+	framePayloadPools = []payloadPool{
+		{size: 4 * 1024},
+		{size: 16 * 1024},
+		{size: 32 * 1024},
+		{size: 64 * 1024},
+		{size: 128 * 1024},
+		{size: 256 * 1024},
+		{size: 512 * 1024},
+		{size: 1024 * 1024},
+	}
+	outboundFramePool = sync.Pool{
 		New: func() any {
-			return make([]byte, maxFramePayload)
+			return &outboundFrame{result: make(chan error, 1)}
 		},
 	}
 )
+
+type payloadPool struct {
+	size int
+	pool sync.Pool
+}
 
 func logEvent(format string, args ...any) {
 	logMu.Lock()
@@ -395,27 +447,43 @@ func clientVersionString() string {
 	return fmt.Sprintf("furo-client version=%s commit=%s built=%s", appVersion, appCommit, appBuildDate)
 }
 
-func allocateFramePayload(src []byte) ([]byte, func()) {
-	if len(src) >= pooledFrameThreshold {
-		buf := largeFramePool.Get().([]byte)
-		payload := buf[:len(src)]
-		copy(payload, src)
-		return payload, func() {
-			largeFramePool.Put(buf)
+func getPooledPayload(size int) ([]byte, int, bool) {
+	for idx := range framePayloadPools {
+		if size <= framePayloadPools[idx].size {
+			buf, ok := framePayloadPools[idx].pool.Get().([]byte)
+			if !ok || cap(buf) < framePayloadPools[idx].size {
+				buf = make([]byte, framePayloadPools[idx].size)
+			}
+			return buf[:size], idx, true
 		}
 	}
+	return make([]byte, size), -1, false
+}
 
-	payload := make([]byte, len(src))
+func putPooledPayload(idx int, buf []byte) {
+	if idx < 0 || idx >= len(framePayloadPools) {
+		return
+	}
+	framePayloadPools[idx].pool.Put(buf[:framePayloadPools[idx].size])
+}
+
+func allocateFramePayload(src []byte) ([]byte, func()) {
+	payload, poolIdx, pooled := getPooledPayload(len(src))
 	copy(payload, src)
-	return payload, nil
+	if !pooled {
+		return payload, nil
+	}
+	return payload, func() {
+		putPooledPayload(poolIdx, payload)
+	}
 }
 
 func adaptiveFramePayload(activeStreams int, pendingBytes int64) int {
 	switch {
 	case activeStreams >= 6 || pendingBytes >= 512*1024:
-		return minAdaptiveFrameSize
+		return minFramePayload
 	case activeStreams >= 2 || pendingBytes >= 128*1024:
-		return midAdaptiveFrameSize
+		return midFramePayload
 	default:
 		return maxFramePayload
 	}
@@ -525,6 +593,20 @@ func writeFull(w io.Writer, buf []byte) error {
 	return nil
 }
 
+func setWriteDeadline(conn net.Conn) {
+	if writeTimeout <= 0 {
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+}
+
+func clearWriteDeadline(conn net.Conn) {
+	if writeTimeout <= 0 {
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Time{})
+}
+
 type frame struct {
 	typ      byte
 	streamID uint32
@@ -557,11 +639,11 @@ func frameTypeName(typ byte) string {
 }
 
 func writeFrame(w io.Writer, typ byte, streamID uint32, payload []byte) error {
-	header := make([]byte, frameHeaderSize)
+	var header [frameHeaderSize]byte
 	header[0] = typ
 	binary.BigEndian.PutUint32(header[1:5], streamID)
 	binary.BigEndian.PutUint32(header[5:9], uint32(len(payload)))
-	if err := writeFull(w, header); err != nil {
+	if err := writeFull(w, header[:]); err != nil {
 		return err
 	}
 	if len(payload) == 0 {
@@ -576,7 +658,7 @@ func readFrame(r io.Reader) (frame, error) {
 		return frame{}, err
 	}
 	n := binary.BigEndian.Uint32(hdr[5:9])
-	if n > maxFramePayload {
+	if n > uint32(maxFramePayload) {
 		return frame{}, fmt.Errorf("frame too large: %d", n)
 	}
 	payload := make([]byte, n)
@@ -837,6 +919,29 @@ type outboundFrame struct {
 	release    func()
 }
 
+func acquireOutboundFrame(typ byte, streamID uint32, payload []byte, release func()) *outboundFrame {
+	req := outboundFramePool.Get().(*outboundFrame)
+	select {
+	case <-req.result:
+	default:
+	}
+	req.typ = typ
+	req.streamID = streamID
+	req.payload = payload
+	req.enqueuedAt = time.Now()
+	req.release = release
+	return req
+}
+
+func releaseOutboundFrame(req *outboundFrame) {
+	req.typ = 0
+	req.streamID = 0
+	req.payload = nil
+	req.enqueuedAt = time.Time{}
+	req.release = nil
+	outboundFramePool.Put(req)
+}
+
 func (f *outboundFrame) finish(err error) {
 	if f.release != nil {
 		f.release()
@@ -1028,21 +1133,18 @@ func (s *MuxSession) sendControl(typ byte, streamID uint32, payload []byte) erro
 		return errors.New("session not ready")
 	}
 
-	req := &outboundFrame{
-		typ:        typ,
-		streamID:   streamID,
-		payload:    payload,
-		enqueuedAt: time.Now(),
-		result:     make(chan error, 1),
-	}
+	req := acquireOutboundFrame(typ, streamID, payload, nil)
 
 	select {
 	case <-stop:
+		releaseOutboundFrame(req)
 		return net.ErrClosed
 	case s.controlQ <- req:
 	}
 
-	return <-req.result
+	err := <-req.result
+	releaseOutboundFrame(req)
+	return err
 }
 
 func (s *MuxSession) sendData(streamID uint32, payload []byte, release func()) error {
@@ -1064,21 +1166,17 @@ func (s *MuxSession) sendData(streamID uint32, payload []byte, release func()) e
 		return errors.New("session not ready")
 	}
 
-	req := &outboundFrame{
-		typ:        frameData,
-		streamID:   streamID,
-		payload:    payload,
-		enqueuedAt: time.Now(),
-		result:     make(chan error, 1),
-		release:    release,
-	}
+	req := acquireOutboundFrame(frameData, streamID, payload, release)
 	if err := s.enqueueDataFrame(req); err != nil {
 		if release != nil {
 			release()
 		}
+		releaseOutboundFrame(req)
 		return err
 	}
-	return <-req.result
+	err := <-req.result
+	releaseOutboundFrame(req)
+	return err
 }
 
 func (s *MuxSession) enqueueDataFrame(req *outboundFrame) error {
@@ -1171,7 +1269,9 @@ func (s *MuxSession) writeLoop(gen uint64, conn net.Conn, stop <-chan struct{}) 
 		}
 
 		writeStart := time.Now()
+		setWriteDeadline(conn)
 		err := writeFrame(conn, req.typ, req.streamID, req.payload)
+		clearWriteDeadline(conn)
 		writeDur := time.Since(writeStart)
 		if err == nil {
 			atomic.AddUint64(&s.framesOut, 1)
@@ -1585,6 +1685,10 @@ type clientStatusResponse struct {
 	ClientID       string                  `json:"client_id"`
 	RouteSelection string                  `json:"route_selection"`
 	SessionCount   int                     `json:"session_count"`
+	WriteTimeout   string                  `json:"write_timeout"`
+	FrameMinSize   int                     `json:"frame_min_size"`
+	FrameMidSize   int                     `json:"frame_mid_size"`
+	FrameMaxSize   int                     `json:"frame_max_size"`
 	RelayRequests  clientRelayRequestStats `json:"relay_requests"`
 	Totals         clientTotals            `json:"totals"`
 	Routes         []clientRouteStatus     `json:"routes"`
@@ -1743,6 +1847,10 @@ func buildClientStatus(pool *SessionPool) clientStatusResponse {
 		ClientID:       clientID,
 		RouteSelection: string(pool.strategy),
 		SessionCount:   sessionCount,
+		WriteTimeout:   writeTimeout.String(),
+		FrameMinSize:   minFramePayload,
+		FrameMidSize:   midFramePayload,
+		FrameMaxSize:   maxFramePayload,
 		RelayRequests: clientRelayRequestStats{
 			Started:   atomic.LoadUint64(&relayRequestsStarted),
 			Succeeded: atomic.LoadUint64(&relayRequestsSucceeded),
