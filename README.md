@@ -192,6 +192,28 @@ Client on the client-side VPS:
 ./furo-client -c config.client.json
 ```
 
+### systemd service manager
+
+The repo ships a single helper script, `service.sh`, for creating and managing either a `furo-server` or `furo-client` systemd unit from the project directory.
+
+Examples:
+
+```bash
+./service.sh server init
+./service.sh server enable
+./service.sh server start
+
+./service.sh client init
+./service.sh client restart
+./service.sh client status
+```
+
+Behavior:
+
+- `init` prompts for the service name and description.
+- `init` infers `WorkingDirectory` from the script location and `ExecStart` from either `./furo-server -c config.server.json` or `./furo-client -c config.client.json`.
+- Other commands fail with a clear message until `init` has been completed for that role.
+
 Relay path inspection from the client-side VPS:
 
 ```bash
