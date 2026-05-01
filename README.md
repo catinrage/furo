@@ -150,6 +150,8 @@ Key fields in `config.client.json` under `airs`:
   Scheduled renewal interval. Set to `0` to disable scheduled renewals and renew only after inspect failures.
 - `check_interval_seconds`
   How often AIRS runs the lightweight `inspect` check. This cannot be disabled.
+- `failure_confirm_attempts` / `failure_confirm_interval_seconds`
+  Extra inspect retries before renewing after a failed health check. Defaults to 3 retries, 4 seconds apart.
 - `log_file`
   AIRS log path. Empty disables AIRS logs.
 - `switch_script`

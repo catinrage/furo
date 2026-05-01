@@ -21,13 +21,15 @@ import (
 )
 
 const (
-	airsBaseURL              = "https://napi.arvancloud.ir/ecc/v1"
-	airsDefaultConfigPath    = "config.client.json"
-	airsDefaultCheckInterval = 10
-	airsDefaultIPType        = "ipv4"
-	airsRequestTimeout       = 60 * time.Second
-	airsRenewTimeout         = 8 * time.Minute
-	airsPollInterval         = 5 * time.Second
+	airsBaseURL                       = "https://napi.arvancloud.ir/ecc/v1"
+	airsDefaultConfigPath             = "config.client.json"
+	airsDefaultCheckInterval          = 10
+	airsDefaultFailureConfirmAttempts = 3
+	airsDefaultFailureConfirmInterval = 4
+	airsDefaultIPType                 = "ipv4"
+	airsRequestTimeout                = 60 * time.Second
+	airsRenewTimeout                  = 8 * time.Minute
+	airsPollInterval                  = 5 * time.Second
 )
 
 var (
@@ -55,6 +57,8 @@ type airsConfig struct {
 	FixedPublicIP             string `json:"fixed_public_ip,omitempty"`
 	AutoRenewIntervalSeconds  int    `json:"auto_renew_interval_seconds"`
 	CheckIntervalSeconds      int    `json:"check_interval_seconds"`
+	FailureConfirmAttempts    int    `json:"failure_confirm_attempts,omitempty"`
+	FailureConfirmSeconds     int    `json:"failure_confirm_interval_seconds,omitempty"`
 	LogFile                   string `json:"log_file"`
 	SwitchScript              string `json:"switch_script,omitempty"`
 	InspectBinary             string `json:"inspect_binary,omitempty"`
@@ -82,6 +86,8 @@ type airsRuntimeConfig struct {
 	FixedPublicIP             string
 	AutoRenewInterval         time.Duration
 	CheckInterval             time.Duration
+	FailureConfirmAttempts    int
+	FailureConfirmInterval    time.Duration
 	LogFile                   string
 	SwitchScript              string
 	InspectBinary             string
@@ -197,6 +203,12 @@ func loadAIRSConfig(path string) (airsRuntimeConfig, error) {
 	if cfg.CheckIntervalSeconds <= 0 {
 		cfg.CheckIntervalSeconds = airsDefaultCheckInterval
 	}
+	if cfg.FailureConfirmAttempts <= 0 {
+		cfg.FailureConfirmAttempts = airsDefaultFailureConfirmAttempts
+	}
+	if cfg.FailureConfirmSeconds <= 0 {
+		cfg.FailureConfirmSeconds = airsDefaultFailureConfirmInterval
+	}
 	if cfg.SwitchScript == "" {
 		cfg.SwitchScript = "switch-outbound-ip.sh"
 	}
@@ -251,6 +263,8 @@ func loadAIRSConfig(path string) (airsRuntimeConfig, error) {
 		FixedPublicIP:             cfg.FixedPublicIP,
 		AutoRenewInterval:         time.Duration(cfg.AutoRenewIntervalSeconds) * time.Second,
 		CheckInterval:             time.Duration(cfg.CheckIntervalSeconds) * time.Second,
+		FailureConfirmAttempts:    cfg.FailureConfirmAttempts,
+		FailureConfirmInterval:    time.Duration(cfg.FailureConfirmSeconds) * time.Second,
 		LogFile:                   resolveOptionalAIRSPath(workDir, cfg.LogFile),
 		SwitchScript:              resolveAIRSPath(workDir, cfg.SwitchScript),
 		InspectBinary:             resolveAIRSPath(workDir, cfg.InspectBinary),
@@ -310,7 +324,13 @@ func (m *airsManager) close() {
 }
 
 func (m *airsManager) run(ctx context.Context) {
-	m.logf("started check_interval=%s auto_renew_interval=%s", m.cfg.CheckInterval, m.cfg.AutoRenewInterval)
+	m.logf(
+		"started check_interval=%s auto_renew_interval=%s failure_confirm_attempts=%d failure_confirm_interval=%s",
+		m.cfg.CheckInterval,
+		m.cfg.AutoRenewInterval,
+		m.cfg.FailureConfirmAttempts,
+		m.cfg.FailureConfirmInterval,
+	)
 
 	checkTicker := time.NewTicker(m.cfg.CheckInterval)
 	defer checkTicker.Stop()
@@ -331,6 +351,10 @@ func (m *airsManager) run(ctx context.Context) {
 		case <-checkTicker.C:
 			if err := m.inspect(ctx); err != nil {
 				m.logf("inspect failed: %v", err)
+				if m.confirmInspectRecovered(ctx) {
+					continue
+				}
+				m.logf("inspect failure confirmed after %d retries; starting renew", m.cfg.FailureConfirmAttempts)
 				if err := m.renew(ctx, "inspect failure"); err != nil {
 					m.logf("renew after inspect failure failed: %v", err)
 				}
@@ -343,6 +367,28 @@ func (m *airsManager) run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (m *airsManager) confirmInspectRecovered(ctx context.Context) bool {
+	for attempt := 1; attempt <= m.cfg.FailureConfirmAttempts; attempt++ {
+		m.logf(
+			"inspect failure confirmation waiting retry=%d/%d delay=%s",
+			attempt,
+			m.cfg.FailureConfirmAttempts,
+			m.cfg.FailureConfirmInterval,
+		)
+		if err := sleepContext(ctx, m.cfg.FailureConfirmInterval); err != nil {
+			m.logf("inspect failure confirmation stopped: %v", err)
+			return true
+		}
+		if err := m.inspect(ctx); err != nil {
+			m.logf("inspect confirmation retry failed retry=%d/%d err=%v", attempt, m.cfg.FailureConfirmAttempts, err)
+			continue
+		}
+		m.logf("inspect recovered on confirmation retry=%d/%d; skipping renew", attempt, m.cfg.FailureConfirmAttempts)
+		return true
+	}
+	return false
 }
 
 func (m *airsManager) inspect(ctx context.Context) error {
