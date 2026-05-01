@@ -81,6 +81,9 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/inspect" ./inspect.go
 
           cp furo-relay.php "${RELEASE_DIR}/"
+          cp furo-route-diagnostics.php "${RELEASE_DIR}/"
+          cp service.sh "${RELEASE_DIR}/"
+          cp scripts/optimize-vps-network.sh "${RELEASE_DIR}/"
           cp config.client.json.example "${RELEASE_DIR}/"
           cp config.server.json.example "${RELEASE_DIR}/"
           cp README.md "${RELEASE_DIR}/"

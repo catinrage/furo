@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +17,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1914,8 +1919,308 @@ func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+const adminCookieName = "furo_client_admin"
+
+type adminPageData struct {
+	Status       clientStatusResponse
+	Config       string
+	ConfigPath   string
+	Message      string
+	Error        string
+	ServiceName  string
+	ServiceState string
+}
+
+func adminAuthToken() string {
+	mac := hmac.New(sha256.New, []byte(apiKey))
+	_, _ = mac.Write([]byte("furo-client-admin-panel-v1"))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func isAdminAuthenticated(r *http.Request) bool {
+	if r.Header.Get("X-API-KEY") == apiKey {
+		return true
+	}
+	cookie, err := r.Cookie(adminCookieName)
+	if err != nil {
+		return false
+	}
+	return hmac.Equal([]byte(cookie.Value), []byte(adminAuthToken()))
+}
+
+func setAdminAuthCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCookieName,
+		Value:    adminAuthToken(),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+		MaxAge:   12 * 60 * 60,
+	})
+}
+
+func clearAdminAuthCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   -1,
+	})
+}
+
+func readClientConfigForPanel() (string, error) {
+	data, err := os.ReadFile(*configPath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func saveClientConfigFromPanel(content string) error {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	return os.WriteFile(*configPath, []byte(content), 0644)
+}
+
+func serviceScriptPath() (string, error) {
+	candidates := make([]string, 0, 3)
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "service.sh"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "service.sh"))
+	}
+	candidates = append(candidates, filepath.Join(filepath.Dir(*configPath), "service.sh"))
+
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("service.sh not found next to working directory, binary, or config")
+}
+
+func runClientServiceCommand(action string) (string, error) {
+	switch action {
+	case "start", "stop", "restart", "enable", "disable", "status", "stateus":
+	default:
+		return "", fmt.Errorf("unsupported service action %q", action)
+	}
+
+	script, err := serviceScriptPath()
+	if err != nil {
+		return "", err
+	}
+
+	if action == "stop" || action == "restart" {
+		cmd := exec.Command("/bin/sh", "-c", fmt.Sprintf("sleep 1; bash %s client %s >/tmp/furo-client-service-control.log 2>&1", shellQuote(script), shellQuote(action)))
+		if err := cmd.Start(); err != nil {
+			return "", err
+		}
+		return "scheduled " + action + "; output will be written to /tmp/furo-client-service-control.log", nil
+	}
+
+	cmd := exec.Command("bash", script, "client", action)
+	cmd.Dir = filepath.Dir(script)
+	output, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func renderAdminLogin(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, adminLoginHTML, htmlEscape(message))
+}
+
+func renderAdminPanel(w http.ResponseWriter, data adminPageData) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(
+		w,
+		adminPanelHTML,
+		htmlEscape(data.Status.Service),
+		htmlEscape(data.Status.ClientID),
+		htmlEscape(data.Status.RouteSelection),
+		data.Status.Totals.ReadySessions,
+		data.Status.Totals.ConnectedSessions,
+		data.Status.Totals.ActiveStreams,
+		htmlEscape(data.ConfigPath),
+		htmlEscape(data.Config),
+		htmlEscape(data.Message),
+		htmlEscape(data.Error),
+		htmlEscape(data.ServiceName),
+		htmlEscape(data.ServiceState),
+	)
+}
+
+func htmlEscape(value string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&#39;",
+	)
+	return replacer.Replace(value)
+}
+
+func buildAdminPageData(pool *SessionPool, message, errMessage string) adminPageData {
+	configContent, err := readClientConfigForPanel()
+	if err != nil && errMessage == "" {
+		errMessage = "read config: " + err.Error()
+	}
+	serviceState, serviceErr := runClientServiceCommand("status")
+	if serviceErr != nil {
+		if serviceState == "" {
+			serviceState = serviceErr.Error()
+		} else {
+			serviceState += "\n" + serviceErr.Error()
+		}
+	}
+	return adminPageData{
+		Status:       buildClientStatus(pool),
+		Config:       configContent,
+		ConfigPath:   *configPath,
+		Message:      message,
+		Error:        errMessage,
+		ServiceName:  "furo-client",
+		ServiceState: serviceState,
+	}
+}
+
+const adminLoginHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FURO Client Panel</title>
+<style>
+:root{color-scheme:light;--bg:#f4f7fb;--panel:#ffffff;--text:#172033;--muted:#68758c;--line:#dbe3ef;--accent:#0f8f83;--accent-2:#246bfe;--danger:#d33d52;--shadow:0 18px 45px rgba(28,42,68,.12)}
+[data-theme=dark]{color-scheme:dark;--bg:#11151c;--panel:#181e28;--text:#eef3fb;--muted:#9aa8bc;--line:#2c3544;--accent:#23c6a6;--accent-2:#6ea1ff;--danger:#ff6b7e;--shadow:0 22px 55px rgba(0,0,0,.35)}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:24px}.card{width:min(420px,calc(100vw - 32px));background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:28px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:26px}.brand{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:grid;place-items:center;color:white}.mark svg{width:28px;height:28px}.pulse{animation:pulse 2.2s ease-in-out infinite}.toggle{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:8px;padding:8px 10px;cursor:pointer}h1{font-size:22px;line-height:1.2;margin:0}p{color:var(--muted);line-height:1.6;margin:0 0 22px}.error{color:var(--danger);min-height:24px;margin-bottom:8px}label{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}input{width:100%%;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--text);padding:13px 14px;font:inherit;outline:none}input:focus{border-color:var(--accent-2);box-shadow:0 0 0 3px rgba(36,107,254,.14)}button.primary{width:100%%;margin-top:16px;border:0;border-radius:8px;background:var(--text);color:var(--panel);padding:13px 16px;font-weight:700;cursor:pointer}@keyframes pulse{0%%,100%%{transform:scale(.92);opacity:.75}50%%{transform:scale(1.08);opacity:1}}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="top">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 48 48" fill="none"><circle class="pulse" cx="24" cy="24" r="13" stroke="currentColor" stroke-width="5"/><path d="M8 25h9l5-13 8 25 4-12h6" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div><h1>FURO Client</h1><p style="margin:0">Control panel</p></div>
+    </div>
+    <button class="toggle" type="button" id="theme">Theme</button>
+  </div>
+  <p>Enter the configured API key to manage the client configuration and local service.</p>
+  <div class="error">%s</div>
+  <form method="post" action="/login">
+    <label for="api_key">API key</label>
+    <input id="api_key" name="api_key" type="password" autocomplete="current-password" autofocus required>
+    <button class="primary" type="submit">Unlock</button>
+  </form>
+</main>
+<script>
+const key='furo-client-panel-theme',root=document.documentElement,saved=localStorage.getItem(key)||'light';root.dataset.theme=saved;
+document.getElementById('theme').onclick=()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem(key,next)};
+</script>
+</body>
+</html>`
+
+const adminPanelHTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FURO Client Panel</title>
+<style>
+:root{color-scheme:light;--bg:#f5f7fb;--panel:#fff;--panel-2:#eef3f8;--text:#141d2b;--muted:#667289;--line:#dce4ef;--accent:#0d9488;--blue:#2563eb;--danger:#d9465d;--warn:#d97706;--ok:#15803d;--shadow:0 16px 38px rgba(31,45,71,.1)}
+[data-theme=dark]{color-scheme:dark;--bg:#10141b;--panel:#171d27;--panel-2:#202938;--text:#eef4fb;--muted:#9aa8bb;--line:#2c3646;--accent:#22c7a7;--blue:#73a4ff;--danger:#ff6f83;--warn:#f5b04d;--ok:#5ad17c;--shadow:0 20px 50px rgba(0,0,0,.32)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{width:min(1180px,calc(100vw - 32px));margin:0 auto;padding:24px 0 36px}.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--blue));display:grid;place-items:center;color:white}.mark svg{width:28px;height:28px}.pulse{animation:pulse 2.2s ease-in-out infinite}h1{font-size:22px;margin:0;line-height:1.15}p{margin:0;color:var(--muted)}button,a.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:10px 12px;font:inherit;cursor:pointer;text-decoration:none}.primary{background:var(--text);color:var(--panel);border-color:var(--text);font-weight:700}.danger{color:var(--danger)}.actions{display:flex;gap:8px;flex-wrap:wrap}.grid{display:grid;grid-template-columns:1fr 360px;gap:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:12px}.stat strong{display:block;font-size:24px}.stat span{color:var(--muted);font-size:13px}.notice{border-radius:8px;padding:12px;margin-bottom:14px;background:var(--panel-2);border:1px solid var(--line);white-space:pre-wrap}.notice.ok{color:var(--ok)}.notice.err{color:var(--danger)}label{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}textarea{width:100%%;min-height:560px;resize:vertical;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;color:var(--text);font:13px ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.55;padding:14px;outline:none}textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.15)}.meta{display:grid;gap:10px}.row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row span{color:var(--muted)}pre{white-space:pre-wrap;word-break:break-word;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:12px;max-height:280px;overflow:auto;font-size:12px}.service-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}@media(max-width:880px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr}.shell{width:min(100vw - 20px,1180px);padding-top:16px}.bar{align-items:flex-start;flex-direction:column}.actions{width:100%%}}@keyframes pulse{0%%,100%%{transform:scale(.92);opacity:.75}50%%{transform:scale(1.08);opacity:1}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="bar">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 48 48" fill="none"><circle class="pulse" cx="24" cy="24" r="13" stroke="currentColor" stroke-width="5"/><path d="M8 25h9l5-13 8 25 4-12h6" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div><h1>%s</h1><p>%s · %s</p></div>
+    </div>
+    <div class="actions"><button type="button" id="theme">Theme</button><a class="btn" href="/status">JSON status</a><a class="btn" href="/logout">Lock</a></div>
+  </header>
+  <section class="stats">
+    <div class="stat"><strong>%d</strong><span>Ready sessions</span></div>
+    <div class="stat"><strong>%d</strong><span>Connected sessions</span></div>
+    <div class="stat"><strong>%d</strong><span>Active streams</span></div>
+  </section>
+  <div class="grid">
+    <section class="panel">
+      <form method="post" action="/config">
+        <label for="config">Config file: %s</label>
+        <textarea id="config" name="config" spellcheck="false">%s</textarea>
+        <div class="actions" style="margin-top:12px"><button class="primary" type="submit">Save config</button></div>
+      </form>
+    </section>
+    <aside class="panel">
+      <div class="notice ok">%s</div>
+      <div class="notice err">%s</div>
+      <div class="meta">
+        <div class="row"><span>Service</span><strong>%s</strong></div>
+      </div>
+      <form method="post" action="/service" class="service-buttons">
+        <button name="action" value="start">Start</button>
+        <button name="action" value="stop" class="danger">Stop</button>
+        <button name="action" value="restart">Restart</button>
+        <button name="action" value="status">Status</button>
+        <button name="action" value="enable">Enable</button>
+        <button name="action" value="disable">Disable</button>
+      </form>
+      <label>Service output</label>
+      <pre>%s</pre>
+    </aside>
+  </div>
+</main>
+<script>
+const key='furo-client-panel-theme',root=document.documentElement,saved=localStorage.getItem(key)||'light';root.dataset.theme=saved;
+document.getElementById('theme').onclick=()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem(key,next)};
+</script>
+</body>
+</html>`
+
 func runClientAdminServer(pool *SessionPool) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		if !isAdminAuthenticated(r) {
+			renderAdminLogin(w, "")
+			return
+		}
+		renderAdminPanel(w, buildAdminPageData(pool, "", ""))
+	})
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		if r.FormValue("api_key") != apiKey {
+			renderAdminLogin(w, "Invalid API key")
+			return
+		}
+		setAdminAuthCookie(w, r)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
+	mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+		clearAdminAuthCookie(w)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		status := buildClientStatus(pool)
 		code := http.StatusOK
@@ -1930,6 +2235,42 @@ func runClientAdminServer(pool *SessionPool) error {
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, buildClientStatus(pool))
+	})
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdminAuthenticated(r) {
+			http.Error(w, "unauthorized", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		content := r.FormValue("config")
+		if err := saveClientConfigFromPanel(content); err != nil {
+			renderAdminPanel(w, buildAdminPageData(pool, "", err.Error()))
+			return
+		}
+		renderAdminPanel(w, buildAdminPageData(pool, "Config saved. Restart the service to apply it.", ""))
+	})
+	mux.HandleFunc("/service", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdminAuthenticated(r) {
+			http.Error(w, "unauthorized", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		action := r.FormValue("action")
+		output, err := runClientServiceCommand(action)
+		if err != nil {
+			renderAdminPanel(w, buildAdminPageData(pool, output, err.Error()))
+			return
+		}
+		if output == "" {
+			output = "service " + action + " completed"
+		}
+		renderAdminPanel(w, buildAdminPageData(pool, output, ""))
 	})
 
 	server := &http.Server{

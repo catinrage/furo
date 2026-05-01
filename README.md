@@ -263,6 +263,8 @@ Both Go binaries now support a small admin HTTP surface when `admin_listen` is s
   Lightweight health probe.
 - `GET /status`
   JSON status snapshot with version, uptime, counters, and per-session state.
+- `GET /` on `furo-client`
+  Browser panel protected by the configured `api_key`. The panel can edit the client config file and invoke `service.sh client` actions such as `start`, `stop`, `restart`, `enable`, `disable`, and `status`.
 
 Example:
 
@@ -341,6 +343,9 @@ The tarball contains:
 - `furo-server`
 - `inspect`
 - `furo-relay.php`
+- `furo-route-diagnostics.php`
+- `service.sh`
+- `scripts/optimize-vps-network.sh`
 - `config.client.json.example`
 - `config.server.json.example`
 - `README.md`

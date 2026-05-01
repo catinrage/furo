@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -56,6 +57,32 @@ func TestClientEncodeOpenPayload(t *testing.T) {
 	}
 	if got := binary.BigEndian.Uint16(payload[2+hostLen:]); got != 443 {
 		t.Fatalf("encoded port = %d, want 443", got)
+	}
+}
+
+func TestAdminAuthCookieAllowsPanelAccess(t *testing.T) {
+	originalAPIKey := apiKey
+	t.Cleanup(func() { apiKey = originalAPIKey })
+	apiKey = "panel-secret"
+
+	req := httptest.NewRequest("GET", "/", nil)
+	if isAdminAuthenticated(req) {
+		t.Fatal("isAdminAuthenticated() = true without API key or cookie")
+	}
+
+	req.Header.Set("X-API-KEY", apiKey)
+	if !isAdminAuthenticated(req) {
+		t.Fatal("isAdminAuthenticated() = false with X-API-KEY")
+	}
+
+	req = httptest.NewRequest("GET", "/", nil)
+	rec := httptest.NewRecorder()
+	setAdminAuthCookie(rec, req)
+	for _, cookie := range rec.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	if !isAdminAuthenticated(req) {
+		t.Fatal("isAdminAuthenticated() = false with auth cookie")
 	}
 }
 
