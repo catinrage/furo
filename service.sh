@@ -12,11 +12,12 @@ SERVICE_USER="${SERVICE_USER:-root}"
 usage() {
     cat <<'EOF'
 Usage:
-  ./service.sh <server|client> <init|start|stop|restart|status|enable|disable|stateus>
+  ./service.sh <server|client|airs> <init|start|stop|restart|status|enable|disable|stateus>
 
 Examples:
   ./service.sh server init
   ./service.sh client start
+  ./service.sh airs init
   ./service.sh server status
 
 Notes:
@@ -36,8 +37,8 @@ require_command() {
 
 validate_role() {
     case "$1" in
-        server|client) ;;
-        *) fail "invalid role '$1'; expected 'server' or 'client'" ;;
+        server|client|airs) ;;
+        *) fail "invalid role '$1'; expected 'server', 'client', or 'airs'" ;;
     esac
 }
 
@@ -56,6 +57,12 @@ set_role_vars() {
             ROLE_CONFIG="config.client.json"
             ROLE_DESCRIPTION_DEFAULT="Furo Client"
             ROLE_SERVICE_DEFAULT="furo-client"
+            ;;
+        airs)
+            ROLE_BINARY="furo-airs"
+            ROLE_CONFIG="config.client.json"
+            ROLE_DESCRIPTION_DEFAULT="Furo AIRS"
+            ROLE_SERVICE_DEFAULT="furo-airs"
             ;;
     esac
 

@@ -4,6 +4,7 @@ FURO is a TCP tunnel that keeps a PHP host in the middle of the path.
 
 - `furo-client.go` runs on the client-side VPS and exposes a local SOCKS5 proxy.
 - `furo-server.go` runs on the exit VPS and dials final internet targets.
+- `furo-airs.go` optionally renews the ArvanCloud public IP used by the client VPS.
 - `furo-relay.php` runs on a PHP host and bridges long-lived client/server sessions.
 
 The design goal is to keep the PHP host in the traffic path without falling back to per-connection HTTP polling. FURO keeps a small pool of long-lived relay sessions open and multiplexes SOCKS streams across them.
@@ -113,6 +114,8 @@ Key fields in `config.client.json`:
   Optional debug log path. Empty disables debug logs.
 - `routes`
   List of `relay -> server` paths that the client may use.
+- `airs`
+  Optional Arvan IP Renew System config. AIRS shares this client config, periodically or reactively adds a fresh Arvan public IP, detaches the old public IP using the IP-specific `port_id`, switches the VPS outbound source IP, updates `public_host`, runs `inspect`, and restarts the client service.
 
 Each route entry supports:
 
@@ -132,6 +135,29 @@ Each route entry supports:
 Route selection always filters to healthy ready paths first, so dead routes automatically drop out of consideration. `least_load` chooses the least busy ready session, while `least_latency` chooses the route with the best recent relay request latency and then the least busy session on that route.
 
 Legacy single-route configs using top-level `relay_url`, `server_host`, `server_port`, and `session_count` are still accepted for backward compatibility.
+
+### AIRS config
+
+Key fields in `config.client.json` under `airs`:
+
+- `arvan_api_key`
+  ArvanCloud API key, including the `apikey ` prefix.
+- `arvan_region` / `arvan_server_id`
+  ArvanCloud region and server UUID for the client VPS.
+- `fixed_public_ip`
+  Optional public IP that AIRS must never detach. Use this for SSH, inbounds, and any stable address you want to keep attached while `public_host` rotates.
+- `auto_renew_interval_seconds`
+  Scheduled renewal interval. Set to `0` to disable scheduled renewals and renew only after inspect failures.
+- `check_interval_seconds`
+  How often AIRS runs the lightweight `inspect` check. This cannot be disabled.
+- `log_file`
+  AIRS log path. Empty disables AIRS logs.
+- `switch_script`
+  Script used to change the outbound source IP. Defaults to `./switch-outbound-ip.sh` and is called non-interactively.
+- `inspect_binary`
+  Path to `inspect`. AIRS assumes this lives in the same directory unless configured otherwise.
+- `service_script` / `client_service_role`
+  Service manager command used after a successful renewal. Defaults to `./service.sh client restart`.
 
 ### Server config
 
@@ -177,6 +203,7 @@ If `go` is on `PATH`:
 ```bash
 go build -o furo-client ./furo-client.go
 go build -o furo-server ./furo-server.go
+go build -o furo-airs ./furo-airs.go
 go build -o inspect ./inspect.go
 ```
 
@@ -185,6 +212,7 @@ Print embedded build metadata:
 ```bash
 ./furo-client --version
 ./furo-server --version
+./furo-airs --help
 ./inspect --help
 ```
 
@@ -202,9 +230,20 @@ Client on the client-side VPS:
 ./furo-client -c config.client.json
 ```
 
+AIRS on the client-side VPS:
+
+```bash
+./furo-airs -c config.client.json
+./furo-airs -c config.client.json --verbose
+./furo-airs -c config.client.json --once
+./furo-airs -c config.client.json --check-once
+```
+
+`--once` and `--check-once` print step-by-step logs to the terminal automatically. Use `--verbose` when running the continuous daemon in the foreground and you also want logs on stdout.
+
 ### systemd service manager
 
-The repo ships a single helper script, `service.sh`, for creating and managing either a `furo-server` or `furo-client` systemd unit from the project directory.
+The repo ships a single helper script, `service.sh`, for creating and managing `furo-server`, `furo-client`, and `furo-airs` systemd units from the project directory.
 
 Examples:
 
@@ -216,12 +255,16 @@ Examples:
 ./service.sh client init
 ./service.sh client restart
 ./service.sh client status
+
+./service.sh airs init
+./service.sh airs enable
+./service.sh airs start
 ```
 
 Behavior:
 
 - `init` prompts for the service name and description.
-- `init` infers `WorkingDirectory` from the script location and `ExecStart` from either `./furo-server -c config.server.json` or `./furo-client -c config.client.json`.
+- `init` infers `WorkingDirectory` from the script location and `ExecStart` from `./furo-server -c config.server.json`, `./furo-client -c config.client.json`, or `./furo-airs -c config.client.json`.
 - Other commands fail with a clear message until `init` has been completed for that role.
 
 Relay path inspection from the client-side VPS:
@@ -341,10 +384,12 @@ The tarball contains:
 
 - `furo-client`
 - `furo-server`
+- `furo-airs`
 - `inspect`
 - `furo-relay.php`
 - `furo-route-diagnostics.php`
 - `service.sh`
+- `switch-outbound-ip.sh`
 - `scripts/optimize-vps-network.sh`
 - `config.client.json.example`
 - `config.server.json.example`
