@@ -214,7 +214,7 @@ Print embedded build metadata:
 ```bash
 ./furo-client --version
 ./furo-server --version
-./furo-airs --help
+./furo-airs --version
 ./inspect --help
 ```
 
@@ -261,10 +261,15 @@ Examples:
 ./service.sh airs init
 ./service.sh airs enable
 ./service.sh airs start
+
+./service.sh update
 ```
 
 Behavior:
 
+- `update` checks GitHub releases for `catinrage/furo`, downloads the newest Linux amd64 tarball, verifies the SHA-256 asset when present, installs all release-managed files, preserves real `config.*.json` files, and restarts any Furo systemd services that were active before the update.
+- `update --force` reinstalls the newest release even when the local binary reports the same version.
+- `update` includes prereleases by default so `main` branch release builds are eligible. Set `FURO_UPDATE_INCLUDE_PRERELEASE=0` to use only stable tag releases.
 - `init` prompts for the service name and description.
 - `init` infers `WorkingDirectory` from the script location and `ExecStart` from `./furo-server -c config.server.json`, `./furo-client -c config.client.json`, or `./furo-airs -c config.client.json`.
 - Other commands fail with a clear message until `init` has been completed for that role.

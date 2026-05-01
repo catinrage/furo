@@ -37,6 +37,13 @@ var (
 	airsOnce       = flag.Bool("once", false, "Run one renewal and exit")
 	airsCheckOnce  = flag.Bool("check-once", false, "Run one inspect check and exit")
 	airsVerbose    = flag.Bool("verbose", false, "Print AIRS logs to stdout")
+	airsVersion    = flag.Bool("version", false, "Print version and exit")
+)
+
+var (
+	appVersion   = "dev"
+	appCommit    = "unknown"
+	appBuildDate = "unknown"
 )
 
 type airsClientConfig struct {
@@ -152,6 +159,11 @@ type airsManager struct {
 
 func main() {
 	flag.Parse()
+
+	if *airsVersion {
+		fmt.Printf("furo-airs version=%s commit=%s built=%s\n", appVersion, appCommit, appBuildDate)
+		return
+	}
 
 	cfg, err := loadAIRSConfig(*airsConfigPath)
 	if err != nil {

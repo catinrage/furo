@@ -8,19 +8,26 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 SERVICE_DIR="${SYSTEMD_SERVICE_DIR:-/etc/systemd/system}"
 SERVICE_USER="${SERVICE_USER:-root}"
+FURO_UPDATE_REPO="${FURO_UPDATE_REPO:-catinrage/furo}"
+FURO_UPDATE_API_URL="${FURO_UPDATE_API_URL:-https://api.github.com/repos/${FURO_UPDATE_REPO}/releases}"
+FURO_UPDATE_INCLUDE_PRERELEASE="${FURO_UPDATE_INCLUDE_PRERELEASE:-1}"
 
 usage() {
     cat <<'EOF'
 Usage:
+  ./service.sh update [--force]
   ./service.sh <server|client|airs> <init|start|stop|restart|status|enable|disable|stateus>
 
 Examples:
+  ./service.sh update
   ./service.sh server init
   ./service.sh client start
   ./service.sh airs init
   ./service.sh server status
 
 Notes:
+  - 'update' downloads the newest GitHub release and updates all release-managed files.
+  - 'update' preserves real config.*.json files.
   - Run 'init' once per role before using other commands.
   - 'stateus' is accepted as an alias for 'status'.
 EOF
@@ -33,6 +40,254 @@ fail() {
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+download_file() {
+    local url="$1"
+    local output="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        local args=(-fsSL)
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+            args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+        fi
+        args+=(-H "Accept: application/vnd.github+json" -o "$output" "$url")
+        curl "${args[@]}"
+        return
+    fi
+
+    if command -v wget >/dev/null 2>&1; then
+        local args=(-q -O "$output")
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+            args+=(--header "Authorization: Bearer ${GITHUB_TOKEN}")
+        fi
+        args+=(--header "Accept: application/vnd.github+json" "$url")
+        wget "${args[@]}"
+        return
+    fi
+
+    fail "required command not found: curl or wget"
+}
+
+current_install_version() {
+    local binary
+    local output
+
+    for binary in furo-client furo-server furo-airs; do
+        if [[ ! -x "$SCRIPT_DIR/$binary" ]]; then
+            continue
+        fi
+        output="$("$SCRIPT_DIR/$binary" --version 2>/dev/null || true)"
+        if [[ "$output" =~ version=([^[:space:]]+) ]]; then
+            printf '%s' "${BASH_REMATCH[1]}"
+            return
+        fi
+    done
+
+    printf 'dev'
+}
+
+select_update_release() {
+    local releases_json="$1"
+    local include_prerelease="$2"
+
+    require_command python3
+    python3 - "$releases_json" "$include_prerelease" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+include_prerelease = sys.argv[2] == "1"
+
+with open(path, "r", encoding="utf-8") as fh:
+    releases = json.load(fh)
+
+if not isinstance(releases, list):
+    raise SystemExit("GitHub releases response was not a list")
+
+for release in releases:
+    if release.get("draft"):
+        continue
+    if release.get("prerelease") and not include_prerelease:
+        continue
+
+    tar_asset = None
+    sha_asset = None
+    for asset in release.get("assets", []):
+        name = asset.get("name") or ""
+        if name.endswith("_linux_amd64.tar.gz"):
+            tar_asset = asset
+        elif name.endswith("_linux_amd64.tar.gz.sha256"):
+            sha_asset = asset
+
+    if not tar_asset:
+        continue
+
+    values = [
+        release.get("name") or release.get("tag_name") or "",
+        release.get("tag_name") or "",
+        release.get("published_at") or "",
+        tar_asset.get("browser_download_url") or "",
+        tar_asset.get("name") or "",
+        (sha_asset or {}).get("browser_download_url") or "",
+        (sha_asset or {}).get("name") or "",
+    ]
+    print("\t".join(values))
+    raise SystemExit(0)
+
+raise SystemExit("no suitable linux amd64 release asset found")
+PY
+}
+
+verify_archive_checksum() {
+    local archive="$1"
+    local checksum_file="$2"
+    local expected
+    local actual
+
+    require_command sha256sum
+    expected="$(awk 'NF >= 1 {print $1; exit}' "$checksum_file")"
+    [[ -n "$expected" ]] || fail "empty checksum file"
+    actual="$(sha256sum "$archive" | awk '{print $1}')"
+    [[ "$actual" == "$expected" ]] || fail "checksum mismatch for downloaded release"
+}
+
+copy_release_tree() {
+    local release_root="$1"
+    local rel
+
+    (cd "$release_root" && find . -mindepth 1 -print0) |
+        while IFS= read -r -d '' rel; do
+            rel="${rel#./}"
+            case "$rel" in
+                config.*.json)
+                    printf 'Preserving existing %s\n' "$rel"
+                    continue
+                    ;;
+            esac
+
+            if [[ -d "$release_root/$rel" ]]; then
+                mkdir -p "$SCRIPT_DIR/$rel"
+            else
+                mkdir -p "$(dirname "$SCRIPT_DIR/$rel")"
+                cp -a "$release_root/$rel" "$SCRIPT_DIR/$rel"
+            fi
+        done
+}
+
+optional_service_name() {
+    local role="$1"
+    local name_file
+    local service_name
+
+    name_file="$(service_name_file_path "$role")"
+    [[ -f "$name_file" ]] || return 1
+    service_name="$(tr -d '\r\n' <"$name_file")"
+    [[ -n "$service_name" ]] || return 1
+    validate_service_name "$service_name"
+    printf '%s' "$service_name"
+}
+
+restart_active_services() {
+    local services=("$@")
+    local service_name
+
+    if [[ ${#services[@]} -eq 0 ]]; then
+        printf 'No active Furo systemd services were detected before update.\n'
+        return
+    fi
+
+    require_command "$SYSTEMCTL_BIN"
+    run_systemctl daemon-reload
+
+    for service_name in "${services[@]}"; do
+        printf 'Restarting %s\n' "$service_name"
+        run_systemctl restart "$service_name"
+    done
+}
+
+update_install() {
+    local force="${1:-}"
+    [[ "$force" == "" || "$force" == "--force" ]] || fail "unsupported update option '$force'"
+
+    require_command tar
+    require_command find
+    require_command awk
+
+    local current_version
+    local tmp_dir
+    local releases_json
+    local release_line
+    local release_version
+    local release_tag
+    local release_published_at
+    local archive_url
+    local archive_name
+    local checksum_url
+    local checksum_name
+    local archive_path
+    local checksum_path
+    local extract_dir
+    local release_root
+    local active_services=()
+    local role
+    local service_name
+
+    current_version="$(current_install_version)"
+    tmp_dir="$(mktemp -d)"
+    trap '[[ -n "${tmp_dir:-}" ]] && rm -rf "$tmp_dir"' RETURN
+
+    releases_json="$tmp_dir/releases.json"
+    printf 'Checking %s for releases...\n' "$FURO_UPDATE_REPO"
+    download_file "$FURO_UPDATE_API_URL" "$releases_json"
+
+    release_line="$(select_update_release "$releases_json" "$FURO_UPDATE_INCLUDE_PRERELEASE")"
+    IFS=$'\t' read -r release_version release_tag release_published_at archive_url archive_name checksum_url checksum_name <<<"$release_line"
+
+    [[ -n "$release_version" ]] || fail "release version is empty"
+    [[ -n "$archive_url" ]] || fail "release archive URL is empty"
+
+    printf 'Current version: %s\n' "$current_version"
+    printf 'Latest release: %s (%s)\n' "$release_version" "$release_published_at"
+
+    if [[ "$force" != "--force" && "$current_version" == "$release_version" ]]; then
+        printf 'Already up to date. Use ./service.sh update --force to reinstall this release.\n'
+        return
+    fi
+
+    for role in server client airs; do
+        if service_name="$(optional_service_name "$role")"; then
+            if command -v "$SYSTEMCTL_BIN" >/dev/null 2>&1 && run_systemctl is-active --quiet "$service_name"; then
+                active_services+=("$service_name")
+            fi
+        fi
+    done
+
+    archive_path="$tmp_dir/$archive_name"
+    printf 'Downloading %s\n' "$archive_name"
+    download_file "$archive_url" "$archive_path"
+
+    if [[ -n "$checksum_url" ]]; then
+        checksum_path="$tmp_dir/$checksum_name"
+        printf 'Downloading %s\n' "$checksum_name"
+        download_file "$checksum_url" "$checksum_path"
+        verify_archive_checksum "$archive_path" "$checksum_path"
+        printf 'Checksum verified.\n'
+    else
+        printf 'Warning: no checksum asset found for this release.\n' >&2
+    fi
+
+    extract_dir="$tmp_dir/extract"
+    mkdir -p "$extract_dir"
+    tar -xzf "$archive_path" -C "$extract_dir"
+    release_root="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+    [[ -n "$release_root" && -d "$release_root" ]] || fail "release archive did not contain a top-level directory"
+
+    printf 'Installing release files into %s\n' "$SCRIPT_DIR"
+    copy_release_tree "$release_root"
+
+    restart_active_services "${active_services[@]}"
+    printf 'Update complete: %s -> %s\n' "$current_version" "$release_version"
 }
 
 validate_role() {
@@ -199,6 +454,15 @@ manage_service() {
 }
 
 main() {
+    if [[ $# -ge 1 && "$1" == "update" ]]; then
+        [[ $# -le 2 ]] || {
+            usage
+            exit 1
+        }
+        update_install "${2:-}"
+        return
+    fi
+
     [[ $# -eq 2 ]] || {
         usage
         exit 1
