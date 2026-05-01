@@ -85,6 +85,7 @@ jobs:
           cp furo-route-diagnostics.php "${RELEASE_DIR}/"
           cp service.sh "${RELEASE_DIR}/"
           cp switch-outbound-ip.sh "${RELEASE_DIR}/"
+          cp -R web "${RELEASE_DIR}/"
           cp scripts/optimize-vps-network.sh "${RELEASE_DIR}/"
           cp config.client.json.example "${RELEASE_DIR}/"
           cp config.server.json.example "${RELEASE_DIR}/"

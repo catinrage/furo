@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"math/rand"
@@ -84,6 +85,7 @@ var (
 	routeSelection  routeSelectionStrategy
 	relayURL        string
 	clientRoutes    []clientRouteConfig
+	airsSettings    clientAIRSConfig
 )
 
 var (
@@ -93,26 +95,34 @@ var (
 )
 
 type clientConfigFile struct {
-	ClientID       string                  `json:"client_id"`
-	RouteSelection string                  `json:"route_selection"`
-	Routes         []clientRouteConfigFile `json:"routes"`
-	RelayURL       string                  `json:"relay_url"`
-	APIKey         string                  `json:"api_key"`
-	SOCKSListen    string                  `json:"socks_listen"`
-	AgentListen    string                  `json:"agent_listen"`
-	PublicHost     string                  `json:"public_host"`
-	PublicPort     int                     `json:"public_port"`
-	ServerHost     string                  `json:"server_host"`
-	ServerPort     int                     `json:"server_port"`
-	AdminListen    string                  `json:"admin_listen"`
-	OpenTimeout    string                  `json:"open_timeout"`
-	Keepalive      string                  `json:"keepalive"`
-	WriteTimeout   string                  `json:"write_timeout"`
-	FrameMinSize   int                     `json:"frame_min_size"`
-	FrameMidSize   int                     `json:"frame_mid_size"`
-	FrameMaxSize   int                     `json:"frame_max_size"`
-	SessionCount   int                     `json:"session_count"`
-	LogFile        string                  `json:"log_file"`
+	ClientID           string                  `json:"client_id"`
+	RouteSelection     string                  `json:"route_selection"`
+	Routes             []clientRouteConfigFile `json:"routes"`
+	RelayURL           string                  `json:"relay_url"`
+	APIKey             string                  `json:"api_key"`
+	SOCKSListen        string                  `json:"socks_listen"`
+	AgentListen        string                  `json:"agent_listen"`
+	PublicHost         string                  `json:"public_host"`
+	PublicPort         int                     `json:"public_port"`
+	ServerHost         string                  `json:"server_host"`
+	ServerPort         int                     `json:"server_port"`
+	AdminListen        string                  `json:"admin_listen"`
+	ControlPanelListen string                  `json:"control_panel_listen"`
+	OpenTimeout        string                  `json:"open_timeout"`
+	Keepalive          string                  `json:"keepalive"`
+	WriteTimeout       string                  `json:"write_timeout"`
+	FrameMinSize       int                     `json:"frame_min_size"`
+	FrameMidSize       int                     `json:"frame_mid_size"`
+	FrameMaxSize       int                     `json:"frame_max_size"`
+	SessionCount       int                     `json:"session_count"`
+	LogFile            string                  `json:"log_file"`
+	AIRS               clientAIRSConfig        `json:"airs"`
+}
+
+type clientAIRSConfig struct {
+	InspectBinary     string `json:"inspect_binary,omitempty"`
+	ServiceScript     string `json:"service_script,omitempty"`
+	ClientServiceRole string `json:"client_service_role,omitempty"`
 }
 
 type clientRouteConfigFile struct {
@@ -175,22 +185,28 @@ func (r *clientRouteState) latency() time.Duration {
 
 func defaultClientConfig() clientConfigFile {
 	return clientConfigFile{
-		RouteSelection: string(routeSelectionLeastLoad),
-		RelayURL:       "https://hidaco.site/tools/rel/soc/furo-relay.php",
-		APIKey:         "my_super_secret_123456789",
-		SOCKSListen:    "0.0.0.0:18713",
-		AgentListen:    "0.0.0.0:28080",
-		PublicPort:     28080,
-		ServerPort:     28081,
-		AdminListen:    "",
-		OpenTimeout:    "45s",
-		Keepalive:      "30s",
-		WriteTimeout:   defaultWriteTimeout.String(),
-		FrameMinSize:   defaultMinFramePayload,
-		FrameMidSize:   defaultMidFramePayload,
-		FrameMaxSize:   defaultMaxFramePayload,
-		SessionCount:   8,
-		LogFile:        "",
+		RouteSelection:     string(routeSelectionLeastLoad),
+		RelayURL:           "https://hidaco.site/tools/rel/soc/furo-relay.php",
+		APIKey:             "my_super_secret_123456789",
+		SOCKSListen:        "0.0.0.0:18713",
+		AgentListen:        "0.0.0.0:28080",
+		PublicPort:         28080,
+		ServerPort:         28081,
+		AdminListen:        "",
+		ControlPanelListen: "",
+		OpenTimeout:        "45s",
+		Keepalive:          "30s",
+		WriteTimeout:       defaultWriteTimeout.String(),
+		FrameMinSize:       defaultMinFramePayload,
+		FrameMidSize:       defaultMidFramePayload,
+		FrameMaxSize:       defaultMaxFramePayload,
+		SessionCount:       8,
+		LogFile:            "",
+		AIRS: clientAIRSConfig{
+			InspectBinary:     "inspect",
+			ServiceScript:     "service.sh",
+			ClientServiceRole: "client",
+		},
 	}
 }
 
@@ -381,6 +397,9 @@ func loadClientConfig(path string) error {
 	serverHost = parsedRoutes[0].ServerHost
 	serverPort = parsedRoutes[0].ServerPort
 	adminListen = cfg.AdminListen
+	if cfg.ControlPanelListen != "" {
+		adminListen = cfg.ControlPanelListen
+	}
 	openTimeout = parsedOpenTimeout
 	keepalivePeriod = parsedKeepalive
 	writeTimeout = parsedWriteTimeout
@@ -393,6 +412,16 @@ func loadClientConfig(path string) error {
 	routeSelection = parsedRouteSelection
 	relayURL = parsedRoutes[0].RelayURL
 	clientRoutes = parsedRoutes
+	airsSettings = cfg.AIRS
+	if airsSettings.InspectBinary == "" {
+		airsSettings.InspectBinary = "inspect"
+	}
+	if airsSettings.ServiceScript == "" {
+		airsSettings.ServiceScript = "service.sh"
+	}
+	if airsSettings.ClientServiceRole == "" {
+		airsSettings.ClientServiceRole = "client"
+	}
 	return nil
 }
 
@@ -1922,13 +1951,15 @@ func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
 const adminCookieName = "furo_client_admin"
 
 type adminPageData struct {
-	Status       clientStatusResponse
-	Config       string
-	ConfigPath   string
-	Message      string
-	Error        string
-	ServiceName  string
-	ServiceState string
+	Status             clientStatusResponse
+	Config             string
+	ConfigPath         string
+	Message            string
+	Error              string
+	ControlPanelListen string
+	ClientServiceState string
+	AIRSServiceState   string
+	InspectOutput      string
 }
 
 func adminAuthToken() string {
@@ -1988,6 +2019,12 @@ func saveClientConfigFromPanel(content string) error {
 }
 
 func serviceScriptPath() (string, error) {
+	if airsSettings.ServiceScript != "" {
+		if resolved, err := resolveClientHelperPath(airsSettings.ServiceScript); err == nil {
+			return resolved, nil
+		}
+	}
+
 	candidates := make([]string, 0, 3)
 	if wd, err := os.Getwd(); err == nil {
 		candidates = append(candidates, filepath.Join(wd, "service.sh"))
@@ -2006,7 +2043,73 @@ func serviceScriptPath() (string, error) {
 	return "", errors.New("service.sh not found next to working directory, binary, or config")
 }
 
-func runClientServiceCommand(action string) (string, error) {
+func resolveClientHelperPath(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", errors.New("empty helper path")
+	}
+	if filepath.IsAbs(value) {
+		info, err := os.Stat(value)
+		if err == nil && !info.IsDir() {
+			return value, nil
+		}
+		return "", fmt.Errorf("helper not found: %s", value)
+	}
+
+	candidates := make([]string, 0, 3)
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, value))
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), value))
+	}
+	candidates = append(candidates, filepath.Join(filepath.Dir(*configPath), value))
+
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("helper not found: %s", value)
+}
+
+func adminPanelDir() (string, error) {
+	candidates := make([]string, 0, 3)
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, "web", "client-panel"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "web", "client-panel"))
+	}
+	candidates = append(candidates, filepath.Join(filepath.Dir(*configPath), "web", "client-panel"))
+
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("client panel assets not found next to working directory, binary, or config")
+}
+
+func executeAdminTemplate(w http.ResponseWriter, name string, data any) error {
+	panelDir, err := adminPanelDir()
+	if err != nil {
+		return err
+	}
+	tmpl, err := template.ParseFiles(filepath.Join(panelDir, name))
+	if err != nil {
+		return err
+	}
+	return tmpl.ExecuteTemplate(w, name, data)
+}
+
+func runServiceCommand(role, action string) (string, error) {
+	switch role {
+	case "client", "airs":
+	default:
+		return "", fmt.Errorf("unsupported service role %q", role)
+	}
 	switch action {
 	case "start", "stop", "restart", "enable", "disable", "status", "stateus":
 	default:
@@ -2018,17 +2121,33 @@ func runClientServiceCommand(action string) (string, error) {
 		return "", err
 	}
 
-	if action == "stop" || action == "restart" {
-		cmd := exec.Command("/bin/sh", "-c", fmt.Sprintf("sleep 1; bash %s client %s >/tmp/furo-client-service-control.log 2>&1", shellQuote(script), shellQuote(action)))
+	if role == "client" && (action == "stop" || action == "restart") {
+		cmd := exec.Command("/bin/sh", "-c", fmt.Sprintf("sleep 1; bash %s %s %s >/tmp/furo-client-service-control.log 2>&1", shellQuote(script), shellQuote(role), shellQuote(action)))
 		if err := cmd.Start(); err != nil {
 			return "", err
 		}
-		return "scheduled " + action + "; output will be written to /tmp/furo-client-service-control.log", nil
+		return "scheduled client " + action + "; output will be written to /tmp/furo-client-service-control.log", nil
 	}
 
-	cmd := exec.Command("bash", script, "client", action)
+	cmd := exec.Command("bash", script, role, action)
 	cmd.Dir = filepath.Dir(script)
 	output, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
+}
+
+func runInspectCommand() (string, error) {
+	inspectPath, err := resolveClientHelperPath(airsSettings.InspectBinary)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, inspectPath, "-c", *configPath)
+	cmd.Dir = filepath.Dir(inspectPath)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return strings.TrimSpace(string(output)), ctx.Err()
+	}
 	return strings.TrimSpace(string(output)), err
 }
 
@@ -2038,162 +2157,62 @@ func shellQuote(value string) string {
 
 func renderAdminLogin(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, adminLoginHTML, htmlEscape(message))
+	if err := executeAdminTemplate(w, "login.html", map[string]string{"Message": message}); err != nil {
+		logEvent("[CLIENT] render_login_failed err=%v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func renderAdminPanel(w http.ResponseWriter, data adminPageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(
-		w,
-		adminPanelHTML,
-		htmlEscape(data.Status.Service),
-		htmlEscape(data.Status.ClientID),
-		htmlEscape(data.Status.RouteSelection),
-		data.Status.Totals.ReadySessions,
-		data.Status.Totals.ConnectedSessions,
-		data.Status.Totals.ActiveStreams,
-		htmlEscape(data.ConfigPath),
-		htmlEscape(data.Config),
-		htmlEscape(data.Message),
-		htmlEscape(data.Error),
-		htmlEscape(data.ServiceName),
-		htmlEscape(data.ServiceState),
-	)
+	if err := executeAdminTemplate(w, "panel.html", data); err != nil {
+		logEvent("[CLIENT] render_panel_failed err=%v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
 
-func htmlEscape(value string) string {
-	replacer := strings.NewReplacer(
-		"&", "&amp;",
-		"<", "&lt;",
-		">", "&gt;",
-		`"`, "&quot;",
-		"'", "&#39;",
-	)
-	return replacer.Replace(value)
-}
-
-func buildAdminPageData(pool *SessionPool, message, errMessage string) adminPageData {
+func buildAdminPageData(pool *SessionPool, message, errMessage, inspectOutput string) adminPageData {
 	configContent, err := readClientConfigForPanel()
 	if err != nil && errMessage == "" {
 		errMessage = "read config: " + err.Error()
 	}
-	serviceState, serviceErr := runClientServiceCommand("status")
-	if serviceErr != nil {
-		if serviceState == "" {
-			serviceState = serviceErr.Error()
+	clientState, clientErr := runServiceCommand("client", "status")
+	if clientErr != nil {
+		if clientState == "" {
+			clientState = clientErr.Error()
 		} else {
-			serviceState += "\n" + serviceErr.Error()
+			clientState += "\n" + clientErr.Error()
 		}
 	}
+	airsState, airsErr := runServiceCommand("airs", "status")
+	if airsErr != nil {
+		if airsState == "" {
+			airsState = airsErr.Error()
+		} else {
+			airsState += "\n" + airsErr.Error()
+		}
+	}
+
 	return adminPageData{
-		Status:       buildClientStatus(pool),
-		Config:       configContent,
-		ConfigPath:   *configPath,
-		Message:      message,
-		Error:        errMessage,
-		ServiceName:  "furo-client",
-		ServiceState: serviceState,
+		Status:             buildClientStatus(pool),
+		Config:             configContent,
+		ConfigPath:         *configPath,
+		Message:            message,
+		Error:              errMessage,
+		ControlPanelListen: adminListen,
+		ClientServiceState: clientState,
+		AIRSServiceState:   airsState,
+		InspectOutput:      inspectOutput,
 	}
 }
 
-const adminLoginHTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FURO Client Panel</title>
-<style>
-:root{color-scheme:light;--bg:#f4f7fb;--panel:#ffffff;--text:#172033;--muted:#68758c;--line:#dbe3ef;--accent:#0f8f83;--accent-2:#246bfe;--danger:#d33d52;--shadow:0 18px 45px rgba(28,42,68,.12)}
-[data-theme=dark]{color-scheme:dark;--bg:#11151c;--panel:#181e28;--text:#eef3fb;--muted:#9aa8bc;--line:#2c3544;--accent:#23c6a6;--accent-2:#6ea1ff;--danger:#ff6b7e;--shadow:0 22px 55px rgba(0,0,0,.35)}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center;padding:24px}.card{width:min(420px,calc(100vw - 32px));background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:28px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:26px}.brand{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:grid;place-items:center;color:white}.mark svg{width:28px;height:28px}.pulse{animation:pulse 2.2s ease-in-out infinite}.toggle{border:1px solid var(--line);background:transparent;color:var(--text);border-radius:8px;padding:8px 10px;cursor:pointer}h1{font-size:22px;line-height:1.2;margin:0}p{color:var(--muted);line-height:1.6;margin:0 0 22px}.error{color:var(--danger);min-height:24px;margin-bottom:8px}label{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}input{width:100%%;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--text);padding:13px 14px;font:inherit;outline:none}input:focus{border-color:var(--accent-2);box-shadow:0 0 0 3px rgba(36,107,254,.14)}button.primary{width:100%%;margin-top:16px;border:0;border-radius:8px;background:var(--text);color:var(--panel);padding:13px 16px;font-weight:700;cursor:pointer}@keyframes pulse{0%%,100%%{transform:scale(.92);opacity:.75}50%%{transform:scale(1.08);opacity:1}}
-</style>
-</head>
-<body>
-<main class="card">
-  <div class="top">
-    <div class="brand">
-      <div class="mark"><svg viewBox="0 0 48 48" fill="none"><circle class="pulse" cx="24" cy="24" r="13" stroke="currentColor" stroke-width="5"/><path d="M8 25h9l5-13 8 25 4-12h6" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div><h1>FURO Client</h1><p style="margin:0">Control panel</p></div>
-    </div>
-    <button class="toggle" type="button" id="theme">Theme</button>
-  </div>
-  <p>Enter the configured API key to manage the client configuration and local service.</p>
-  <div class="error">%s</div>
-  <form method="post" action="/login">
-    <label for="api_key">API key</label>
-    <input id="api_key" name="api_key" type="password" autocomplete="current-password" autofocus required>
-    <button class="primary" type="submit">Unlock</button>
-  </form>
-</main>
-<script>
-const key='furo-client-panel-theme',root=document.documentElement,saved=localStorage.getItem(key)||'light';root.dataset.theme=saved;
-document.getElementById('theme').onclick=()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem(key,next)};
-</script>
-</body>
-</html>`
-
-const adminPanelHTML = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FURO Client Panel</title>
-<style>
-:root{color-scheme:light;--bg:#f5f7fb;--panel:#fff;--panel-2:#eef3f8;--text:#141d2b;--muted:#667289;--line:#dce4ef;--accent:#0d9488;--blue:#2563eb;--danger:#d9465d;--warn:#d97706;--ok:#15803d;--shadow:0 16px 38px rgba(31,45,71,.1)}
-[data-theme=dark]{color-scheme:dark;--bg:#10141b;--panel:#171d27;--panel-2:#202938;--text:#eef4fb;--muted:#9aa8bb;--line:#2c3646;--accent:#22c7a7;--blue:#73a4ff;--danger:#ff6f83;--warn:#f5b04d;--ok:#5ad17c;--shadow:0 20px 50px rgba(0,0,0,.32)}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.shell{width:min(1180px,calc(100vw - 32px));margin:0 auto;padding:24px 0 36px}.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:12px}.mark{width:42px;height:42px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--blue));display:grid;place-items:center;color:white}.mark svg{width:28px;height:28px}.pulse{animation:pulse 2.2s ease-in-out infinite}h1{font-size:22px;margin:0;line-height:1.15}p{margin:0;color:var(--muted)}button,a.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:10px 12px;font:inherit;cursor:pointer;text-decoration:none}.primary{background:var(--text);color:var(--panel);border-color:var(--text);font-weight:700}.danger{color:var(--danger)}.actions{display:flex;gap:8px;flex-wrap:wrap}.grid{display:grid;grid-template-columns:1fr 360px;gap:16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}.stat{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:12px}.stat strong{display:block;font-size:24px}.stat span{color:var(--muted);font-size:13px}.notice{border-radius:8px;padding:12px;margin-bottom:14px;background:var(--panel-2);border:1px solid var(--line);white-space:pre-wrap}.notice.ok{color:var(--ok)}.notice.err{color:var(--danger)}label{display:block;color:var(--muted);font-size:14px;margin-bottom:8px}textarea{width:100%%;min-height:560px;resize:vertical;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;color:var(--text);font:13px ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.55;padding:14px;outline:none}textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.15)}.meta{display:grid;gap:10px}.row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row span{color:var(--muted)}pre{white-space:pre-wrap;word-break:break-word;background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:12px;max-height:280px;overflow:auto;font-size:12px}.service-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}@media(max-width:880px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:1fr}.shell{width:min(100vw - 20px,1180px);padding-top:16px}.bar{align-items:flex-start;flex-direction:column}.actions{width:100%%}}@keyframes pulse{0%%,100%%{transform:scale(.92);opacity:.75}50%%{transform:scale(1.08);opacity:1}}
-</style>
-</head>
-<body>
-<main class="shell">
-  <header class="bar">
-    <div class="brand">
-      <div class="mark"><svg viewBox="0 0 48 48" fill="none"><circle class="pulse" cx="24" cy="24" r="13" stroke="currentColor" stroke-width="5"/><path d="M8 25h9l5-13 8 25 4-12h6" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div><h1>%s</h1><p>%s · %s</p></div>
-    </div>
-    <div class="actions"><button type="button" id="theme">Theme</button><a class="btn" href="/status">JSON status</a><a class="btn" href="/logout">Lock</a></div>
-  </header>
-  <section class="stats">
-    <div class="stat"><strong>%d</strong><span>Ready sessions</span></div>
-    <div class="stat"><strong>%d</strong><span>Connected sessions</span></div>
-    <div class="stat"><strong>%d</strong><span>Active streams</span></div>
-  </section>
-  <div class="grid">
-    <section class="panel">
-      <form method="post" action="/config">
-        <label for="config">Config file: %s</label>
-        <textarea id="config" name="config" spellcheck="false">%s</textarea>
-        <div class="actions" style="margin-top:12px"><button class="primary" type="submit">Save config</button></div>
-      </form>
-    </section>
-    <aside class="panel">
-      <div class="notice ok">%s</div>
-      <div class="notice err">%s</div>
-      <div class="meta">
-        <div class="row"><span>Service</span><strong>%s</strong></div>
-      </div>
-      <form method="post" action="/service" class="service-buttons">
-        <button name="action" value="start">Start</button>
-        <button name="action" value="stop" class="danger">Stop</button>
-        <button name="action" value="restart">Restart</button>
-        <button name="action" value="status">Status</button>
-        <button name="action" value="enable">Enable</button>
-        <button name="action" value="disable">Disable</button>
-      </form>
-      <label>Service output</label>
-      <pre>%s</pre>
-    </aside>
-  </div>
-</main>
-<script>
-const key='furo-client-panel-theme',root=document.documentElement,saved=localStorage.getItem(key)||'light';root.dataset.theme=saved;
-document.getElementById('theme').onclick=()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem(key,next)};
-</script>
-</body>
-</html>`
-
 func runClientAdminServer(pool *SessionPool) error {
 	mux := http.NewServeMux()
+	panelDir, err := adminPanelDir()
+	if err != nil {
+		return err
+	}
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(panelDir, "assets")))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -2203,7 +2222,7 @@ func runClientAdminServer(pool *SessionPool) error {
 			renderAdminLogin(w, "")
 			return
 		}
-		renderAdminPanel(w, buildAdminPageData(pool, "", ""))
+		renderAdminPanel(w, buildAdminPageData(pool, "", "", ""))
 	})
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -2247,10 +2266,10 @@ func runClientAdminServer(pool *SessionPool) error {
 		}
 		content := r.FormValue("config")
 		if err := saveClientConfigFromPanel(content); err != nil {
-			renderAdminPanel(w, buildAdminPageData(pool, "", err.Error()))
+			renderAdminPanel(w, buildAdminPageData(pool, "", err.Error(), ""))
 			return
 		}
-		renderAdminPanel(w, buildAdminPageData(pool, "Config saved. Restart the service to apply it.", ""))
+		renderAdminPanel(w, buildAdminPageData(pool, "Config saved. Restart the affected services to apply it.", "", ""))
 	})
 	mux.HandleFunc("/service", func(w http.ResponseWriter, r *http.Request) {
 		if !isAdminAuthenticated(r) {
@@ -2261,16 +2280,36 @@ func runClientAdminServer(pool *SessionPool) error {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
+		role := r.FormValue("role")
+		if role == "" {
+			role = "client"
+		}
 		action := r.FormValue("action")
-		output, err := runClientServiceCommand(action)
+		output, err := runServiceCommand(role, action)
 		if err != nil {
-			renderAdminPanel(w, buildAdminPageData(pool, output, err.Error()))
+			renderAdminPanel(w, buildAdminPageData(pool, output, err.Error(), ""))
 			return
 		}
 		if output == "" {
-			output = "service " + action + " completed"
+			output = role + " service " + action + " completed"
 		}
-		renderAdminPanel(w, buildAdminPageData(pool, output, ""))
+		renderAdminPanel(w, buildAdminPageData(pool, output, "", ""))
+	})
+	mux.HandleFunc("/inspect", func(w http.ResponseWriter, r *http.Request) {
+		if !isAdminAuthenticated(r) {
+			http.Error(w, "unauthorized", http.StatusForbidden)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+		output, err := runInspectCommand()
+		if err != nil {
+			renderAdminPanel(w, buildAdminPageData(pool, output, err.Error(), output))
+			return
+		}
+		renderAdminPanel(w, buildAdminPageData(pool, "Inspect completed", "", output))
 	})
 
 	server := &http.Server{

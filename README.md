@@ -100,8 +100,8 @@ Key fields in `config.client.json`:
   TCP listener that the PHP host connects back to.
 - `public_host` / `public_port`
   Public callback address of the client agent as seen by the PHP host. This is the default for all routes unless a route overrides it.
-- `admin_listen`
-  Optional local admin HTTP listener. Recommended on loopback only.
+- `control_panel_listen` / `admin_listen`
+  Optional local client control panel HTTP listener. Recommended on loopback only. `admin_listen` is still accepted for older configs.
 - `open_timeout`
   Timeout for relay HTTP response headers and stream open waits.
 - `keepalive`
@@ -307,14 +307,14 @@ Before deployment, change `$DIAGNOSTICS_PASSKEY` near the top of `furo-route-dia
 
 ## Observability
 
-Both Go binaries now support a small admin HTTP surface when `admin_listen` is set.
+Both Go binaries now support a small admin HTTP surface. On the client, set `control_panel_listen`; `admin_listen` remains supported as a legacy alias.
 
 - `GET /healthz`
   Lightweight health probe.
 - `GET /status`
   JSON status snapshot with version, uptime, counters, and per-session state.
 - `GET /` on `furo-client`
-  Browser panel protected by the configured `api_key`. The panel can edit the client config file and invoke `service.sh client` actions such as `start`, `stop`, `restart`, `enable`, `disable`, and `status`.
+  Browser panel protected by the configured `api_key`. The panel can edit the full client config, including `airs`, invoke `service.sh client` and `service.sh airs`, and run the configured `inspect` binary.
 
 Example:
 
@@ -397,6 +397,7 @@ The tarball contains:
 - `furo-route-diagnostics.php`
 - `service.sh`
 - `switch-outbound-ip.sh`
+- `web/client-panel`
 - `scripts/optimize-vps-network.sh`
 - `config.client.json.example`
 - `config.server.json.example`
@@ -419,7 +420,7 @@ For pushed tags like `v1.2.3`, the workflow creates a normal GitHub release for 
 5. Open the server agent port so the PHP host can reach it.
 6. Start `furo-server`.
 7. Start `furo-client`.
-8. If enabled, verify `admin_listen` on both binaries.
+8. If enabled, verify `control_panel_listen` on the client and `admin_listen` on the server.
 9. Test the SOCKS endpoint:
 
 ```bash
@@ -430,4 +431,4 @@ curl --socks5-hostname 127.0.0.1:18713 https://api.ipify.org
 
 - FURO is TCP-only. UDP is outside this design.
 - Empty `log_file` disables Go debug logs.
-- Keep `admin_listen` bound to loopback unless you intentionally want remote visibility.
+- Keep `control_panel_listen` / `admin_listen` bound to loopback unless you intentionally want remote visibility.

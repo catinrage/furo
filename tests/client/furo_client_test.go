@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -83,6 +84,80 @@ func TestAdminAuthCookieAllowsPanelAccess(t *testing.T) {
 	}
 	if !isAdminAuthenticated(req) {
 		t.Fatal("isAdminAuthenticated() = false with auth cookie")
+	}
+}
+
+func TestAdminPanelTemplateIncludesAIRSAndInspect(t *testing.T) {
+	rec := httptest.NewRecorder()
+	renderAdminPanel(rec, adminPageData{
+		Status: clientStatusResponse{
+			Service:        "furo-client",
+			ClientID:       "client-test",
+			RouteSelection: string(routeSelectionLeastLoad),
+		},
+		ConfigPath:         "/tmp/config.client.json",
+		Config:             `{"airs":{}}`,
+		ControlPanelListen: "127.0.0.1:19080",
+		ClientServiceState: "client ok",
+		AIRSServiceState:   "airs ok",
+		InspectOutput:      "inspect ok",
+	})
+
+	body := rec.Body.String()
+	for _, token := range []string{"AIRS", `action="/inspect"`, "inspect ok", "127.0.0.1:19080"} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("panel output missing %q\n%s", token, body)
+		}
+	}
+}
+
+func TestRunServiceCommandSupportsAIRSRole(t *testing.T) {
+	originalAIRS := airsSettings
+	t.Cleanup(func() { airsSettings = originalAIRS })
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "service.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/usr/bin/env bash\necho \"$1 $2\"\n"), 0755); err != nil {
+		t.Fatalf("write service script: %v", err)
+	}
+	airsSettings.ServiceScript = scriptPath
+
+	output, err := runServiceCommand("airs", "status")
+	if err != nil {
+		t.Fatalf("runServiceCommand() error = %v", err)
+	}
+	if output != "airs status" {
+		t.Fatalf("service output = %q, want airs status", output)
+	}
+}
+
+func TestRunInspectCommandUsesConfiguredInspect(t *testing.T) {
+	originalAIRS := airsSettings
+	originalConfigPath := *configPath
+	t.Cleanup(func() {
+		airsSettings = originalAIRS
+		*configPath = originalConfigPath
+	})
+
+	tmpDir := t.TempDir()
+	inspectPath := filepath.Join(tmpDir, "inspect")
+	configFile := filepath.Join(tmpDir, "config.client.json")
+	if err := os.WriteFile(inspectPath, []byte("#!/usr/bin/env bash\necho \"inspect $1 $2\"\n"), 0755); err != nil {
+		t.Fatalf("write inspect script: %v", err)
+	}
+	if err := os.WriteFile(configFile, []byte(`{"api_key":"secret"}`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	airsSettings.InspectBinary = inspectPath
+	*configPath = configFile
+
+	output, err := runInspectCommand()
+	if err != nil {
+		t.Fatalf("runInspectCommand() error = %v", err)
+	}
+	want := "inspect -c " + configFile
+	if output != want {
+		t.Fatalf("inspect output = %q, want %q", output, want)
 	}
 }
 
@@ -333,6 +408,7 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	originalMaxFramePayload := maxFramePayload
 	originalSessionCount := sessionCount
 	originalLogFilePath := logFilePath
+	originalAIRSSettings := airsSettings
 	t.Cleanup(func() {
 		clientID = originalClientID
 		routeSelection = originalRouteSelection
@@ -354,6 +430,7 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 		maxFramePayload = originalMaxFramePayload
 		sessionCount = originalSessionCount
 		logFilePath = originalLogFilePath
+		airsSettings = originalAIRSSettings
 	})
 
 	tmpDir := t.TempDir()
@@ -367,6 +444,7 @@ func TestLoadClientConfigRoutes(t *testing.T) {
   "public_host": "198.51.100.10",
   "public_port": 28080,
   "admin_listen": "127.0.0.1:19080",
+  "control_panel_listen": "127.0.0.1:29080",
   "open_timeout": "12s",
   "keepalive": "7s",
   "write_timeout": "9s",
@@ -374,6 +452,11 @@ func TestLoadClientConfigRoutes(t *testing.T) {
   "frame_mid_size": 32768,
   "frame_max_size": 262144,
   "log_file": "",
+  "airs": {
+    "inspect_binary": "./custom-inspect",
+    "service_script": "./custom-service.sh",
+    "client_service_role": "client"
+  },
   "routes": [
     {
       "id": "relay_a",
@@ -412,6 +495,12 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	}
 	if writeTimeout != 9*time.Second {
 		t.Fatalf("writeTimeout = %s, want 9s", writeTimeout)
+	}
+	if adminListen != "127.0.0.1:29080" {
+		t.Fatalf("adminListen = %q, want control panel listen override", adminListen)
+	}
+	if airsSettings.InspectBinary != "./custom-inspect" || airsSettings.ServiceScript != "./custom-service.sh" {
+		t.Fatalf("airs settings = %#v, want configured inspect and service scripts", airsSettings)
 	}
 	if minFramePayload != 16384 || midFramePayload != 32768 || maxFramePayload != 262144 {
 		t.Fatalf("frame sizes = %d/%d/%d, want 16384/32768/262144", minFramePayload, midFramePayload, maxFramePayload)

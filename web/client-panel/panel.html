@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FURO Client Panel</title>
+<link rel="stylesheet" href="/assets/panel.css">
+</head>
+<body>
+<main class="shell">
+  <header class="bar">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 48 48" fill="none"><circle class="pulse" cx="24" cy="24" r="13" stroke="currentColor" stroke-width="5"/><path d="M8 25h9l5-13 8 25 4-12h6" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div><h1>{{.Status.Service}}</h1><p>{{.Status.ClientID}} · {{.Status.RouteSelection}}</p></div>
+    </div>
+    <div class="actions"><button type="button" id="theme">Theme</button><a class="btn" href="/status">JSON status</a><a class="btn" href="/logout">Lock</a></div>
+  </header>
+  <section class="stats">
+    <div class="stat"><strong>{{.Status.Totals.ReadySessions}}</strong><span>Ready sessions</span></div>
+    <div class="stat"><strong>{{.Status.Totals.ConnectedSessions}}</strong><span>Connected sessions</span></div>
+    <div class="stat"><strong>{{.Status.Totals.ActiveStreams}}</strong><span>Active streams</span></div>
+  </section>
+  <div class="grid">
+    <section class="panel">
+      <form method="post" action="/config">
+        <label for="config">Client config: {{.ConfigPath}}</label>
+        <textarea id="config" name="config" spellcheck="false">{{.Config}}</textarea>
+        <div class="actions form-actions"><button class="primary" type="submit">Save config</button></div>
+      </form>
+    </section>
+    <aside class="panel side">
+      {{if .Message}}<div class="notice ok">{{.Message}}</div>{{end}}
+      {{if .Error}}<div class="notice err">{{.Error}}</div>{{end}}
+      <div class="meta">
+        <div class="row"><span>Control panel</span><strong>{{.ControlPanelListen}}</strong></div>
+        <div class="row"><span>Client service</span><strong>furo-client</strong></div>
+        <div class="row"><span>AIRS service</span><strong>furo-airs</strong></div>
+      </div>
+      <h2>Client</h2>
+      <form method="post" action="/service" class="service-buttons">
+        <input type="hidden" name="role" value="client">
+        <button name="action" value="start">Start</button>
+        <button name="action" value="stop" class="danger">Stop</button>
+        <button name="action" value="restart">Restart</button>
+        <button name="action" value="status">Status</button>
+        <button name="action" value="enable">Enable</button>
+        <button name="action" value="disable">Disable</button>
+      </form>
+      <h2>AIRS</h2>
+      <form method="post" action="/service" class="service-buttons">
+        <input type="hidden" name="role" value="airs">
+        <button name="action" value="start">Start</button>
+        <button name="action" value="stop">Stop</button>
+        <button name="action" value="restart">Restart</button>
+        <button name="action" value="status">Status</button>
+        <button name="action" value="enable">Enable</button>
+        <button name="action" value="disable">Disable</button>
+      </form>
+      <h2>Inspect</h2>
+      <form method="post" action="/inspect" class="stack-actions">
+        <button class="primary" type="submit">Run inspect</button>
+      </form>
+      <label>Client service output</label>
+      <pre>{{.ClientServiceState}}</pre>
+      <label>AIRS service output</label>
+      <pre>{{.AIRSServiceState}}</pre>
+      <label>Inspect output</label>
+      <pre>{{.InspectOutput}}</pre>
+    </aside>
+  </div>
+</main>
+<script src="/assets/panel.js"></script>
+</body>
+</html>

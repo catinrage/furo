@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FURO Client Panel</title>
+<link rel="stylesheet" href="/assets/panel.css">
+</head>
+<body class="login-page">
+<main class="card">
+  <div class="top">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 48 48" fill="none"><circle class="pulse" cx="24" cy="24" r="13" stroke="currentColor" stroke-width="5"/><path d="M8 25h9l5-13 8 25 4-12h6" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div><h1>FURO Client</h1><p>Control panel</p></div>
+    </div>
+    <button class="icon-button" type="button" id="theme">Theme</button>
+  </div>
+  <p>Enter the configured API key to manage the client, AIRS, and diagnostics.</p>
+  <div class="notice err">{{.Message}}</div>
+  <form method="post" action="/login">
+    <label for="api_key">API key</label>
+    <input id="api_key" name="api_key" type="password" autocomplete="current-password" autofocus required>
+    <button class="primary" type="submit">Unlock</button>
+  </form>
+</main>
+<script src="/assets/panel.js"></script>
+</body>
+</html>
