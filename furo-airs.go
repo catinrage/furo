@@ -610,7 +610,8 @@ func (m *airsManager) detachIP(ctx context.Context, address string, ips []airsIP
 		_, err := arvanDo[map[string]any](ctx, m, http.MethodPatch, fmt.Sprintf("regions/%s/networks/%s/detach", m.cfg.ArvanRegion, ip.PortID), body)
 		return err
 	}
-	return fmt.Errorf("ip %s not found in server ip list", address)
+	m.logf("old public_host=%s is not attached to server %s; skipping detach", address, m.cfg.ArvanServerID)
+	return nil
 }
 
 func (m *airsManager) isFixedPublicIP(address string) bool {
