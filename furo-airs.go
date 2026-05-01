@@ -638,11 +638,32 @@ func (m *airsManager) currentOutboundIP(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	value := strings.TrimSpace(string(body))
-	ip := net.ParseIP(value)
+	ip := parseOutboundIPResponse(value)
 	if ip == nil {
 		return "", fmt.Errorf("invalid outbound ip response %q", value)
 	}
 	return ip.String(), nil
+}
+
+func parseOutboundIPResponse(value string) net.IP {
+	if ip := net.ParseIP(strings.TrimSpace(value)); ip != nil {
+		return ip
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(value), &obj); err != nil {
+		return nil
+	}
+	for _, key := range []string{"ip", "origin", "query", "address"} {
+		raw, ok := obj[key].(string)
+		if !ok {
+			continue
+		}
+		if ip := net.ParseIP(strings.TrimSpace(raw)); ip != nil {
+			return ip
+		}
+	}
+	return nil
 }
 
 func updateClientPublicHost(path, oldIP, newIP string) error {

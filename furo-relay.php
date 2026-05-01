@@ -396,14 +396,22 @@ try {
         $serverPort
     ));
 
-    $clientSocket = connectTcp($clientHost, $clientPort, $RELAY_CONNECT_TIMEOUT_SEC);
+    try {
+        $clientSocket = connectTcp($clientHost, $clientPort, $RELAY_CONNECT_TIMEOUT_SEC);
+    } catch (Throwable $e) {
+        throw new RuntimeException('client connect failed: ' . $e->getMessage(), 0, $e);
+    }
     socket_write_all($clientSocket, sprintf("SESSION %s %s\n", $RELAY_API_KEY, $sessionId));
     $clientReply = socketReadLine($clientSocket);
     if ($clientReply !== 'OK') {
         throw new RuntimeException('Client session attach failed: ' . $clientReply);
     }
 
-    $serverSocket = connectTcp($serverHost, $serverPort, $RELAY_CONNECT_TIMEOUT_SEC);
+    try {
+        $serverSocket = connectTcp($serverHost, $serverPort, $RELAY_CONNECT_TIMEOUT_SEC);
+    } catch (Throwable $e) {
+        throw new RuntimeException('server connect failed: ' . $e->getMessage(), 0, $e);
+    }
     socket_write_all($serverSocket, sprintf("SESSION %s %s\n", $RELAY_API_KEY, $sessionId));
     $serverReply = socketReadLine($serverSocket);
     if ($serverReply !== 'OK') {

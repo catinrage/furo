@@ -86,6 +86,8 @@ type inspectClientConfig struct {
 	ServerPort  int                      `json:"server_port"`
 	OpenTimeout string                   `json:"open_timeout"`
 	Keepalive   string                   `json:"keepalive"`
+
+	SelectedRouteID string `json:"-"`
 }
 
 type inspectRouteConfigFile struct {
@@ -709,6 +711,7 @@ func inspectLoadClientConfig(path string) (inspectClientConfig, time.Duration, e
 		if err != nil {
 			return inspectClientConfig{}, 0, err
 		}
+		cfg.SelectedRouteID = selected.ID
 		cfg.RelayURL = selected.RelayURL
 		cfg.PublicHost = selected.PublicHost
 		cfg.PublicPort = selected.PublicPort
@@ -1121,6 +1124,12 @@ func inspectRunSpeedTest(ctx context.Context, session *inspectSession, report *i
 }
 
 func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.Duration, runSpeedTest bool, speedURL string, report *inspectReport) error {
+	if cfg.SelectedRouteID != "" {
+		report.add("Route", cfg.SelectedRouteID)
+	}
+	report.add("Client callback", fmt.Sprintf("%s:%d", cfg.PublicHost, cfg.PublicPort))
+	report.add("Server agent", fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort))
+
 	ln, listenPort, listenSummary, err := inspectListen(cfg)
 	if err != nil {
 		return inspectStageError("listener bind", fmt.Errorf("listen on %s: %w", cfg.AgentListen, err))
