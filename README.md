@@ -267,7 +267,7 @@ Examples:
 
 Behavior:
 
-- `update` checks GitHub releases for `catinrage/furo`, downloads the newest Linux amd64 tarball, verifies the SHA-256 asset when present, installs all release-managed files, preserves real `config.*.json` files, and restarts any Furo systemd services that were active before the update.
+- `update` checks GitHub releases for `catinrage/furo`, downloads the newest Linux amd64 tarball, verifies the SHA-256 asset when present, stops active Furo services, installs all release-managed files, preserves real `config.*.json` files, and starts those services again.
 - `update --force` reinstalls the newest release even when the local binary reports the same version.
 - `update` includes prereleases by default so `main` branch release builds are eligible. Set `FURO_UPDATE_INCLUDE_PRERELEASE=0` to use only stable tag releases.
 - `init` prompts for the service name and description.

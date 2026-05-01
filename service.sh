@@ -155,6 +155,8 @@ verify_archive_checksum() {
 copy_release_tree() {
     local release_root="$1"
     local rel
+    local target
+    local target_tmp
 
     (cd "$release_root" && find . -mindepth 1 -print0) |
         while IFS= read -r -d '' rel; do
@@ -169,8 +171,11 @@ copy_release_tree() {
             if [[ -d "$release_root/$rel" ]]; then
                 mkdir -p "$SCRIPT_DIR/$rel"
             else
-                mkdir -p "$(dirname "$SCRIPT_DIR/$rel")"
-                cp -a "$release_root/$rel" "$SCRIPT_DIR/$rel"
+                target="$SCRIPT_DIR/$rel"
+                mkdir -p "$(dirname "$target")"
+                target_tmp="$(mktemp "$(dirname "$target")/.${rel##*/}.tmp.XXXXXX")"
+                cp -a "$release_root/$rel" "$target_tmp"
+                mv -f "$target_tmp" "$target"
             fi
         done
 }
@@ -188,9 +193,10 @@ optional_service_name() {
     printf '%s' "$service_name"
 }
 
-restart_active_services() {
+stop_active_services() {
     local services=("$@")
     local service_name
+    local i
 
     if [[ ${#services[@]} -eq 0 ]]; then
         printf 'No active Furo systemd services were detected before update.\n'
@@ -198,11 +204,28 @@ restart_active_services() {
     fi
 
     require_command "$SYSTEMCTL_BIN"
+
+    for ((i = ${#services[@]} - 1; i >= 0; i--)); do
+        service_name="${services[$i]}"
+        printf 'Stopping %s\n' "$service_name"
+        run_systemctl stop "$service_name"
+    done
+}
+
+start_services() {
+    local services=("$@")
+    local service_name
+
+    if [[ ${#services[@]} -eq 0 ]]; then
+        return
+    fi
+
+    require_command "$SYSTEMCTL_BIN"
     run_systemctl daemon-reload
 
     for service_name in "${services[@]}"; do
-        printf 'Restarting %s\n' "$service_name"
-        run_systemctl restart "$service_name"
+        printf 'Starting %s\n' "$service_name"
+        run_systemctl start "$service_name"
     done
 }
 
@@ -232,10 +255,12 @@ update_install() {
     local active_services=()
     local role
     local service_name
+    local services_stopped=0
 
     current_version="$(current_install_version)"
     tmp_dir="$(mktemp -d)"
     trap '[[ -n "${tmp_dir:-}" ]] && rm -rf "$tmp_dir"' RETURN
+    trap 'status=$?; if [[ ${services_stopped:-0} -eq 1 ]]; then printf "Update failed; starting previously active services again.\n" >&2; start_services "${active_services[@]}" || true; fi; [[ -n "${tmp_dir:-}" ]] && rm -rf "$tmp_dir"; exit "$status"' ERR
 
     releases_json="$tmp_dir/releases.json"
     printf 'Checking %s for releases...\n' "$FURO_UPDATE_REPO"
@@ -283,10 +308,15 @@ update_install() {
     release_root="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
     [[ -n "$release_root" && -d "$release_root" ]] || fail "release archive did not contain a top-level directory"
 
+    stop_active_services "${active_services[@]}"
+    services_stopped=1
+
     printf 'Installing release files into %s\n' "$SCRIPT_DIR"
     copy_release_tree "$release_root"
 
-    restart_active_services "${active_services[@]}"
+    start_services "${active_services[@]}"
+    services_stopped=0
+    trap - ERR
     printf 'Update complete: %s -> %s\n' "$current_version" "$release_version"
 }
 
