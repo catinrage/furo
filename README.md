@@ -102,8 +102,8 @@ Key fields in `config.client.json`:
   TCP listener that the PHP host connects back to.
 - `public_host` / `public_port`
   Public callback address of the client agent as seen by the PHP host. This is the default for all routes unless a route overrides it.
-- `control_panel_listen` / `admin_listen`
-  Optional local client control panel HTTP listener. Recommended on loopback only. `admin_listen` is still accepted for older configs.
+- `admin_listen`
+  Optional local client admin panel HTTP listener. Recommended on loopback only. `control_panel_listen` is still accepted as a legacy alias.
 - `open_timeout`
   Timeout for relay HTTP response headers and stream open waits.
 - `keepalive`
@@ -321,7 +321,7 @@ Before deployment, change `$DIAGNOSTICS_PASSKEY` near the top of `furo-route-dia
 
 ## Observability
 
-Both Go binaries now support a small admin HTTP surface. On the client, set `control_panel_listen`; `admin_listen` remains supported as a legacy alias.
+Both Go binaries now support a small admin HTTP surface. On the client, set `admin_listen`; `control_panel_listen` remains supported as a legacy alias.
 
 - `GET /healthz`
   Lightweight health probe.
@@ -434,7 +434,7 @@ For pushed tags like `v1.2.3`, the workflow creates a normal GitHub release for 
 5. Open the server agent port so the PHP host can reach it.
 6. Start `furo-server`.
 7. Start `furo-client`.
-8. If enabled, verify `control_panel_listen` on the client and `admin_listen` on the server.
+8. If enabled, verify `admin_listen` on the client and server.
 9. Test the SOCKS endpoint:
 
 ```bash
@@ -445,4 +445,4 @@ curl --socks5-hostname 127.0.0.1:18713 https://api.ipify.org
 
 - FURO is TCP-only. UDP is outside this design.
 - Empty `log_file` disables Go debug logs.
-- Keep `control_panel_listen` / `admin_listen` bound to loopback unless you intentionally want remote visibility.
+- Keep `admin_listen` bound to loopback unless you intentionally want remote visibility.

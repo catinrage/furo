@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,7 +110,7 @@ type clientConfigFile struct {
 	ServerHost         string                  `json:"server_host"`
 	ServerPort         int                     `json:"server_port"`
 	AdminListen        string                  `json:"admin_listen"`
-	ControlPanelListen string                  `json:"control_panel_listen"`
+	ControlPanelListen string                  `json:"control_panel_listen,omitempty"`
 	OpenTimeout        string                  `json:"open_timeout"`
 	Keepalive          string                  `json:"keepalive"`
 	WriteTimeout       string                  `json:"write_timeout"`
@@ -187,24 +188,23 @@ func (r *clientRouteState) latency() time.Duration {
 
 func defaultClientConfig() clientConfigFile {
 	return clientConfigFile{
-		RouteSelection:     string(routeSelectionLeastLoad),
-		RelayURL:           "https://hidaco.site/tools/rel/soc/furo-relay.php",
-		APIKey:             "my_super_secret_123456789",
-		SOCKSListen:        "0.0.0.0:18713",
-		SOCKSAuth:          "",
-		AgentListen:        "0.0.0.0:28080",
-		PublicPort:         28080,
-		ServerPort:         28081,
-		AdminListen:        "",
-		ControlPanelListen: "",
-		OpenTimeout:        "45s",
-		Keepalive:          "30s",
-		WriteTimeout:       defaultWriteTimeout.String(),
-		FrameMinSize:       defaultMinFramePayload,
-		FrameMidSize:       defaultMidFramePayload,
-		FrameMaxSize:       defaultMaxFramePayload,
-		SessionCount:       8,
-		LogFile:            "",
+		RouteSelection: string(routeSelectionLeastLoad),
+		RelayURL:       "https://hidaco.site/tools/rel/soc/furo-relay.php",
+		APIKey:         "my_super_secret_123456789",
+		SOCKSListen:    "0.0.0.0:18713",
+		SOCKSAuth:      "",
+		AgentListen:    "0.0.0.0:28080",
+		PublicPort:     28080,
+		ServerPort:     28081,
+		AdminListen:    "",
+		OpenTimeout:    "45s",
+		Keepalive:      "30s",
+		WriteTimeout:   defaultWriteTimeout.String(),
+		FrameMinSize:   defaultMinFramePayload,
+		FrameMidSize:   defaultMidFramePayload,
+		FrameMaxSize:   defaultMaxFramePayload,
+		SessionCount:   8,
+		LogFile:        "",
 		AIRS: clientAIRSConfig{
 			InspectBinary:     "inspect",
 			ServiceScript:     "service.sh",
@@ -426,7 +426,7 @@ func loadClientConfig(path string) error {
 	serverHost = parsedRoutes[0].ServerHost
 	serverPort = parsedRoutes[0].ServerPort
 	adminListen = cfg.AdminListen
-	if cfg.ControlPanelListen != "" {
+	if adminListen == "" && cfg.ControlPanelListen != "" {
 		adminListen = cfg.ControlPanelListen
 	}
 	openTimeout = parsedOpenTimeout
@@ -1981,14 +1981,72 @@ const adminCookieName = "furo_client_admin"
 
 type adminPageData struct {
 	Status             clientStatusResponse
-	Config             string
+	Config             adminConfigView
 	ConfigPath         string
 	Message            string
 	Error              string
-	ControlPanelListen string
+	AdminListen        string
 	ClientServiceState string
 	AIRSServiceState   string
 	InspectOutput      string
+	InspectSummary     adminInspectSummary
+}
+
+type adminConfigView struct {
+	ClientID                 string
+	RouteSelection           string
+	APIKey                   string
+	SOCKSListen              string
+	SOCKSAuth                string
+	AgentListen              string
+	AdminListen              string
+	PublicHost               string
+	PublicPort               string
+	OpenTimeout              string
+	Keepalive                string
+	WriteTimeout             string
+	FrameMinSize             string
+	FrameMidSize             string
+	FrameMaxSize             string
+	LogFile                  string
+	AIRSArvanAPIKey          string
+	AIRSArvanRegion          string
+	AIRSArvanServerID        string
+	AIRSFixedPublicIP        string
+	AIRSAutoRenewSeconds     string
+	AIRSCleanupMinutes       string
+	AIRSCheckSeconds         string
+	AIRSFailureAttempts      string
+	AIRSFailureSeconds       string
+	AIRSLogFile              string
+	AIRSSwitchScript         string
+	AIRSInspectBinary        string
+	AIRSServiceScript        string
+	AIRSClientServiceRole    string
+	AIRSOutboundCheckURL     string
+	AIRSOutboundRetrySeconds string
+	AIRSPostAddWaitSeconds   string
+	AIRSPostDetachSeconds    string
+	Routes                   []adminRouteView
+}
+
+type adminRouteView struct {
+	Index        int
+	ID           string
+	RelayURL     string
+	PublicHost   string
+	PublicPort   string
+	ServerHost   string
+	ServerPort   string
+	SessionCount string
+	Enabled      bool
+}
+
+type adminInspectSummary struct {
+	HasOutput bool
+	OK        bool
+	Ping      string
+	Routes    []string
 }
 
 func adminAuthToken() string {
@@ -2031,20 +2089,241 @@ func clearAdminAuthCookie(w http.ResponseWriter) {
 	})
 }
 
-func readClientConfigForPanel() (string, error) {
+func readClientConfigMapForPanel() (map[string]any, error) {
 	data, err := os.ReadFile(*configPath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(data), nil
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	return raw, nil
 }
 
-func saveClientConfigFromPanel(content string) error {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(content), &raw); err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
+func stringFromMap(raw map[string]any, key string) string {
+	if value, ok := raw[key]; ok {
+		switch typed := value.(type) {
+		case string:
+			return typed
+		case float64:
+			if typed == float64(int64(typed)) {
+				return strconv.FormatInt(int64(typed), 10)
+			}
+			return strconv.FormatFloat(typed, 'f', -1, 64)
+		case bool:
+			return strconv.FormatBool(typed)
+		}
 	}
-	return os.WriteFile(*configPath, []byte(content), 0644)
+	return ""
+}
+
+func intStringFromMap(raw map[string]any, key string) string {
+	return stringFromMap(raw, key)
+}
+
+func setStringField(raw map[string]any, key, value string) {
+	raw[key] = strings.TrimSpace(value)
+}
+
+func setOptionalStringField(raw map[string]any, key, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		delete(raw, key)
+		return
+	}
+	raw[key] = value
+}
+
+func setIntField(raw map[string]any, key, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		delete(raw, key)
+		return nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("%s must be a number", key)
+	}
+	raw[key] = parsed
+	return nil
+}
+
+func nestedMap(raw map[string]any, key string) map[string]any {
+	if existing, ok := raw[key].(map[string]any); ok {
+		return existing
+	}
+	created := make(map[string]any)
+	raw[key] = created
+	return created
+}
+
+func adminConfigViewFromMap(raw map[string]any) adminConfigView {
+	view := adminConfigView{
+		ClientID:       stringFromMap(raw, "client_id"),
+		RouteSelection: stringFromMap(raw, "route_selection"),
+		APIKey:         stringFromMap(raw, "api_key"),
+		SOCKSListen:    stringFromMap(raw, "socks_listen"),
+		SOCKSAuth:      stringFromMap(raw, "socks_auth"),
+		AgentListen:    stringFromMap(raw, "agent_listen"),
+		AdminListen:    stringFromMap(raw, "admin_listen"),
+		PublicHost:     stringFromMap(raw, "public_host"),
+		PublicPort:     intStringFromMap(raw, "public_port"),
+		OpenTimeout:    stringFromMap(raw, "open_timeout"),
+		Keepalive:      stringFromMap(raw, "keepalive"),
+		WriteTimeout:   stringFromMap(raw, "write_timeout"),
+		FrameMinSize:   intStringFromMap(raw, "frame_min_size"),
+		FrameMidSize:   intStringFromMap(raw, "frame_mid_size"),
+		FrameMaxSize:   intStringFromMap(raw, "frame_max_size"),
+		LogFile:        stringFromMap(raw, "log_file"),
+	}
+	if view.AdminListen == "" {
+		view.AdminListen = stringFromMap(raw, "control_panel_listen")
+	}
+	if airs, ok := raw["airs"].(map[string]any); ok {
+		view.AIRSArvanAPIKey = stringFromMap(airs, "arvan_api_key")
+		view.AIRSArvanRegion = stringFromMap(airs, "arvan_region")
+		view.AIRSArvanServerID = stringFromMap(airs, "arvan_server_id")
+		view.AIRSFixedPublicIP = stringFromMap(airs, "fixed_public_ip")
+		view.AIRSAutoRenewSeconds = intStringFromMap(airs, "auto_renew_interval_seconds")
+		view.AIRSCleanupMinutes = intStringFromMap(airs, "cleanup_interval_minutes")
+		view.AIRSCheckSeconds = intStringFromMap(airs, "check_interval_seconds")
+		view.AIRSFailureAttempts = intStringFromMap(airs, "failure_confirm_attempts")
+		view.AIRSFailureSeconds = intStringFromMap(airs, "failure_confirm_interval_seconds")
+		view.AIRSLogFile = stringFromMap(airs, "log_file")
+		view.AIRSSwitchScript = stringFromMap(airs, "switch_script")
+		view.AIRSInspectBinary = stringFromMap(airs, "inspect_binary")
+		view.AIRSServiceScript = stringFromMap(airs, "service_script")
+		view.AIRSClientServiceRole = stringFromMap(airs, "client_service_role")
+		view.AIRSOutboundCheckURL = stringFromMap(airs, "outbound_check_url")
+		view.AIRSOutboundRetrySeconds = intStringFromMap(airs, "outbound_check_retry_seconds")
+		view.AIRSPostAddWaitSeconds = intStringFromMap(airs, "post_add_wait_seconds")
+		view.AIRSPostDetachSeconds = intStringFromMap(airs, "post_detach_wait_seconds")
+	}
+	if routes, ok := raw["routes"].([]any); ok {
+		for idx, routeValue := range routes {
+			route, ok := routeValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			enabled := true
+			if value, exists := route["enabled"].(bool); exists {
+				enabled = value
+			}
+			view.Routes = append(view.Routes, adminRouteView{
+				Index:        idx,
+				ID:           stringFromMap(route, "id"),
+				RelayURL:     stringFromMap(route, "relay_url"),
+				PublicHost:   stringFromMap(route, "public_host"),
+				PublicPort:   intStringFromMap(route, "public_port"),
+				ServerHost:   stringFromMap(route, "server_host"),
+				ServerPort:   intStringFromMap(route, "server_port"),
+				SessionCount: intStringFromMap(route, "session_count"),
+				Enabled:      enabled,
+			})
+		}
+	}
+	if len(view.Routes) == 0 {
+		view.Routes = []adminRouteView{{
+			Index:        0,
+			ID:           "primary",
+			RelayURL:     stringFromMap(raw, "relay_url"),
+			ServerHost:   stringFromMap(raw, "server_host"),
+			ServerPort:   intStringFromMap(raw, "server_port"),
+			SessionCount: intStringFromMap(raw, "session_count"),
+			Enabled:      true,
+		}}
+	}
+	return view
+}
+
+func saveClientConfigForm(r *http.Request) error {
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	raw, err := readClientConfigMapForPanel()
+	if err != nil {
+		return err
+	}
+
+	setOptionalStringField(raw, "client_id", r.FormValue("client_id"))
+	setStringField(raw, "route_selection", r.FormValue("route_selection"))
+	setStringField(raw, "api_key", r.FormValue("api_key"))
+	setStringField(raw, "socks_listen", r.FormValue("socks_listen"))
+	setOptionalStringField(raw, "socks_auth", r.FormValue("socks_auth"))
+	setStringField(raw, "agent_listen", r.FormValue("agent_listen"))
+	setOptionalStringField(raw, "admin_listen", r.FormValue("admin_listen"))
+	delete(raw, "control_panel_listen")
+	setStringField(raw, "public_host", r.FormValue("public_host"))
+	for _, key := range []string{"public_port", "frame_min_size", "frame_mid_size", "frame_max_size"} {
+		if err := setIntField(raw, key, r.FormValue(key)); err != nil {
+			return err
+		}
+	}
+	setStringField(raw, "open_timeout", r.FormValue("open_timeout"))
+	setStringField(raw, "keepalive", r.FormValue("keepalive"))
+	setStringField(raw, "write_timeout", r.FormValue("write_timeout"))
+	setOptionalStringField(raw, "log_file", r.FormValue("log_file"))
+
+	airs := nestedMap(raw, "airs")
+	for _, key := range []string{
+		"arvan_api_key", "arvan_region", "arvan_server_id", "fixed_public_ip", "log_file",
+		"switch_script", "inspect_binary", "service_script", "client_service_role", "outbound_check_url",
+	} {
+		setOptionalStringField(airs, key, r.FormValue("airs_"+key))
+	}
+	for _, key := range []string{
+		"auto_renew_interval_seconds", "cleanup_interval_minutes", "check_interval_seconds",
+		"failure_confirm_attempts", "failure_confirm_interval_seconds", "outbound_check_retry_seconds",
+		"post_add_wait_seconds", "post_detach_wait_seconds",
+	} {
+		if err := setIntField(airs, key, r.FormValue("airs_"+key)); err != nil {
+			return err
+		}
+	}
+
+	count, err := strconv.Atoi(r.FormValue("routes_count"))
+	if err != nil || count < 0 {
+		return errors.New("routes_count must be a number")
+	}
+	routes := make([]any, 0, count)
+	for idx := 0; idx < count; idx++ {
+		prefix := fmt.Sprintf("routes_%d_", idx)
+		if r.FormValue(prefix+"delete") == "1" {
+			continue
+		}
+		route := make(map[string]any)
+		setStringField(route, "id", r.FormValue(prefix+"id"))
+		setStringField(route, "relay_url", r.FormValue(prefix+"relay_url"))
+		setOptionalStringField(route, "public_host", r.FormValue(prefix+"public_host"))
+		if err := setIntField(route, "public_port", r.FormValue(prefix+"public_port")); err != nil {
+			return err
+		}
+		setStringField(route, "server_host", r.FormValue(prefix+"server_host"))
+		if err := setIntField(route, "server_port", r.FormValue(prefix+"server_port")); err != nil {
+			return err
+		}
+		if err := setIntField(route, "session_count", r.FormValue(prefix+"session_count")); err != nil {
+			return err
+		}
+		route["enabled"] = r.FormValue(prefix+"enabled") == "on"
+		routes = append(routes, route)
+	}
+	if len(routes) == 0 {
+		return errors.New("at least one route is required")
+	}
+	raw["routes"] = routes
+	delete(raw, "relay_url")
+	delete(raw, "server_host")
+	delete(raw, "server_port")
+	delete(raw, "session_count")
+
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(*configPath, data, 0644)
 }
 
 func serviceScriptPath() (string, error) {
@@ -2180,6 +2459,28 @@ func runInspectCommand() (string, error) {
 	return strings.TrimSpace(string(output)), err
 }
 
+func parseInspectSummary(output string, err error) adminInspectSummary {
+	summary := adminInspectSummary{HasOutput: strings.TrimSpace(output) != "", OK: err == nil && !strings.Contains(output, "FURO inspect failed")}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Route:") {
+			_, value, _ := strings.Cut(line, "Route:")
+			value = strings.TrimSpace(value)
+			if value != "" {
+				summary.Routes = append(summary.Routes, value)
+			}
+		}
+		if strings.Contains(line, "Ping:") {
+			_, value, _ := strings.Cut(line, "Ping:")
+			value = strings.TrimSpace(value)
+			if value != "" {
+				summary.Ping = value
+			}
+		}
+	}
+	return summary
+}
+
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
@@ -2201,9 +2502,13 @@ func renderAdminPanel(w http.ResponseWriter, data adminPageData) {
 }
 
 func buildAdminPageData(pool *SessionPool, message, errMessage, inspectOutput string) adminPageData {
-	configContent, err := readClientConfigForPanel()
+	configMap, err := readClientConfigMapForPanel()
 	if err != nil && errMessage == "" {
 		errMessage = "read config: " + err.Error()
+	}
+	configView := adminConfigView{}
+	if configMap != nil {
+		configView = adminConfigViewFromMap(configMap)
 	}
 	clientState, clientErr := runServiceCommand("client", "status")
 	if clientErr != nil {
@@ -2224,14 +2529,15 @@ func buildAdminPageData(pool *SessionPool, message, errMessage, inspectOutput st
 
 	return adminPageData{
 		Status:             buildClientStatus(pool),
-		Config:             configContent,
+		Config:             configView,
 		ConfigPath:         *configPath,
 		Message:            message,
 		Error:              errMessage,
-		ControlPanelListen: adminListen,
+		AdminListen:        adminListen,
 		ClientServiceState: clientState,
 		AIRSServiceState:   airsState,
 		InspectOutput:      inspectOutput,
+		InspectSummary:     parseInspectSummary(inspectOutput, nil),
 	}
 }
 
@@ -2293,8 +2599,7 @@ func runClientAdminServer(pool *SessionPool) error {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
-		content := r.FormValue("config")
-		if err := saveClientConfigFromPanel(content); err != nil {
+		if err := saveClientConfigForm(r); err != nil {
 			renderAdminPanel(w, buildAdminPageData(pool, "", err.Error(), ""))
 			return
 		}

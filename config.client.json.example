@@ -7,7 +7,7 @@
   "agent_listen": "0.0.0.0:28080",
   "public_host": "37.32.14.205",
   "public_port": 28080,
-  "control_panel_listen": "127.0.0.1:19080",
+  "admin_listen": "127.0.0.1:19080",
   "open_timeout": "45s",
   "keepalive": "30s",
   "write_timeout": "30s",

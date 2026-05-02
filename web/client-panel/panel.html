@@ -11,64 +11,194 @@
   <header class="bar">
     <div class="brand">
       <div class="mark"><svg viewBox="0 0 48 48" fill="none"><circle class="pulse" cx="24" cy="24" r="13" stroke="currentColor" stroke-width="5"/><path d="M8 25h9l5-13 8 25 4-12h6" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div><h1>{{.Status.Service}}</h1><p>{{.Status.ClientID}} · {{.Status.RouteSelection}}</p></div>
+      <div><h1>{{.Status.Service}}</h1><p>{{.Status.ClientID}} · {{.Status.RouteSelection}} · {{.AdminListen}}</p></div>
     </div>
     <div class="actions"><button type="button" id="theme">Theme</button><a class="btn" href="/status">JSON status</a><a class="btn" href="/logout">Lock</a></div>
   </header>
-  <section class="stats">
-    <div class="stat"><strong>{{.Status.Totals.ReadySessions}}</strong><span>Ready sessions</span></div>
-    <div class="stat"><strong>{{.Status.Totals.ConnectedSessions}}</strong><span>Connected sessions</span></div>
-    <div class="stat"><strong>{{.Status.Totals.ActiveStreams}}</strong><span>Active streams</span></div>
+
+  {{if .Message}}<div class="notice ok">{{.Message}}</div>{{end}}
+  {{if .Error}}<div class="notice err">{{.Error}}</div>{{end}}
+
+  <section class="status-strip">
+    <div><span>Ready</span><strong>{{.Status.Totals.ReadySessions}}/{{.Status.SessionCount}}</strong></div>
+    <div><span>Connected</span><strong>{{.Status.Totals.ConnectedSessions}}</strong></div>
+    <div><span>Streams</span><strong>{{.Status.Totals.ActiveStreams}}</strong></div>
+    <div><span>Pending</span><strong>{{.Status.Totals.PendingFrames}}</strong></div>
+    <div><span>Slow writes</span><strong>{{.Status.Totals.SlowWrites}}</strong></div>
   </section>
-  <div class="grid">
-    <section class="panel">
-      <form method="post" action="/config">
-        <label for="config">Client config: {{.ConfigPath}}</label>
-        <textarea id="config" name="config" spellcheck="false">{{.Config}}</textarea>
-        <div class="actions form-actions"><button class="primary" type="submit">Save config</button></div>
+
+  <div class="layout">
+    <section class="main-pane">
+      <nav class="tabs" aria-label="Panel sections">
+        <a href="#network">Network</a>
+        <a href="#routes">Routes</a>
+        <a href="#airs">AIRS</a>
+        <a href="#runtime">Runtime</a>
+      </nav>
+
+      <form method="post" action="/config" id="config-form">
+        <input type="hidden" name="routes_count" id="routes-count" value="{{len .Config.Routes}}">
+
+        <section class="section" id="network">
+          <div class="section-head"><h2>Network</h2><p>{{.ConfigPath}}</p></div>
+          <div class="form-grid">
+            <label>Client ID<input name="client_id" value="{{.Config.ClientID}}" placeholder="auto from hostname"></label>
+            <label>Route selection<select name="route_selection">
+              <option value="least_load" {{if eq .Config.RouteSelection "least_load"}}selected{{end}}>Least load</option>
+              <option value="least_latency" {{if eq .Config.RouteSelection "least_latency"}}selected{{end}}>Least latency</option>
+              <option value="round_robin" {{if eq .Config.RouteSelection "round_robin"}}selected{{end}}>Round robin</option>
+              <option value="random" {{if eq .Config.RouteSelection "random"}}selected{{end}}>Random</option>
+            </select></label>
+            <label>API key<input name="api_key" value="{{.Config.APIKey}}" type="password" autocomplete="off"></label>
+            <label>SOCKS listen<input name="socks_listen" value="{{.Config.SOCKSListen}}" placeholder="0.0.0.0:18713"></label>
+            <label>SOCKS auth<input name="socks_auth" value="{{.Config.SOCKSAuth}}" placeholder="user:pass or empty"></label>
+            <label>Agent listen<input name="agent_listen" value="{{.Config.AgentListen}}" placeholder="0.0.0.0:28080"></label>
+            <label>Admin listen<input name="admin_listen" value="{{.Config.AdminListen}}" placeholder="127.0.0.1:19080"></label>
+            <label>Public host<input name="public_host" value="{{.Config.PublicHost}}" placeholder="rotating public IP"></label>
+            <label>Public port<input name="public_port" value="{{.Config.PublicPort}}" inputmode="numeric"></label>
+            <label>Log file<input name="log_file" value="{{.Config.LogFile}}" placeholder="empty disables logs"></label>
+          </div>
+        </section>
+
+        <section class="section" id="routes">
+          <div class="section-head">
+            <div><h2>Routes</h2><p>Enabled routes are used by the client and inspect.</p></div>
+            <button type="button" id="add-route">Add route</button>
+          </div>
+          <div class="route-list" id="route-list">
+            {{range .Config.Routes}}
+            <article class="route-card" data-route>
+              <input type="hidden" name="routes_{{.Index}}_delete" value="0" data-delete>
+              <div class="route-title">
+                <label class="check"><input type="checkbox" name="routes_{{.Index}}_enabled" {{if .Enabled}}checked{{end}}> Enabled</label>
+                <button type="button" class="danger" data-remove-route>Remove</button>
+              </div>
+              <div class="form-grid compact">
+                <label>Route ID<input name="routes_{{.Index}}_id" value="{{.ID}}" placeholder="relay-primary"></label>
+                <label>Relay URL<input name="routes_{{.Index}}_relay_url" value="{{.RelayURL}}" placeholder="https://host/furo-relay.php"></label>
+                <label>Server host<input name="routes_{{.Index}}_server_host" value="{{.ServerHost}}"></label>
+                <label>Server port<input name="routes_{{.Index}}_server_port" value="{{.ServerPort}}" inputmode="numeric"></label>
+                <label>Sessions<input name="routes_{{.Index}}_session_count" value="{{.SessionCount}}" inputmode="numeric"></label>
+                <label>Public host override<input name="routes_{{.Index}}_public_host" value="{{.PublicHost}}" placeholder="inherit top-level"></label>
+                <label>Public port override<input name="routes_{{.Index}}_public_port" value="{{.PublicPort}}" inputmode="numeric" placeholder="inherit"></label>
+              </div>
+            </article>
+            {{end}}
+          </div>
+        </section>
+
+        <section class="section" id="airs">
+          <div class="section-head"><h2>AIRS</h2><p>IP rotation and cleanup</p></div>
+          <div class="form-grid">
+            <label>Arvan API key<input name="airs_arvan_api_key" value="{{.Config.AIRSArvanAPIKey}}" type="password" autocomplete="off"></label>
+            <label>Region<input name="airs_arvan_region" value="{{.Config.AIRSArvanRegion}}"></label>
+            <label>Server ID<input name="airs_arvan_server_id" value="{{.Config.AIRSArvanServerID}}"></label>
+            <label>Fixed public IP<input name="airs_fixed_public_ip" value="{{.Config.AIRSFixedPublicIP}}"></label>
+            <label>Auto renew seconds<input name="airs_auto_renew_interval_seconds" value="{{.Config.AIRSAutoRenewSeconds}}" inputmode="numeric"></label>
+            <label>Cleanup minutes<input name="airs_cleanup_interval_minutes" value="{{.Config.AIRSCleanupMinutes}}" inputmode="numeric"></label>
+            <label>Check seconds<input name="airs_check_interval_seconds" value="{{.Config.AIRSCheckSeconds}}" inputmode="numeric"></label>
+            <label>Failure attempts<input name="airs_failure_confirm_attempts" value="{{.Config.AIRSFailureAttempts}}" inputmode="numeric"></label>
+            <label>Failure interval seconds<input name="airs_failure_confirm_interval_seconds" value="{{.Config.AIRSFailureSeconds}}" inputmode="numeric"></label>
+            <label>Switch script<input name="airs_switch_script" value="{{.Config.AIRSSwitchScript}}"></label>
+            <label>Inspect binary<input name="airs_inspect_binary" value="{{.Config.AIRSInspectBinary}}"></label>
+            <label>Service script<input name="airs_service_script" value="{{.Config.AIRSServiceScript}}"></label>
+            <label>Client service role<input name="airs_client_service_role" value="{{.Config.AIRSClientServiceRole}}"></label>
+            <label>Outbound check URL<input name="airs_outbound_check_url" value="{{.Config.AIRSOutboundCheckURL}}"></label>
+            <label>Outbound retry seconds<input name="airs_outbound_check_retry_seconds" value="{{.Config.AIRSOutboundRetrySeconds}}" inputmode="numeric"></label>
+            <label>Post-add wait seconds<input name="airs_post_add_wait_seconds" value="{{.Config.AIRSPostAddWaitSeconds}}" inputmode="numeric"></label>
+            <label>Post-detach wait seconds<input name="airs_post_detach_wait_seconds" value="{{.Config.AIRSPostDetachSeconds}}" inputmode="numeric"></label>
+            <label>AIRS log file<input name="airs_log_file" value="{{.Config.AIRSLogFile}}"></label>
+          </div>
+        </section>
+
+        <section class="section" id="runtime">
+          <div class="section-head"><h2>Runtime</h2><p>Timeouts and frame sizing</p></div>
+          <div class="form-grid">
+            <label>Open timeout<input name="open_timeout" value="{{.Config.OpenTimeout}}"></label>
+            <label>Keepalive<input name="keepalive" value="{{.Config.Keepalive}}"></label>
+            <label>Write timeout<input name="write_timeout" value="{{.Config.WriteTimeout}}"></label>
+            <label>Frame min<input name="frame_min_size" value="{{.Config.FrameMinSize}}" inputmode="numeric"></label>
+            <label>Frame mid<input name="frame_mid_size" value="{{.Config.FrameMidSize}}" inputmode="numeric"></label>
+            <label>Frame max<input name="frame_max_size" value="{{.Config.FrameMaxSize}}" inputmode="numeric"></label>
+          </div>
+        </section>
+
+        <div class="save-bar">
+          <span>Changes are written to config; restart services to apply.</span>
+          <button class="primary" type="submit">Save config</button>
+        </div>
       </form>
     </section>
-    <aside class="panel side">
-      {{if .Message}}<div class="notice ok">{{.Message}}</div>{{end}}
-      {{if .Error}}<div class="notice err">{{.Error}}</div>{{end}}
-      <div class="meta">
-        <div class="row"><span>Control panel</span><strong>{{.ControlPanelListen}}</strong></div>
-        <div class="row"><span>Client service</span><strong>furo-client</strong></div>
-        <div class="row"><span>AIRS service</span><strong>furo-airs</strong></div>
-      </div>
-      <h2>Client</h2>
-      <form method="post" action="/service" class="service-buttons">
-        <input type="hidden" name="role" value="client">
-        <button name="action" value="start">Start</button>
-        <button name="action" value="stop" class="danger">Stop</button>
-        <button name="action" value="restart">Restart</button>
-        <button name="action" value="status">Status</button>
-        <button name="action" value="enable">Enable</button>
-        <button name="action" value="disable">Disable</button>
-      </form>
-      <h2>AIRS</h2>
-      <form method="post" action="/service" class="service-buttons">
-        <input type="hidden" name="role" value="airs">
-        <button name="action" value="start">Start</button>
-        <button name="action" value="stop">Stop</button>
-        <button name="action" value="restart">Restart</button>
-        <button name="action" value="status">Status</button>
-        <button name="action" value="enable">Enable</button>
-        <button name="action" value="disable">Disable</button>
-      </form>
-      <h2>Inspect</h2>
-      <form method="post" action="/inspect" class="stack-actions">
-        <button class="primary" type="submit">Run inspect</button>
-      </form>
-      <label>Client service output</label>
-      <pre>{{.ClientServiceState}}</pre>
-      <label>AIRS service output</label>
-      <pre>{{.AIRSServiceState}}</pre>
-      <label>Inspect output</label>
-      <pre>{{.InspectOutput}}</pre>
+
+    <aside class="side">
+      <section class="section">
+        <div class="section-head"><h2>Inspect</h2></div>
+        {{if .InspectSummary.HasOutput}}
+        <div class="inspect-summary {{if .InspectSummary.OK}}ok{{else}}bad{{end}}">
+          <strong>{{if .InspectSummary.OK}}Passed{{else}}Failed{{end}}</strong>
+          <span>{{if .InspectSummary.Ping}}{{.InspectSummary.Ping}}{{else}}Ping not reported{{end}}</span>
+        </div>
+        {{end}}
+        <form method="post" action="/inspect" class="stack-actions">
+          <button class="primary" type="submit">Run inspect all routes</button>
+        </form>
+        <pre class="output">{{.InspectOutput}}</pre>
+      </section>
+
+      <section class="section">
+        <div class="section-head"><h2>Services</h2></div>
+        <h3>Client</h3>
+        <form method="post" action="/service" class="service-buttons">
+          <input type="hidden" name="role" value="client">
+          <button name="action" value="start">Start</button>
+          <button name="action" value="restart">Restart</button>
+          <button name="action" value="status">Status</button>
+          <button name="action" value="stop" class="danger">Stop</button>
+        </form>
+        <h3>AIRS</h3>
+        <form method="post" action="/service" class="service-buttons">
+          <input type="hidden" name="role" value="airs">
+          <button name="action" value="start">Start</button>
+          <button name="action" value="restart">Restart</button>
+          <button name="action" value="status">Status</button>
+          <button name="action" value="stop" class="danger">Stop</button>
+        </form>
+        <details>
+          <summary>Service output</summary>
+          <label>Client</label><pre class="output">{{.ClientServiceState}}</pre>
+          <label>AIRS</label><pre class="output">{{.AIRSServiceState}}</pre>
+        </details>
+      </section>
+
+      <section class="section">
+        <div class="section-head"><h2>Routes Live</h2></div>
+        <div class="route-health">
+          {{range .Status.Routes}}
+          <div><strong>{{.RouteID}}</strong><span>{{.ReadySessions}}/{{.SessionCount}} ready · {{.EstimatedLatencyMs}} ms</span></div>
+          {{end}}
+        </div>
+      </section>
     </aside>
   </div>
 </main>
+<template id="route-template">
+  <article class="route-card" data-route>
+    <input type="hidden" name="routes___INDEX___delete" value="0" data-delete>
+    <div class="route-title">
+      <label class="check"><input type="checkbox" name="routes___INDEX___enabled" checked> Enabled</label>
+      <button type="button" class="danger" data-remove-route>Remove</button>
+    </div>
+    <div class="form-grid compact">
+      <label>Route ID<input name="routes___INDEX___id" placeholder="relay-new"></label>
+      <label>Relay URL<input name="routes___INDEX___relay_url" placeholder="https://host/furo-relay.php"></label>
+      <label>Server host<input name="routes___INDEX___server_host"></label>
+      <label>Server port<input name="routes___INDEX___server_port" inputmode="numeric" value="28081"></label>
+      <label>Sessions<input name="routes___INDEX___session_count" inputmode="numeric" value="4"></label>
+      <label>Public host override<input name="routes___INDEX___public_host" placeholder="inherit top-level"></label>
+      <label>Public port override<input name="routes___INDEX___public_port" inputmode="numeric" placeholder="inherit"></label>
+    </div>
+  </article>
+</template>
 <script src="/assets/panel.js"></script>
 </body>
 </html>

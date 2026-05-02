@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"net"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,18 +99,137 @@ func TestAdminPanelTemplateIncludesAIRSAndInspect(t *testing.T) {
 			RouteSelection: string(routeSelectionLeastLoad),
 		},
 		ConfigPath:         "/tmp/config.client.json",
-		Config:             `{"airs":{}}`,
-		ControlPanelListen: "127.0.0.1:19080",
+		Config:             adminConfigView{AdminListen: "127.0.0.1:19080"},
+		AdminListen:        "127.0.0.1:19080",
 		ClientServiceState: "client ok",
 		AIRSServiceState:   "airs ok",
-		InspectOutput:      "inspect ok",
+		InspectOutput:      "✓ Ping: avg=12ms samples=10ms, 14ms",
+		InspectSummary:     parseInspectSummary("✓ Ping: avg=12ms samples=10ms, 14ms", nil),
 	})
 
 	body := rec.Body.String()
-	for _, token := range []string{"AIRS", `action="/inspect"`, "inspect ok", "127.0.0.1:19080"} {
+	for _, token := range []string{"AIRS", `action="/inspect"`, "avg=12ms", "127.0.0.1:19080", "Save config"} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("panel output missing %q\n%s", token, body)
 		}
+	}
+}
+
+func TestParseInspectSummaryExtractsPing(t *testing.T) {
+	t.Parallel()
+
+	summary := parseInspectSummary("✓ Route: relay-a\n✓ Ping: avg=42ms samples=40ms, 44ms\n✓ FURO inspect succeeded", nil)
+	if !summary.OK {
+		t.Fatal("summary.OK = false, want true")
+	}
+	if summary.Ping != "avg=42ms samples=40ms, 44ms" {
+		t.Fatalf("Ping = %q, want parsed ping", summary.Ping)
+	}
+	if len(summary.Routes) != 1 || summary.Routes[0] != "relay-a" {
+		t.Fatalf("Routes = %#v, want relay-a", summary.Routes)
+	}
+}
+
+func TestSaveClientConfigFormWritesAdminListenAndPreservesUnknownAIRS(t *testing.T) {
+	originalConfigPath := *configPath
+	t.Cleanup(func() { *configPath = originalConfigPath })
+
+	path := filepath.Join(t.TempDir(), "config.client.json")
+	payload := `{
+  "client_id": "old",
+  "route_selection": "least_load",
+  "api_key": "secret",
+  "socks_listen": "127.0.0.1:18713",
+  "agent_listen": "0.0.0.0:28080",
+  "public_host": "198.51.100.10",
+  "public_port": 28080,
+  "control_panel_listen": "127.0.0.1:19080",
+  "open_timeout": "10s",
+  "keepalive": "5s",
+  "write_timeout": "9s",
+  "frame_min_size": 16384,
+  "frame_mid_size": 32768,
+  "frame_max_size": 262144,
+  "airs": {"custom_future_field": "keep-me"},
+  "routes": [{"id":"old","relay_url":"https://old.example/furo.php","server_host":"203.0.113.1","server_port":8443,"session_count":1,"enabled":true}]
+}`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	*configPath = path
+
+	form := url.Values{
+		"client_id":                             {"client-new"},
+		"route_selection":                       {"least_latency"},
+		"api_key":                               {"secret"},
+		"socks_listen":                          {"127.0.0.1:18713"},
+		"socks_auth":                            {"alice:secret"},
+		"agent_listen":                          {"0.0.0.0:28080"},
+		"admin_listen":                          {"127.0.0.1:29080"},
+		"public_host":                           {"198.51.100.20"},
+		"public_port":                           {"29080"},
+		"open_timeout":                          {"12s"},
+		"keepalive":                             {"7s"},
+		"write_timeout":                         {"9s"},
+		"frame_min_size":                        {"16384"},
+		"frame_mid_size":                        {"32768"},
+		"frame_max_size":                        {"262144"},
+		"log_file":                              {""},
+		"airs_arvan_api_key":                    {"apikey test"},
+		"airs_arvan_region":                     {"ir-thr-fr1"},
+		"airs_arvan_server_id":                  {"server-1"},
+		"airs_fixed_public_ip":                  {"198.51.100.1"},
+		"airs_auto_renew_interval_seconds":      {"1800"},
+		"airs_cleanup_interval_minutes":         {"60"},
+		"airs_check_interval_seconds":           {"10"},
+		"airs_failure_confirm_attempts":         {"5"},
+		"airs_failure_confirm_interval_seconds": {"4"},
+		"airs_log_file":                         {"./airs.log"},
+		"airs_switch_script":                    {"./switch-outbound-ip.sh"},
+		"airs_inspect_binary":                   {"./inspect"},
+		"airs_service_script":                   {"./service.sh"},
+		"airs_client_service_role":              {"client"},
+		"airs_outbound_check_url":               {"https://example.com/ip"},
+		"airs_outbound_check_retry_seconds":     {"480"},
+		"airs_post_add_wait_seconds":            {"5"},
+		"airs_post_detach_wait_seconds":         {"5"},
+		"routes_count":                          {"1"},
+		"routes_0_id":                           {"relay-a"},
+		"routes_0_relay_url":                    {"https://relay.example/furo.php"},
+		"routes_0_server_host":                  {"203.0.113.10"},
+		"routes_0_server_port":                  {"9443"},
+		"routes_0_session_count":                {"3"},
+		"routes_0_public_host":                  {""},
+		"routes_0_public_port":                  {""},
+		"routes_0_enabled":                      {"on"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := saveClientConfigForm(req); err != nil {
+		t.Fatalf("saveClientConfigForm() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if got["admin_listen"] != "127.0.0.1:29080" {
+		t.Fatalf("admin_listen = %v, want new admin listen", got["admin_listen"])
+	}
+	if _, exists := got["control_panel_listen"]; exists {
+		t.Fatal("control_panel_listen still exists after structured save")
+	}
+	airs := got["airs"].(map[string]any)
+	if airs["custom_future_field"] != "keep-me" {
+		t.Fatalf("custom_future_field = %v, want preserved", airs["custom_future_field"])
+	}
+	routes := got["routes"].([]any)
+	if routes[0].(map[string]any)["id"] != "relay-a" {
+		t.Fatalf("route id = %v, want relay-a", routes[0].(map[string]any)["id"])
 	}
 }
 
@@ -536,8 +658,8 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	if writeTimeout != 9*time.Second {
 		t.Fatalf("writeTimeout = %s, want 9s", writeTimeout)
 	}
-	if adminListen != "127.0.0.1:29080" {
-		t.Fatalf("adminListen = %q, want control panel listen override", adminListen)
+	if adminListen != "127.0.0.1:19080" {
+		t.Fatalf("adminListen = %q, want configured admin listen", adminListen)
 	}
 	if socksAuth != "alice:secret" {
 		t.Fatalf("socksAuth = %q, want configured auth", socksAuth)
