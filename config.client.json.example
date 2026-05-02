@@ -3,6 +3,7 @@
   "route_selection": "least_load",
   "api_key": "my_super_secret_123456789",
   "socks_listen": "0.0.0.0:18713",
+  "socks_auth": "",
   "agent_listen": "0.0.0.0:28080",
   "public_host": "37.32.14.205",
   "public_port": 28080,

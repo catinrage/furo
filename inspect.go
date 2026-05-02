@@ -45,6 +45,7 @@ const (
 var (
 	inspectConfigPath = flag.String("c", "config.client.json", "Path to client config JSON")
 	inspectRouteID    = flag.String("route-id", "", "Route id to inspect when config.client.json contains multiple routes")
+	inspectAllRoutes  = flag.Bool("all", false, "Inspect all enabled routes in config.client.json")
 	speedTestEnabled  = flag.Bool("speed-test", false, "Run a download speed test through the relay")
 	speedTestURL      = flag.String("speed-test-url", "https://nbg1-speed.hetzner.com/100MB.bin", "URL used for the optional speed test")
 )
@@ -70,6 +71,7 @@ func init() {
 		fmt.Fprintln(out, "Examples:")
 		fmt.Fprintf(out, "  %s -c config.client.json\n", bin)
 		fmt.Fprintf(out, "  %s -c config.client.json --route-id route_1\n", bin)
+		fmt.Fprintf(out, "  %s -c config.client.json --all\n", bin)
 		fmt.Fprintf(out, "  %s -c config.client.json --speed-test\n", bin)
 		fmt.Fprintf(out, "  %s -c config.client.json --speed-test --speed-test-url https://example.com/test.bin\n", bin)
 	}
@@ -187,6 +189,13 @@ func (r *inspectReport) note(title, value string) {
 	defer r.mu.Unlock()
 	r.clearProgressLocked()
 	r.printStepLocked("•", title, value)
+}
+
+func (r *inspectReport) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearProgressLocked()
+	r.steps = nil
 }
 
 func (r *inspectReport) updateProgress(title string, downloaded, total int64, elapsed time.Duration) {
@@ -680,7 +689,7 @@ func inspectDefaultClientConfig() inspectClientConfig {
 	}
 }
 
-func inspectLoadClientConfig(path string) (inspectClientConfig, time.Duration, error) {
+func inspectLoadClientConfigFile(path string) (inspectClientConfig, time.Duration, error) {
 	cfg := inspectDefaultClientConfig()
 
 	data, err := os.ReadFile(path)
@@ -706,37 +715,57 @@ func inspectLoadClientConfig(path string) (inspectClientConfig, time.Duration, e
 		return inspectClientConfig{}, 0, fmt.Errorf("parse keepalive: %w", err)
 	}
 
+	return cfg, openTimeout, nil
+}
+
+func inspectValidateSelectedConfig(cfg inspectClientConfig) error {
+	switch {
+	case cfg.RelayURL == "":
+		return errors.New("relay_url is required")
+	case cfg.PublicHost == "":
+		return errors.New("public_host is required")
+	case cfg.PublicPort < 1 || cfg.PublicPort > 65535:
+		return errors.New("public_port must be between 1 and 65535")
+	case cfg.ServerHost == "":
+		return errors.New("server_host is required")
+	case cfg.ServerPort < 1 || cfg.ServerPort > 65535:
+		return errors.New("server_port must be between 1 and 65535")
+	}
+	return nil
+}
+
+func inspectApplyRoute(cfg inspectClientConfig, route inspectRouteConfigFile) inspectClientConfig {
+	cfg.SelectedRouteID = route.ID
+	cfg.RelayURL = route.RelayURL
+	cfg.PublicHost = route.PublicHost
+	cfg.PublicPort = route.PublicPort
+	cfg.ServerHost = route.ServerHost
+	cfg.ServerPort = route.ServerPort
+	return cfg
+}
+
+func inspectLoadClientConfig(path string) (inspectClientConfig, time.Duration, error) {
+	cfg, openTimeout, err := inspectLoadClientConfigFile(path)
+	if err != nil {
+		return inspectClientConfig{}, 0, err
+	}
+
 	if len(cfg.Routes) > 0 {
 		selected, err := inspectSelectRoute(cfg, *inspectRouteID)
 		if err != nil {
 			return inspectClientConfig{}, 0, err
 		}
-		cfg.SelectedRouteID = selected.ID
-		cfg.RelayURL = selected.RelayURL
-		cfg.PublicHost = selected.PublicHost
-		cfg.PublicPort = selected.PublicPort
-		cfg.ServerHost = selected.ServerHost
-		cfg.ServerPort = selected.ServerPort
+		cfg = inspectApplyRoute(cfg, selected)
 	}
 
-	switch {
-	case cfg.RelayURL == "":
-		return inspectClientConfig{}, 0, errors.New("relay_url is required")
-	case cfg.PublicHost == "":
-		return inspectClientConfig{}, 0, errors.New("public_host is required")
-	case cfg.PublicPort < 1 || cfg.PublicPort > 65535:
-		return inspectClientConfig{}, 0, errors.New("public_port must be between 1 and 65535")
-	case cfg.ServerHost == "":
-		return inspectClientConfig{}, 0, errors.New("server_host is required")
-	case cfg.ServerPort < 1 || cfg.ServerPort > 65535:
-		return inspectClientConfig{}, 0, errors.New("server_port must be between 1 and 65535")
+	if err := inspectValidateSelectedConfig(cfg); err != nil {
+		return inspectClientConfig{}, 0, err
 	}
 	return cfg, openTimeout, nil
 }
 
-func inspectSelectRoute(cfg inspectClientConfig, requestedID string) (inspectRouteConfigFile, error) {
-	var fallback inspectRouteConfigFile
-	foundFallback := false
+func inspectEnabledRoutes(cfg inspectClientConfig) []inspectRouteConfigFile {
+	routes := make([]inspectRouteConfigFile, 0, len(cfg.Routes))
 	for idx, route := range cfg.Routes {
 		enabled := true
 		if route.Enabled != nil {
@@ -754,21 +783,55 @@ func inspectSelectRoute(cfg inspectClientConfig, requestedID string) (inspectRou
 		if route.ID == "" {
 			route.ID = fmt.Sprintf("route_%d", idx+1)
 		}
+		routes = append(routes, route)
+	}
+	return routes
+}
+
+func inspectSelectRoute(cfg inspectClientConfig, requestedID string) (inspectRouteConfigFile, error) {
+	routes := inspectEnabledRoutes(cfg)
+	for _, route := range routes {
 		if requestedID != "" && route.ID == requestedID {
 			return route, nil
-		}
-		if !foundFallback {
-			fallback = route
-			foundFallback = true
 		}
 	}
 	if requestedID != "" {
 		return inspectRouteConfigFile{}, fmt.Errorf("route_id %q not found or not enabled", requestedID)
 	}
-	if !foundFallback {
+	if len(routes) == 0 {
 		return inspectRouteConfigFile{}, errors.New("no enabled routes found in config")
 	}
-	return fallback, nil
+	return routes[0], nil
+}
+
+func inspectLoadAllClientConfigs(path string) ([]inspectClientConfig, time.Duration, error) {
+	if *inspectRouteID != "" {
+		return nil, 0, errors.New("--all cannot be combined with --route-id")
+	}
+	cfg, openTimeout, err := inspectLoadClientConfigFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(cfg.Routes) == 0 {
+		if err := inspectValidateSelectedConfig(cfg); err != nil {
+			return nil, 0, err
+		}
+		return []inspectClientConfig{cfg}, openTimeout, nil
+	}
+
+	routes := inspectEnabledRoutes(cfg)
+	if len(routes) == 0 {
+		return nil, 0, errors.New("no enabled routes found in config")
+	}
+	configs := make([]inspectClientConfig, 0, len(routes))
+	for _, route := range routes {
+		routeCfg := inspectApplyRoute(cfg, route)
+		if err := inspectValidateSelectedConfig(routeCfg); err != nil {
+			return nil, 0, fmt.Errorf("route %q: %w", route.ID, err)
+		}
+		configs = append(configs, routeCfg)
+	}
+	return configs, openTimeout, nil
 }
 
 func inspectReadLine(conn net.Conn, limit int) (string, error) {
@@ -1252,6 +1315,30 @@ func main() {
 	flag.Parse()
 	report := newInspectReport(os.Stdout)
 	report.start()
+
+	if *inspectAllRoutes {
+		cfgs, openTimeout, err := inspectLoadAllClientConfigs(*inspectConfigPath)
+		if err != nil {
+			report.printResult(inspectStageError("config", err))
+			os.Exit(1)
+		}
+		var failed bool
+		for idx, cfg := range cfgs {
+			if idx > 0 {
+				fmt.Fprintln(os.Stdout)
+			}
+			report.reset()
+			err = inspectRun(context.Background(), cfg, openTimeout, *speedTestEnabled, *speedTestURL, report)
+			report.printResult(err)
+			if err != nil {
+				failed = true
+			}
+		}
+		if failed {
+			os.Exit(1)
+		}
+		return
+	}
 
 	cfg, openTimeout, err := inspectLoadClientConfig(*inspectConfigPath)
 	if err != nil {

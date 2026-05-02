@@ -74,7 +74,7 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, inspectBin, "-c", clientConfigPath, "--route-id", "relay_primary", "--speed-test", "--speed-test-url", speedSrv.URL+"/50mb.test")
+	cmd := exec.CommandContext(ctx, inspectBin, "-c", clientConfigPath, "--all", "--speed-test", "--speed-test-url", speedSrv.URL+"/50mb.test")
 	cmd.Dir = repoRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -86,6 +86,7 @@ func TestInspectBinaryReportsRelayHealth(t *testing.T) {
 		"FURO inspect succeeded",
 		"Relay callback:",
 		"Relay request:",
+		"Route: relay_primary",
 		"Server handshake:",
 		"Ping:",
 		"Speed test:",
@@ -119,6 +120,7 @@ func TestInspectBinaryHelpOutput(t *testing.T) {
 		"--speed-test",
 		"--speed-test-url",
 		"--route-id",
+		"--all",
 		"config.client.json",
 		"Reports the exact failure stage",
 	} {

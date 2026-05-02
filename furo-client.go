@@ -67,6 +67,7 @@ var (
 	showVersion     = flag.Bool("version", false, "Print version and exit")
 	apiKey          string
 	socksListen     string
+	socksAuth       string
 	agentListen     string
 	publicHost      string
 	publicPort      int
@@ -101,6 +102,7 @@ type clientConfigFile struct {
 	RelayURL           string                  `json:"relay_url"`
 	APIKey             string                  `json:"api_key"`
 	SOCKSListen        string                  `json:"socks_listen"`
+	SOCKSAuth          string                  `json:"socks_auth"`
 	AgentListen        string                  `json:"agent_listen"`
 	PublicHost         string                  `json:"public_host"`
 	PublicPort         int                     `json:"public_port"`
@@ -189,6 +191,7 @@ func defaultClientConfig() clientConfigFile {
 		RelayURL:           "https://hidaco.site/tools/rel/soc/furo-relay.php",
 		APIKey:             "my_super_secret_123456789",
 		SOCKSListen:        "0.0.0.0:18713",
+		SOCKSAuth:          "",
 		AgentListen:        "0.0.0.0:28080",
 		PublicPort:         28080,
 		ServerPort:         28081,
@@ -222,6 +225,26 @@ func validateFrameConfig(minSize, midSize, maxSize int) error {
 		return errors.New("frame_max_size must be <= 1048576")
 	}
 	return nil
+}
+
+func validateSOCKSAuth(value string) error {
+	user, pass, ok := strings.Cut(strings.TrimSpace(value), ":")
+	if !ok || user == "" || pass == "" {
+		return errors.New("socks_auth must use user:pass format or be empty")
+	}
+	if len(user) > 255 || len(pass) > 255 {
+		return errors.New("socks_auth username and password must be <= 255 bytes")
+	}
+	return nil
+}
+
+func parseSOCKSAuth(value string) (string, string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", "", false
+	}
+	user, pass, ok := strings.Cut(trimmed, ":")
+	return user, pass, ok
 }
 
 func defaultClientID() string {
@@ -357,6 +380,11 @@ func loadClientConfig(path string) error {
 	if cfg.SOCKSListen == "" {
 		return errors.New("socks_listen is required")
 	}
+	if strings.TrimSpace(cfg.SOCKSAuth) != "" {
+		if err := validateSOCKSAuth(cfg.SOCKSAuth); err != nil {
+			return err
+		}
+	}
 	if cfg.AgentListen == "" {
 		return errors.New("agent_listen is required")
 	}
@@ -391,6 +419,7 @@ func loadClientConfig(path string) error {
 
 	apiKey = cfg.APIKey
 	socksListen = cfg.SOCKSListen
+	socksAuth = strings.TrimSpace(cfg.SOCKSAuth)
 	agentListen = cfg.AgentListen
 	publicHost = parsedRoutes[0].PublicHost
 	publicPort = parsedRoutes[0].PublicPort
@@ -2142,7 +2171,7 @@ func runInspectCommand() (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, inspectPath, "-c", *configPath)
+	cmd := exec.CommandContext(ctx, inspectPath, "-c", *configPath, "--all")
 	cmd.Dir = filepath.Dir(inspectPath)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -2558,6 +2587,24 @@ func handleAgentConn(pool *SessionPool, conn net.Conn) {
 	conn = nil
 }
 
+func buildSOCKSConfig(pool *SessionPool) *socks5.Config {
+	conf := &socks5.Config{
+		Resolver: newUpstreamResolver(),
+		Rewriter: preserveFQDNRewriter{},
+		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, targetPort, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			return pool.dial(ctx, host, targetPort)
+		},
+	}
+	if user, pass, ok := parseSOCKSAuth(socksAuth); ok {
+		conf.Credentials = socks5.StaticCredentials{user: pass}
+	}
+	return conf
+}
+
 func runAgentListener(pool *SessionPool) error {
 	ln, err := net.Listen("tcp", agentListen)
 	if err != nil {
@@ -2616,17 +2663,7 @@ func main() {
 	}
 	pool.start()
 
-	conf := &socks5.Config{
-		Resolver: newUpstreamResolver(),
-		Rewriter: preserveFQDNRewriter{},
-		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, targetPort, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			return pool.dial(ctx, host, targetPort)
-		},
-	}
+	conf := buildSOCKSConfig(pool)
 
 	server, err := socks5.New(conf)
 	if err != nil {

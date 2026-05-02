@@ -96,6 +96,8 @@ Key fields in `config.client.json`:
   Shared secret. Must match the server and relay.
 - `socks_listen`
   Local SOCKS5 listener for applications.
+- `socks_auth`
+  Optional SOCKS5 username/password in `user:pass` format. Empty or omitted disables SOCKS authentication.
 - `agent_listen`
   TCP listener that the PHP host connects back to.
 - `public_host` / `public_port`
@@ -279,6 +281,7 @@ Relay path inspection from the client-side VPS:
 ```bash
 ./inspect -c config.client.json
 ./inspect -c config.client.json --route-id relay-primary
+./inspect -c config.client.json --all
 ./inspect -c config.client.json --speed-test
 ./inspect -c config.client.json --speed-test --speed-test-url https://example.com/test.bin
 ./inspect --help
@@ -286,7 +289,7 @@ Relay path inspection from the client-side VPS:
 
 `inspect` binds `agent_listen` itself, asks the relay for a single session, verifies the server-side `HELLO/HELLO_ACK`, reports relay ping, and optionally downloads `https://nbg1-speed.hetzner.com/100MB.bin` through the tunnel. If it fails, it reports the failing stage directly, for example relay request TLS failure, relay callback timeout, server handshake failure, or speed-test stream failure.
 
-If `furo-client` is already running, `inspect` will first try `agent_listen` and then fall back to a temporary free port if that listener is busy. The server still needs spare session capacity for this extra inspection session, so keep `max_sessions` above the client session total across all enabled routes. When `routes` are present, `inspect` uses the first enabled route by default, or a specific route when `--route-id` is passed.
+If `furo-client` is already running, `inspect` will first try `agent_listen` and then fall back to a temporary free port if that listener is busy. The server still needs spare session capacity for this extra inspection session, so keep `max_sessions` above the client session total across all enabled routes. When `routes` are present, `inspect` uses the first enabled route by default, a specific route when `--route-id` is passed, or every enabled route when `--all` is passed.
 
 Deploy `furo-relay.php` on the PHP host, then make sure `relay_url` in `config.client.json` points to the deployed URL.
 

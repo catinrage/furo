@@ -111,6 +111,43 @@ func TestAdminPanelTemplateIncludesAIRSAndInspect(t *testing.T) {
 	}
 }
 
+func TestValidateSOCKSAuth(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"user:pass", "user:p:a:s:s"} {
+		if err := validateSOCKSAuth(value); err != nil {
+			t.Fatalf("validateSOCKSAuth(%q) error = %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "user", ":pass", "user:"} {
+		if err := validateSOCKSAuth(value); err == nil {
+			t.Fatalf("validateSOCKSAuth(%q) error = nil, want error", value)
+		}
+	}
+}
+
+func TestBuildSOCKSConfigEnablesAuthWhenConfigured(t *testing.T) {
+	originalSOCKSAuth := socksAuth
+	originalClientID := clientID
+	t.Cleanup(func() {
+		socksAuth = originalSOCKSAuth
+		clientID = originalClientID
+	})
+	clientID = "client-test"
+	socksAuth = "alice:secret"
+
+	conf := buildSOCKSConfig(newSessionPool(1))
+	if conf.Credentials == nil {
+		t.Fatal("Credentials = nil, want username/password auth")
+	}
+	if !conf.Credentials.Valid("alice", "secret") {
+		t.Fatal("configured credentials were not accepted")
+	}
+	if conf.Credentials.Valid("alice", "wrong") {
+		t.Fatal("wrong password was accepted")
+	}
+}
+
 func TestRunServiceCommandSupportsAIRSRole(t *testing.T) {
 	originalAIRS := airsSettings
 	t.Cleanup(func() { airsSettings = originalAIRS })
@@ -142,7 +179,7 @@ func TestRunInspectCommandUsesConfiguredInspect(t *testing.T) {
 	tmpDir := t.TempDir()
 	inspectPath := filepath.Join(tmpDir, "inspect")
 	configFile := filepath.Join(tmpDir, "config.client.json")
-	if err := os.WriteFile(inspectPath, []byte("#!/usr/bin/env bash\necho \"inspect $1 $2\"\n"), 0755); err != nil {
+	if err := os.WriteFile(inspectPath, []byte("#!/usr/bin/env bash\necho \"inspect $@\"\n"), 0755); err != nil {
 		t.Fatalf("write inspect script: %v", err)
 	}
 	if err := os.WriteFile(configFile, []byte(`{"api_key":"secret"}`), 0644); err != nil {
@@ -155,7 +192,7 @@ func TestRunInspectCommandUsesConfiguredInspect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runInspectCommand() error = %v", err)
 	}
-	want := "inspect -c " + configFile
+	want := "inspect -c " + configFile + " --all"
 	if output != want {
 		t.Fatalf("inspect output = %q, want %q", output, want)
 	}
@@ -394,6 +431,7 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	originalRelayURL := relayURL
 	originalAPIKey := apiKey
 	originalSocksListen := socksListen
+	originalSOCKSAuth := socksAuth
 	originalAgentListen := agentListen
 	originalPublicHost := publicHost
 	originalPublicPort := publicPort
@@ -416,6 +454,7 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 		relayURL = originalRelayURL
 		apiKey = originalAPIKey
 		socksListen = originalSocksListen
+		socksAuth = originalSOCKSAuth
 		agentListen = originalAgentListen
 		publicHost = originalPublicHost
 		publicPort = originalPublicPort
@@ -440,6 +479,7 @@ func TestLoadClientConfigRoutes(t *testing.T) {
   "route_selection": "least_latency",
   "api_key": "secret",
   "socks_listen": "127.0.0.1:18713",
+  "socks_auth": "alice:secret",
   "agent_listen": "0.0.0.0:28080",
   "public_host": "198.51.100.10",
   "public_port": 28080,
@@ -498,6 +538,9 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	}
 	if adminListen != "127.0.0.1:29080" {
 		t.Fatalf("adminListen = %q, want control panel listen override", adminListen)
+	}
+	if socksAuth != "alice:secret" {
+		t.Fatalf("socksAuth = %q, want configured auth", socksAuth)
 	}
 	if airsSettings.InspectBinary != "./custom-inspect" || airsSettings.ServiceScript != "./custom-service.sh" {
 		t.Fatalf("airs settings = %#v, want configured inspect and service scripts", airsSettings)
