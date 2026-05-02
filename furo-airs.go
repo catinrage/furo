@@ -35,6 +35,7 @@ const (
 var (
 	airsConfigPath = flag.String("c", airsDefaultConfigPath, "Path to shared client config JSON")
 	airsOnce       = flag.Bool("once", false, "Run one renewal and exit")
+	airsCleanup    = flag.Bool("cleanup", false, "Detach extra Arvan public IPs and exit")
 	airsCheckOnce  = flag.Bool("check-once", false, "Run one inspect check and exit")
 	airsVerbose    = flag.Bool("verbose", false, "Print AIRS logs to stdout")
 	airsVersion    = flag.Bool("version", false, "Print version and exit")
@@ -63,6 +64,7 @@ type airsConfig struct {
 	ArvanServerID             string `json:"arvan_server_id"`
 	FixedPublicIP             string `json:"fixed_public_ip,omitempty"`
 	AutoRenewIntervalSeconds  int    `json:"auto_renew_interval_seconds"`
+	CleanupIntervalMinutes    int    `json:"cleanup_interval_minutes,omitempty"`
 	CheckIntervalSeconds      int    `json:"check_interval_seconds"`
 	FailureConfirmAttempts    int    `json:"failure_confirm_attempts,omitempty"`
 	FailureConfirmSeconds     int    `json:"failure_confirm_interval_seconds,omitempty"`
@@ -92,6 +94,7 @@ type airsRuntimeConfig struct {
 	ArvanServerID             string
 	FixedPublicIP             string
 	AutoRenewInterval         time.Duration
+	CleanupInterval           time.Duration
 	CheckInterval             time.Duration
 	FailureConfirmAttempts    int
 	FailureConfirmInterval    time.Duration
@@ -171,7 +174,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	manager, err := newAIRSManager(cfg, *airsVerbose || *airsOnce || *airsCheckOnce)
+	manager, err := newAIRSManager(cfg, *airsVerbose || *airsOnce || *airsCleanup || *airsCheckOnce)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "airs init: %v\n", err)
 		os.Exit(1)
@@ -182,6 +185,11 @@ func main() {
 	case *airsOnce:
 		if err := manager.renew(context.Background(), "manual once"); err != nil {
 			manager.logf("renew failed: %v", err)
+			os.Exit(1)
+		}
+	case *airsCleanup:
+		if err := manager.cleanup(context.Background(), "manual cleanup"); err != nil {
+			manager.logf("cleanup failed: %v", err)
 			os.Exit(1)
 		}
 	case *airsCheckOnce:
@@ -245,6 +253,9 @@ func loadAIRSConfig(path string) (airsRuntimeConfig, error) {
 	if cfg.PostDetachWaitSeconds < 0 {
 		cfg.PostDetachWaitSeconds = 0
 	}
+	if cfg.CleanupIntervalMinutes < 0 {
+		cfg.CleanupIntervalMinutes = 0
+	}
 	cfg.FixedPublicIP = strings.TrimSpace(cfg.FixedPublicIP)
 	if cfg.FixedPublicIP != "" && net.ParseIP(cfg.FixedPublicIP) == nil {
 		return airsRuntimeConfig{}, fmt.Errorf("airs.fixed_public_ip is not a valid IP address: %q", cfg.FixedPublicIP)
@@ -274,6 +285,7 @@ func loadAIRSConfig(path string) (airsRuntimeConfig, error) {
 		ArvanServerID:             cfg.ArvanServerID,
 		FixedPublicIP:             cfg.FixedPublicIP,
 		AutoRenewInterval:         time.Duration(cfg.AutoRenewIntervalSeconds) * time.Second,
+		CleanupInterval:           time.Duration(cfg.CleanupIntervalMinutes) * time.Minute,
 		CheckInterval:             time.Duration(cfg.CheckIntervalSeconds) * time.Second,
 		FailureConfirmAttempts:    cfg.FailureConfirmAttempts,
 		FailureConfirmInterval:    time.Duration(cfg.FailureConfirmSeconds) * time.Second,
@@ -337,9 +349,10 @@ func (m *airsManager) close() {
 
 func (m *airsManager) run(ctx context.Context) {
 	m.logf(
-		"started check_interval=%s auto_renew_interval=%s failure_confirm_attempts=%d failure_confirm_interval=%s",
+		"started check_interval=%s auto_renew_interval=%s cleanup_interval=%s failure_confirm_attempts=%d failure_confirm_interval=%s",
 		m.cfg.CheckInterval,
 		m.cfg.AutoRenewInterval,
+		m.cfg.CleanupInterval,
 		m.cfg.FailureConfirmAttempts,
 		m.cfg.FailureConfirmInterval,
 	)
@@ -353,6 +366,14 @@ func (m *airsManager) run(ctx context.Context) {
 		renewTicker = time.NewTicker(m.cfg.AutoRenewInterval)
 		defer renewTicker.Stop()
 		renewC = renewTicker.C
+	}
+
+	var cleanupTicker *time.Ticker
+	var cleanupC <-chan time.Time
+	if m.cfg.CleanupInterval > 0 {
+		cleanupTicker = time.NewTicker(m.cfg.CleanupInterval)
+		defer cleanupTicker.Stop()
+		cleanupC = cleanupTicker.C
 	}
 
 	for {
@@ -376,6 +397,10 @@ func (m *airsManager) run(ctx context.Context) {
 		case <-renewC:
 			if err := m.renew(ctx, "scheduled"); err != nil {
 				m.logf("scheduled renew failed: %v", err)
+			}
+		case <-cleanupC:
+			if err := m.cleanup(ctx, "scheduled"); err != nil {
+				m.logf("scheduled cleanup failed: %v", err)
 			}
 		}
 	}
@@ -494,6 +519,84 @@ func (m *airsManager) renew(ctx context.Context, reason string) error {
 	}
 	m.logf("renew completed new_ip=%s", newIP.Address)
 	return nil
+}
+
+func (m *airsManager) cleanup(ctx context.Context, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.logf("cleanup started reason=%q", reason)
+	currentCfg, err := loadAIRSConfig(m.cfg.ConfigPath)
+	if err != nil {
+		return err
+	}
+	m.cfg = currentCfg
+
+	ips, err := m.listServerIPs(ctx)
+	if err != nil {
+		return err
+	}
+	protected := currentAIRSProtectedIPs(m.cfg)
+	m.logf(
+		"cleanup scanning fixed_public_ip=%s current_public_hosts=%s server_ips=%s",
+		m.cfg.FixedPublicIP,
+		formatAIRSProtectedIPs(protected),
+		formatAIRSIPs(ips),
+	)
+
+	targets := cleanupDetachTargets(ips, protected)
+	if len(targets) == 0 {
+		m.logf("cleanup completed detached=0")
+		return nil
+	}
+	for _, ip := range targets {
+		if err := m.detachIP(ctx, ip.Address, ips); err != nil {
+			return fmt.Errorf("cleanup detach ip %s: %w", ip.Address, err)
+		}
+	}
+	m.logf("cleanup completed detached=%d ips=%s", len(targets), formatAIRSIPs(targets))
+	return nil
+}
+
+func currentAIRSProtectedIPs(cfg airsRuntimeConfig) map[string]struct{} {
+	protected := make(map[string]struct{})
+	for _, ip := range []string{cfg.FixedPublicIP, cfg.PublicHost} {
+		if trimmed := strings.TrimSpace(ip); trimmed != "" {
+			protected[trimmed] = struct{}{}
+		}
+	}
+	for _, route := range cfg.Routes {
+		if trimmed := strings.TrimSpace(route.PublicHost); trimmed != "" {
+			protected[trimmed] = struct{}{}
+		}
+	}
+	return protected
+}
+
+func cleanupDetachTargets(ips []airsIPAttachment, protected map[string]struct{}) []airsIPAttachment {
+	targets := make([]airsIPAttachment, 0, len(ips))
+	for _, ip := range ips {
+		if ip.Address == "" || ip.PortID == "" {
+			continue
+		}
+		if _, keep := protected[ip.Address]; keep {
+			continue
+		}
+		targets = append(targets, ip)
+	}
+	return targets
+}
+
+func formatAIRSProtectedIPs(protected map[string]struct{}) string {
+	if len(protected) == 0 {
+		return "(none)"
+	}
+	values := make([]string, 0, len(protected))
+	for ip := range protected {
+		values = append(values, ip)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ",")
 }
 
 type airsIPAttachment struct {

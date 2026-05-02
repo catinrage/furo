@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDetachIPSkipsMissingOldPublicHost(t *testing.T) {
@@ -45,6 +46,61 @@ func TestDetachIPRefusesFixedPublicIP(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("detachIP() error = nil, want fixed_public_ip refusal")
+	}
+}
+
+func TestCleanupDetachTargetsSkipsFixedAndCurrentIPs(t *testing.T) {
+	t.Parallel()
+
+	protected := currentAIRSProtectedIPs(airsRuntimeConfig{
+		PublicHost:    "37.152.185.80",
+		FixedPublicIP: "37.152.190.18",
+		Routes: []airsRoute{
+			{ID: "inherits"},
+			{ID: "custom", PublicHost: "203.0.113.10"},
+		},
+	})
+	targets := cleanupDetachTargets([]airsIPAttachment{
+		{Address: "37.152.190.18", PortID: "fixed-port"},
+		{Address: "37.152.185.80", PortID: "current-port"},
+		{Address: "203.0.113.10", PortID: "route-port"},
+		{Address: "188.121.123.87", PortID: "orphan-port"},
+		{Address: "185.231.182.244"},
+	}, protected)
+
+	if len(targets) != 1 {
+		t.Fatalf("target count = %d, want 1: %#v", len(targets), targets)
+	}
+	if targets[0].Address != "188.121.123.87" {
+		t.Fatalf("target address = %q, want orphan IP", targets[0].Address)
+	}
+}
+
+func TestLoadAIRSConfigCleanupIntervalMinutes(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.client.json")
+	config := []byte(`{
+  "public_host": "37.152.185.80",
+  "airs": {
+    "arvan_api_key": "apikey test",
+    "arvan_region": "ir-thr-fr1",
+    "arvan_server_id": "server-1",
+    "fixed_public_ip": "37.152.190.18",
+    "cleanup_interval_minutes": 15,
+    "log_file": ""
+  }
+}`)
+	if err := os.WriteFile(path, config, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := loadAIRSConfig(path)
+	if err != nil {
+		t.Fatalf("loadAIRSConfig() error = %v", err)
+	}
+	if cfg.CleanupInterval != 15*time.Minute {
+		t.Fatalf("CleanupInterval = %s, want 15m", cfg.CleanupInterval)
 	}
 }
 

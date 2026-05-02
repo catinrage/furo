@@ -150,6 +150,8 @@ Key fields in `config.client.json` under `airs`:
   Optional public IP that AIRS must never detach. Use this for SSH, inbounds, and any stable address you want to keep attached while `public_host` rotates.
 - `auto_renew_interval_seconds`
   Scheduled renewal interval. Set to `0` to disable scheduled renewals and renew only after inspect failures.
+- `cleanup_interval_minutes`
+  How often AIRS scans the server IP list and detaches any public IP that is neither `fixed_public_ip` nor a current configured `public_host`. Set to `0` to disable scheduled cleanup. Run `./furo-airs -c config.client.json --cleanup` for one manual cleanup pass.
 - `check_interval_seconds`
   How often AIRS runs the lightweight `inspect` check. This cannot be disabled.
 - `failure_confirm_attempts` / `failure_confirm_interval_seconds`

@@ -21,6 +21,7 @@
     "arvan_server_id": "00000000-0000-0000-0000-000000000000",
     "fixed_public_ip": "37.32.14.205",
     "auto_renew_interval_seconds": 1800,
+    "cleanup_interval_minutes": 60,
     "check_interval_seconds": 10,
     "failure_confirm_attempts": 3,
     "failure_confirm_interval_seconds": 4,
