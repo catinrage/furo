@@ -254,6 +254,11 @@ The repo ships a single helper script, `service.sh`, for creating and managing `
 Examples:
 
 ```bash
+./service.sh init server
+./service.sh init client
+./service.sh status
+./service.sh restart
+
 ./service.sh server init
 ./service.sh server enable
 ./service.sh server start
@@ -274,6 +279,10 @@ Behavior:
 - `update` checks GitHub releases for `catinrage/furo`, downloads the newest Linux amd64 tarball, verifies the SHA-256 asset when present, stops active Furo services, installs all release-managed files, preserves real `config.*.json` files, and starts those services again.
 - `update --force` reinstalls the newest release even when the local binary reports the same version.
 - `update` includes prereleases by default so `main` branch release builds are eligible. Set `FURO_UPDATE_INCLUDE_PRERELEASE=0` to use only stable tag releases.
+- Top-level `start`, `stop`, and `restart` operate across initialized Furo services. `stop` and `restart` only touch services that are currently running.
+- Top-level `status` prints a compact colored status table for server, client, and AIRS.
+- `./service.sh init server` initializes, enables, and starts the server service.
+- `./service.sh init client` initializes, enables, and starts both the client and AIRS services.
 - `init` prompts for the service name and description.
 - `init` infers `WorkingDirectory` from the script location and `ExecStart` from `./furo-server -c config.server.json`, `./furo-client -c config.client.json`, or `./furo-airs -c config.client.json`.
 - Other commands fail with a clear message until `init` has been completed for that role.

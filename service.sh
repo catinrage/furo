@@ -16,10 +16,15 @@ usage() {
     cat <<'EOF'
 Usage:
   ./service.sh update [--force]
+  ./service.sh <start|stop|restart|status>
+  ./service.sh init <server|client>
   ./service.sh <server|client|airs> <init|start|stop|restart|status|enable|disable|stateus>
 
 Examples:
   ./service.sh update
+  ./service.sh status
+  ./service.sh init client
+  ./service.sh init server
   ./service.sh server init
   ./service.sh client start
   ./service.sh airs init
@@ -28,6 +33,9 @@ Examples:
 Notes:
   - 'update' downloads the newest GitHub release and updates all release-managed files.
   - 'update' preserves real config.*.json files.
+  - Top-level start/stop/restart operate on initialized Furo services.
+  - Top-level init client creates, enables, and starts both client and AIRS.
+  - Top-level init server creates, enables, and starts the server.
   - Run 'init' once per role before using other commands.
   - 'stateus' is accepted as an alias for 'status'.
 EOF
@@ -416,6 +424,147 @@ run_systemctl() {
     "$SYSTEMCTL_BIN" "$@"
 }
 
+color_text() {
+    local code="$1"
+    local text="$2"
+
+    if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+        printf '\033[%sm%s\033[0m' "$code" "$text"
+    else
+        printf '%s' "$text"
+    fi
+}
+
+status_color_code() {
+    case "$1" in
+        active|enabled) printf '32' ;;
+        inactive|disabled) printf '90' ;;
+        activating|deactivating|not-initialized|unknown) printf '33' ;;
+        failed|not-found) printf '31' ;;
+        *) printf '36' ;;
+    esac
+}
+
+print_compact_status() {
+    local role="$1"
+    local service_name="$2"
+    local active_state="$3"
+    local enabled_state="$4"
+    local active_colored
+    local enabled_colored
+
+    active_colored="$(color_text "$(status_color_code "$active_state")" "$active_state")"
+    enabled_colored="$(color_text "$(status_color_code "$enabled_state")" "$enabled_state")"
+    printf '%-6s %-28s %s %s\n' "$role" "$service_name" "$active_colored" "$enabled_colored"
+}
+
+top_level_status() {
+    require_command "$SYSTEMCTL_BIN"
+
+    local role
+    local service_name
+    local service_file
+    local active_state
+    local enabled_state
+
+    printf '%-6s %-28s %s %s\n' "ROLE" "SERVICE" "ACTIVE" "ENABLED"
+    for role in server client airs; do
+        if ! service_name="$(optional_service_name "$role")"; then
+            print_compact_status "$role" "-" "not-initialized" "-"
+            continue
+        fi
+        service_file="$(service_file_path "$service_name")"
+        if [[ ! -f "$service_file" ]]; then
+            print_compact_status "$role" "$service_name" "not-found" "-"
+            continue
+        fi
+        active_state="$(run_systemctl is-active "$service_name" 2>/dev/null || true)"
+        enabled_state="$(run_systemctl is-enabled "$service_name" 2>/dev/null || true)"
+        [[ -n "$active_state" ]] || active_state="unknown"
+        [[ -n "$enabled_state" ]] || enabled_state="unknown"
+        print_compact_status "$role" "$service_name" "$active_state" "$enabled_state"
+    done
+}
+
+top_level_start() {
+    require_command "$SYSTEMCTL_BIN"
+
+    local role
+    local service_name
+    local found=0
+
+    run_systemctl daemon-reload
+    for role in server client airs; do
+        if ! service_name="$(optional_service_name "$role")"; then
+            continue
+        fi
+        require_initialized "$role" "$service_name"
+        printf 'Starting %s (%s)\n' "$service_name" "$role"
+        run_systemctl start "$service_name"
+        found=1
+    done
+
+    [[ "$found" -eq 1 ]] || printf 'No initialized Furo services found.\n'
+}
+
+top_level_stop() {
+    require_command "$SYSTEMCTL_BIN"
+
+    local role
+    local service_name
+    local found=0
+
+    for role in airs client server; do
+        if ! service_name="$(optional_service_name "$role")"; then
+            continue
+        fi
+        require_initialized "$role" "$service_name"
+        if run_systemctl is-active --quiet "$service_name"; then
+            printf 'Stopping %s (%s)\n' "$service_name" "$role"
+            run_systemctl stop "$service_name"
+            found=1
+        fi
+    done
+
+    [[ "$found" -eq 1 ]] || printf 'No running Furo services found.\n'
+}
+
+top_level_restart() {
+    require_command "$SYSTEMCTL_BIN"
+
+    local role
+    local service_name
+    local found=0
+
+    run_systemctl daemon-reload
+    for role in server client airs; do
+        if ! service_name="$(optional_service_name "$role")"; then
+            continue
+        fi
+        require_initialized "$role" "$service_name"
+        if run_systemctl is-active --quiet "$service_name"; then
+            printf 'Restarting %s (%s)\n' "$service_name" "$role"
+            run_systemctl restart "$service_name"
+            found=1
+        fi
+    done
+
+    [[ "$found" -eq 1 ]] || printf 'No running Furo services found.\n'
+}
+
+enable_and_start_service() {
+    local role="$1"
+    local service_name
+
+    require_command "$SYSTEMCTL_BIN"
+    service_name="$(load_service_name "$role")"
+    require_initialized "$role" "$service_name"
+    printf 'Enabling %s (%s)\n' "$service_name" "$role"
+    run_systemctl enable "$service_name"
+    printf 'Starting %s (%s)\n' "$service_name" "$role"
+    run_systemctl start "$service_name"
+}
+
 init_service() {
     local role="$1"
     local service_name
@@ -458,7 +607,29 @@ EOF
     printf 'Role: %s\n' "$role"
     printf 'WorkingDirectory: %s\n' "$ROLE_WORKDIR"
     printf 'ExecStart: %s -c %s\n' "$ROLE_BINARY_PATH" "$ROLE_CONFIG"
-    printf 'Next steps: ./service.sh %s enable && ./service.sh %s start\n' "$role" "$role"
+    printf 'Manage with: ./service.sh %s <enable|start|status|restart|stop>\n' "$role"
+}
+
+top_level_init() {
+    local target="$1"
+    case "$target" in
+        server)
+            set_role_vars server
+            init_service server
+            enable_and_start_service server
+            ;;
+        client)
+            set_role_vars client
+            init_service client
+            enable_and_start_service client
+            set_role_vars airs
+            init_service airs
+            enable_and_start_service airs
+            ;;
+        *)
+            fail "invalid init target '$target'; expected 'server' or 'client'"
+            ;;
+    esac
 }
 
 manage_service() {
@@ -490,6 +661,32 @@ main() {
             exit 1
         }
         update_install "${2:-}"
+        return
+    fi
+
+    if [[ $# -eq 1 ]]; then
+        case "$1" in
+            start)
+                top_level_start
+                return
+                ;;
+            stop)
+                top_level_stop
+                return
+                ;;
+            restart)
+                top_level_restart
+                return
+                ;;
+            status|stateus)
+                top_level_status
+                return
+                ;;
+        esac
+    fi
+
+    if [[ $# -eq 2 && "$1" == "init" ]]; then
+        top_level_init "$2"
         return
     fi
 
