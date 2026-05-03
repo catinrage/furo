@@ -10,5 +10,15 @@
   "frame_max_size": 131072,
   "max_pending_bytes": 4194304,
   "max_sessions": 10,
-  "log_file": ""
+  "log_file": "",
+  "node": {
+    "enabled": false,
+    "id": "furo-server-node-1",
+    "master_url": "http://MASTER_PUBLIC_IP:19082",
+    "role": "active",
+    "relay_health_host": "f2.ra1n.xyz",
+    "relay_health_port": 443,
+    "check_interval_seconds": 10,
+    "failure_threshold": 3
+  }
 }

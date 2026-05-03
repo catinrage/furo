@@ -681,6 +681,83 @@ func TestLoadClientConfigRoutes(t *testing.T) {
 	}
 }
 
+func TestManagedRouteMapPersistAddsActiveAndStandby(t *testing.T) {
+	originalConfigPath := *configPath
+	t.Cleanup(func() { *configPath = originalConfigPath })
+
+	configFile := filepath.Join(t.TempDir(), "config.client.json")
+	*configPath = configFile
+	if err := os.WriteFile(configFile, []byte(`{
+  "api_key": "secret",
+  "socks_listen": "127.0.0.1:0",
+  "agent_listen": "127.0.0.1:0",
+  "public_host": "198.51.100.10",
+  "public_port": 28080,
+  "routes": [
+    {"id": "user", "relay_url": "https://relay.example/furo.php", "server_host": "203.0.113.1", "server_port": 8443, "session_count": 1, "enabled": true}
+  ]
+}`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	err := persistRelayRouteMap(relayRouteMap{
+		FleetID:    "fleet-a",
+		Generation: 3,
+		Active:     &relayRouteSpec{ID: "active-a", RelayURL: "https://relay.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 2},
+		Standby:    []relayRouteSpec{{ID: "standby-a", RelayURL: "https://relay.example/furo.php", ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 2}},
+	})
+	if err != nil {
+		t.Fatalf("persistRelayRouteMap() error = %v", err)
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var got struct {
+		Routes []clientRouteConfigFile `json:"routes"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("config json: %v", err)
+	}
+	if len(got.Routes) != 3 {
+		t.Fatalf("routes count = %d, want user + active + standby", len(got.Routes))
+	}
+	if got.Routes[1].Role != "active" || got.Routes[1].ManagedBy != "fleet-a" || got.Routes[1].Enabled == nil || !*got.Routes[1].Enabled {
+		t.Fatalf("active route = %#v", got.Routes[1])
+	}
+	if got.Routes[2].Role != "standby" || got.Routes[2].Enabled == nil || *got.Routes[2].Enabled {
+		t.Fatalf("standby route = %#v", got.Routes[2])
+	}
+}
+
+func TestPromoteManagedStandbyDisablesOldActive(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	routes, _, err := buildClientRoutes(clientConfigFile{
+		APIKey:     "secret",
+		PublicHost: "198.51.100.10",
+		PublicPort: 28080,
+		Routes: []clientRouteConfigFile{
+			{ID: "active-a", RelayURL: "https://relay.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 1, Enabled: &trueValue, ManagedBy: "fleet-a", Role: "active", Generation: 3},
+			{ID: "standby-a", RelayURL: "https://relay.example/furo.php", ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 1, Enabled: &falseValue, ManagedBy: "fleet-a", Role: "standby", Generation: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildClientRoutes() error = %v", err)
+	}
+	pool := newSessionPoolForRoutes(routes, routeSelectionLeastLoad)
+	promoted, ok := pool.promoteManagedStandby()
+	if !ok {
+		t.Fatal("promoteManagedStandby() ok = false")
+	}
+	if promoted.ID != "standby-a" || promoted.Role != "active" || !promoted.Enabled {
+		t.Fatalf("promoted = %#v", promoted)
+	}
+	if pool.routes[0].cfg.Role != "retired" || pool.routes[0].cfg.Enabled {
+		t.Fatalf("old active route = %#v", pool.routes[0].cfg)
+	}
+}
+
 func TestSelectReadySessionRoundRobinAcrossRoutes(t *testing.T) {
 	originalClientID := clientID
 	t.Cleanup(func() { clientID = originalClientID })

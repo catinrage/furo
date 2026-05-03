@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,6 +63,7 @@ var (
 	maxFramePayload = defaultMaxFramePayload
 	maxPendingBytes = int64(defaultMaxPendingBytes)
 	logFilePath     string
+	nodeSettings    serverNodeConfig
 )
 
 var (
@@ -71,18 +73,31 @@ var (
 )
 
 type serverConfigFile struct {
-	APIKey          string `json:"api_key"`
-	AgentListen     string `json:"agent_listen"`
-	AdminListen     string `json:"admin_listen"`
-	DialTimeout     string `json:"dial_timeout"`
-	Keepalive       string `json:"keepalive"`
-	WriteTimeout    string `json:"write_timeout"`
-	FrameMinSize    int    `json:"frame_min_size"`
-	FrameMidSize    int    `json:"frame_mid_size"`
-	FrameMaxSize    int    `json:"frame_max_size"`
-	MaxPendingBytes int64  `json:"max_pending_bytes"`
-	MaxSessions     int    `json:"max_sessions"`
-	LogFile         string `json:"log_file"`
+	APIKey          string           `json:"api_key"`
+	AgentListen     string           `json:"agent_listen"`
+	AdminListen     string           `json:"admin_listen"`
+	DialTimeout     string           `json:"dial_timeout"`
+	Keepalive       string           `json:"keepalive"`
+	WriteTimeout    string           `json:"write_timeout"`
+	FrameMinSize    int              `json:"frame_min_size"`
+	FrameMidSize    int              `json:"frame_mid_size"`
+	FrameMaxSize    int              `json:"frame_max_size"`
+	MaxPendingBytes int64            `json:"max_pending_bytes"`
+	MaxSessions     int              `json:"max_sessions"`
+	LogFile         string           `json:"log_file"`
+	Node            serverNodeConfig `json:"node"`
+}
+
+type serverNodeConfig struct {
+	Enabled              bool   `json:"enabled"`
+	Namespace            string `json:"namespace"`
+	ID                   string `json:"id"`
+	MasterURL            string `json:"master_url"`
+	Role                 string `json:"role"`
+	RelayHealthHost      string `json:"relay_health_host"`
+	RelayHealthPort      int    `json:"relay_health_port"`
+	CheckIntervalSeconds int    `json:"check_interval_seconds"`
+	FailureThreshold     int    `json:"failure_threshold"`
 }
 
 func defaultServerConfig() serverConfigFile {
@@ -151,7 +166,42 @@ func loadServerConfig(path string) error {
 	maxPendingBytes = cfg.MaxPendingBytes
 	maxSessions = cfg.MaxSessions
 	logFilePath = cfg.LogFile
+	nodeSettings = normalizeServerNodeConfig(cfg.Node)
 	return nil
+}
+
+func normalizeServerNodeConfig(cfg serverNodeConfig) serverNodeConfig {
+	if cfg.Role == "" {
+		cfg.Role = "standby"
+	}
+	cfg.Namespace = sanitizeServerComponent(cfg.Namespace)
+	if cfg.Namespace == "" {
+		cfg.Namespace = "default"
+	}
+	if cfg.RelayHealthPort == 0 {
+		cfg.RelayHealthPort = 443
+	}
+	if cfg.CheckIntervalSeconds == 0 {
+		cfg.CheckIntervalSeconds = 10
+	}
+	if cfg.FailureThreshold == 0 {
+		cfg.FailureThreshold = 3
+	}
+	return cfg
+}
+
+func sanitizeServerComponent(value string) string {
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func validateFrameConfig(minSize, midSize, maxSize int, pendingLimit int64) error {
@@ -248,6 +298,31 @@ type serverStatusResponse struct {
 	RejectedSessions uint64                  `json:"rejected_sessions"`
 	ClosedSessions   uint64                  `json:"closed_sessions"`
 	Sessions         []serverSessionSnapshot `json:"sessions"`
+	Node             serverNodeStatus        `json:"node,omitempty"`
+}
+
+type serverNodeStatus struct {
+	Enabled          bool   `json:"enabled"`
+	Namespace        string `json:"namespace,omitempty"`
+	ID               string `json:"id,omitempty"`
+	Role             string `json:"role,omitempty"`
+	MasterURL        string `json:"master_url,omitempty"`
+	RelayHealthHost  string `json:"relay_health_host,omitempty"`
+	RelayHealthPort  int    `json:"relay_health_port,omitempty"`
+	CheckIntervalSec int    `json:"check_interval_seconds,omitempty"`
+	FailureThreshold int    `json:"failure_threshold,omitempty"`
+}
+
+type serverNodeReport struct {
+	Namespace   string `json:"namespace"`
+	NodeID      string `json:"node_id"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+	Reason      string `json:"reason,omitempty"`
+	AgentListen string `json:"agent_listen"`
+	Version     string `json:"version"`
+	Commit      string `json:"commit"`
+	ReportedAt  string `json:"reported_at"`
 }
 
 type serverSessionRegistry struct {
@@ -1193,7 +1268,7 @@ func (s *Session) heartbeatLoop() {
 }
 
 func buildServerStatus() serverStatusResponse {
-	return serverStatusResponse{
+	status := serverStatusResponse{
 		Service:          "furo-server",
 		Version:          appVersion,
 		Commit:           appCommit,
@@ -1215,6 +1290,20 @@ func buildServerStatus() serverStatusResponse {
 		ClosedSessions:   atomic.LoadUint64(&closedSessions),
 		Sessions:         serverRegistry.snapshots(),
 	}
+	if nodeSettings.Enabled {
+		status.Node = serverNodeStatus{
+			Enabled:          true,
+			Namespace:        nodeSettings.Namespace,
+			ID:               nodeSettings.ID,
+			Role:             nodeSettings.Role,
+			MasterURL:        nodeSettings.MasterURL,
+			RelayHealthHost:  nodeSettings.RelayHealthHost,
+			RelayHealthPort:  nodeSettings.RelayHealthPort,
+			CheckIntervalSec: nodeSettings.CheckIntervalSeconds,
+			FailureThreshold: nodeSettings.FailureThreshold,
+		}
+	}
+	return status
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
@@ -1245,6 +1334,109 @@ func runServerAdminServer() error {
 
 	log.Printf("[FURO-SERVER] admin listener on %s", adminListen)
 	return server.ListenAndServe()
+}
+
+func nodeReportURL() string {
+	base := strings.TrimRight(nodeSettings.MasterURL, "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/node/report"
+}
+
+func reportNodeStatus(status, reason string) error {
+	if !nodeSettings.Enabled || nodeSettings.MasterURL == "" || nodeSettings.ID == "" {
+		return nil
+	}
+	payload := serverNodeReport{
+		Namespace:   nodeSettings.Namespace,
+		NodeID:      nodeSettings.ID,
+		Role:        nodeSettings.Role,
+		Status:      status,
+		Reason:      reason,
+		AgentListen: agentListen,
+		Version:     appVersion,
+		Commit:      appCommit,
+		ReportedAt:  time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, nodeReportURL(), strings.NewReader(string(data)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-KEY", apiKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("master report status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var response struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&response); err == nil {
+		if response.Role == "active" || response.Role == "standby" {
+			nodeSettings.Role = response.Role
+		}
+	}
+	return nil
+}
+
+func relayHealthOK() bool {
+	if nodeSettings.RelayHealthHost == "" || nodeSettings.RelayHealthPort <= 0 {
+		return true
+	}
+	addr := net.JoinHostPort(nodeSettings.RelayHealthHost, strconv.Itoa(nodeSettings.RelayHealthPort))
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func runServerNodeLoop() {
+	if !nodeSettings.Enabled {
+		return
+	}
+	if nodeSettings.ID == "" || nodeSettings.MasterURL == "" {
+		logEvent("[SERVER] node disabled because node.id or node.master_url is empty")
+		return
+	}
+	_ = reportNodeStatus("ready", "")
+	ticker := time.NewTicker(time.Duration(nodeSettings.CheckIntervalSeconds) * time.Second)
+	defer ticker.Stop()
+	failures := 0
+	reportedDead := false
+	for range ticker.C {
+		if nodeSettings.Role != "active" {
+			_ = reportNodeStatus("ready", "")
+			continue
+		}
+		if relayHealthOK() {
+			failures = 0
+			reportedDead = false
+			_ = reportNodeStatus("ready", "")
+			continue
+		}
+		failures++
+		logEvent("[SERVER] node=%s relay_health_failed failures=%d threshold=%d", nodeSettings.ID, failures, nodeSettings.FailureThreshold)
+		if failures >= nodeSettings.FailureThreshold && !reportedDead {
+			reportedDead = true
+			if err := reportNodeStatus("dead", "relay health check failed"); err != nil {
+				logEvent("[SERVER] node=%s dead_report_failed err=%v", nodeSettings.ID, err)
+			}
+		}
+	}
 }
 
 func reserveSessionSlot() bool {
@@ -1356,6 +1548,9 @@ func main() {
 				log.Fatalf("[FURO-SERVER] admin server failed: %v", err)
 			}
 		}()
+	}
+	if nodeSettings.Enabled {
+		go runServerNodeLoop()
 	}
 
 	log.Printf("[FURO-SERVER] agent listening on %s", agentListen)

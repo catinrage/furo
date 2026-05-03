@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="${FURO_UPDATE_REPO:-catinrage/furo}"
+API_URL="https://api.github.com/repos/${REPO}/releases"
+WORKDIR="/root/furo"
+
+require() {
+  command -v "$1" >/dev/null 2>&1 || {
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$1"
+  }
+}
+
+require curl
+require tar
+require python3
+
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+
+python3 - "$API_URL" > /tmp/furo-release.tsv <<'PY'
+import json
+import sys
+import urllib.request
+
+url = sys.argv[1]
+with urllib.request.urlopen(url, timeout=30) as resp:
+    releases = json.load(resp)
+
+for release in releases:
+    if release.get("draft"):
+        continue
+    for asset in release.get("assets", []):
+        name = asset.get("name") or ""
+        if name.endswith("_linux_amd64.tar.gz"):
+            print(name + "\t" + asset["browser_download_url"])
+            raise SystemExit(0)
+raise SystemExit("no linux amd64 release asset found")
+PY
+
+ARCHIVE="$(cut -f1 /tmp/furo-release.tsv)"
+URL="$(cut -f2 /tmp/furo-release.tsv)"
+curl -fsSL -o "$ARCHIVE" "$URL"
+rm -rf /tmp/furo-extract
+mkdir -p /tmp/furo-extract
+tar -xzf "$ARCHIVE" -C /tmp/furo-extract
+RELEASE_ROOT="$(find /tmp/furo-extract -mindepth 1 -maxdepth 1 -type d | head -n1)"
+cp -a "$RELEASE_ROOT"/. "$WORKDIR"/
+
+cat > "$WORKDIR/config.server.json" <<EOF
+{
+  "api_key": "{{api_key}}",
+  "agent_listen": "0.0.0.0:{{server_agent_port}}",
+  "admin_listen": "127.0.0.1:19081",
+  "dial_timeout": "10s",
+  "keepalive": "30s",
+  "write_timeout": "30s",
+  "frame_min_size": 32768,
+  "frame_mid_size": 65536,
+  "frame_max_size": 131072,
+  "max_pending_bytes": 4194304,
+  "max_sessions": 33,
+  "log_file": "",
+  "node": {
+    "enabled": true,
+    "id": "{{node_id}}",
+    "master_url": "{{master_url}}",
+    "role": "{{node_role}}",
+    "relay_health_host": "{{relay_health_host}}",
+    "relay_health_port": {{relay_health_port}},
+    "check_interval_seconds": {{check_interval_seconds}},
+    "failure_threshold": {{failure_threshold}}
+  }
+}
+EOF
+
+chmod +x "$WORKDIR/service.sh" "$WORKDIR/furo-server"
+FURO_SERVICE_NONINTERACTIVE=1 "$WORKDIR/service.sh" init server
+"$WORKDIR/service.sh" update --force || true
+"$WORKDIR/service.sh" restart

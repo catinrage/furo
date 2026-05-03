@@ -35,6 +35,13 @@
     "post_add_wait_seconds": 5,
     "post_detach_wait_seconds": 5
   },
+  "master_routes": {
+    "enabled": false,
+    "fleet_id": "",
+    "master_url": "http://MASTER_PUBLIC_IP:19082",
+    "poll_interval_seconds": 30,
+    "failover_grace_seconds": 5
+  },
   "routes": [
     {
       "id": "relay-primary",

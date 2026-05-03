@@ -78,6 +78,7 @@ jobs:
 
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-client" ./furo-client.go
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-server" ./furo-server.go
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-server-master" ./furo-server-master.go
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/furo-airs" ./furo-airs.go
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "${LD_FLAGS}" -o "${RELEASE_DIR}/inspect" ./inspect.go
 
@@ -86,9 +87,12 @@ jobs:
           cp service.sh "${RELEASE_DIR}/"
           cp switch-outbound-ip.sh "${RELEASE_DIR}/"
           cp -R web "${RELEASE_DIR}/"
-          cp scripts/optimize-vps-network.sh "${RELEASE_DIR}/"
+          mkdir -p "${RELEASE_DIR}/scripts"
+          cp scripts/optimize-vps-network.sh "${RELEASE_DIR}/scripts/"
+          cp scripts/bootstrap-server-node.sh.example "${RELEASE_DIR}/scripts/"
           cp config.client.json.example "${RELEASE_DIR}/"
           cp config.server.json.example "${RELEASE_DIR}/"
+          cp config.server-master.json.example "${RELEASE_DIR}/"
           cp README.md "${RELEASE_DIR}/"
 
           tar -C dist -czf "dist/furo_${VERSION}_linux_amd64.tar.gz" "furo_${VERSION}_linux_amd64"

@@ -75,12 +75,14 @@ The repo ships example configs:
 
 - `config.client.json.example`
 - `config.server.json.example`
+- `config.server-master.json.example`
 
 Create your working configs from those examples:
 
 ```bash
 cp config.client.json.example config.client.json
 cp config.server.json.example config.server.json
+cp config.server-master.json.example config.server-master.json
 ```
 
 ### Client config
@@ -118,6 +120,8 @@ Key fields in `config.client.json`:
   List of `relay -> server` paths that the client may use.
 - `airs`
   Optional Arvan IP Renew System config. AIRS shares this client config, periodically or reactively adds a fresh Arvan public IP, detaches the old public IP using the IP-specific `port_id`, switches the VPS outbound source IP, updates `public_host`, runs `inspect`, and restarts the client service.
+- `master_routes`
+  Optional server-master route-map polling. When enabled, the client fetches `action=route-map` from the relay, stores master-managed active and standby routes in `config.client.json`, keeps standby routes disabled so they stay clean, and promotes a cached standby when managed active routes have no ready sessions after `failover_grace_seconds`.
 
 Each route entry supports:
 
@@ -133,6 +137,8 @@ Each route entry supports:
   Whether the route should be used.
 - `public_host` / `public_port`
   Optional per-route override for the client callback address. If omitted, the top-level values are used.
+- `managed_by` / `role` / `generation`
+  Optional metadata used by `furo-server-master`. User-created routes can omit these fields.
 
 Route selection always filters to healthy ready paths first, so dead routes automatically drop out of consideration. `least_load` chooses the least busy ready session, while `least_latency` chooses the route with the best recent relay request latency and then the least busy session on that route.
 
@@ -189,6 +195,33 @@ Key fields in `config.server.json`:
   Maximum active relay sessions. Set this above the total client-side sessions across all enabled routes if `inspect` may run while `furo-client` is already running, so one extra session remains available.
 - `log_file`
   Optional debug log path. Empty disables debug logs.
+- `node`
+  Optional server-node control block. If omitted or disabled, `furo-server` remains a standalone server. When enabled, active nodes report health to `furo-server-master`; standby nodes stay idle and do not touch the relay until promoted.
+
+### Server master config
+
+`furo-server-master` manages one active server node plus configured clean standby nodes through the Caasify API.
+
+Key fields in `config.server-master.json`:
+
+- `api_key`
+  Shared control and tunnel secret. Must match client, server, and relay.
+- `listen` / `public_url`
+  Control listener for node reports and the public URL rendered into new node configs.
+- `admin_listen`
+  Local admin status listener.
+- `caasify_token`
+  Caasify API token.
+- `state_file` / `log_file`
+  Local durable fleet state and optional master log path.
+- `relay_url`
+  Deployed `furo-relay.php`; the master publishes active/standby route maps to this URL.
+- `relay_health_host` / `relay_health_port`
+  Host and port checked by active nodes and by the master over SSH before accepting a new standby.
+- `backup_count`
+  Number of clean standby VPSes to keep ready. Defaults to `1`.
+- `bootstrap_script_path`
+  Template script rendered with `{{api_key}}`, `{{node_id}}`, `{{node_role}}`, `{{master_url}}`, and health-check placeholders.
 
 ### Relay config
 
@@ -201,6 +234,8 @@ Top-of-file variables in `furo-relay.php`:
 - `$RELAY_IO_CHUNK_SIZE`
 - `$RELAY_MAX_PENDING_BYTES`
 - `$RELAY_ENABLE_LOGS`
+- `$RELAY_ROUTE_MAP_FILE`
+  Writable JSON cache for `action=route-map`. The master writes this file and clients read it with the same `api_key`.
 
 ## Build
 
@@ -209,6 +244,7 @@ If `go` is on `PATH`:
 ```bash
 go build -o furo-client ./furo-client.go
 go build -o furo-server ./furo-server.go
+go build -o furo-server-master ./furo-server-master.go
 go build -o furo-airs ./furo-airs.go
 go build -o inspect ./inspect.go
 ```
@@ -218,6 +254,7 @@ Print embedded build metadata:
 ```bash
 ./furo-client --version
 ./furo-server --version
+./furo-server-master --version
 ./furo-airs --version
 ./inspect --help
 ```
@@ -230,10 +267,19 @@ Server on the exit VPS:
 ./furo-server -c config.server.json
 ```
 
+Server master on the master VPS:
+
+```bash
+./furo-server-master -c config.server-master.json
+./furo-server-master -c config.server-master.json --ping-client http://CLIENT_ADMIN_IP:19080
+```
+
 Client on the client-side VPS:
 
 ```bash
 ./furo-client -c config.client.json
+./furo-client -c config.client.json --ping-master
+./furo-client -c config.client.json --ping-master --ping-master-url http://MASTER_PUBLIC_IP:19082
 ```
 
 AIRS on the client-side VPS:
@@ -249,12 +295,13 @@ AIRS on the client-side VPS:
 
 ### systemd service manager
 
-The repo ships a single helper script, `service.sh`, for creating and managing `furo-server`, `furo-client`, and `furo-airs` systemd units from the project directory.
+The repo ships a single helper script, `service.sh`, for creating and managing `furo-server`, `furo-server-master`, `furo-client`, and `furo-airs` systemd units from the project directory.
 
 Examples:
 
 ```bash
 ./service.sh init server
+./service.sh init server-master
 ./service.sh init client
 ./service.sh status
 ./service.sh restart
@@ -262,6 +309,9 @@ Examples:
 ./service.sh server init
 ./service.sh server enable
 ./service.sh server start
+
+./service.sh server-master init
+./service.sh server-master status
 
 ./service.sh client init
 ./service.sh client restart
@@ -280,11 +330,13 @@ Behavior:
 - `update --force` reinstalls the newest release even when the local binary reports the same version.
 - `update` includes prereleases by default so `main` branch release builds are eligible. Set `FURO_UPDATE_INCLUDE_PRERELEASE=0` to use only stable tag releases.
 - Top-level `start`, `stop`, and `restart` operate across initialized Furo services. `stop` and `restart` only touch services that are currently running.
-- Top-level `status` prints a compact colored status table for server, client, and AIRS.
+- Top-level `status` prints a compact colored status table for server, server-master, client, and AIRS.
 - `./service.sh init server` initializes, enables, and starts the server service.
+- `./service.sh init server-master` initializes, enables, and starts the server master service.
 - `./service.sh init client` initializes, enables, and starts both the client and AIRS services.
+- Set `FURO_SERVICE_NONINTERACTIVE=1` to accept default service names and descriptions from bootstrap scripts.
 - `init` prompts for the service name and description.
-- `init` infers `WorkingDirectory` from the script location and `ExecStart` from `./furo-server -c config.server.json`, `./furo-client -c config.client.json`, or `./furo-airs -c config.client.json`.
+- `init` infers `WorkingDirectory` from the script location and `ExecStart` from `./furo-server -c config.server.json`, `./furo-server-master -c config.server-master.json`, `./furo-client -c config.client.json`, or `./furo-airs -c config.client.json`.
 - Other commands fail with a clear message until `init` has been completed for that role.
 
 Relay path inspection from the client-side VPS:
@@ -405,6 +457,7 @@ The tarball contains:
 
 - `furo-client`
 - `furo-server`
+- `furo-server-master`
 - `furo-airs`
 - `inspect`
 - `furo-relay.php`
@@ -413,8 +466,10 @@ The tarball contains:
 - `switch-outbound-ip.sh`
 - `web/client-panel`
 - `scripts/optimize-vps-network.sh`
+- `scripts/bootstrap-server-node.sh.example`
 - `config.client.json.example`
 - `config.server.json.example`
+- `config.server-master.json.example`
 - `README.md`
 
 For `main` branch pushes, the workflow creates a prerelease version in this form:

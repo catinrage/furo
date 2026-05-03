@@ -17,8 +17,8 @@ usage() {
 Usage:
   ./service.sh update [--force]
   ./service.sh <start|stop|restart|status>
-  ./service.sh init <server|client>
-  ./service.sh <server|client|airs> <init|start|stop|restart|status|enable|disable|stateus>
+  ./service.sh init <server|server-node|server-master|client>
+  ./service.sh <server|server-node|server-master|client|airs> <init|start|stop|restart|status|enable|disable|stateus>
 
 Examples:
   ./service.sh update
@@ -35,7 +35,8 @@ Notes:
   - 'update' preserves real config.*.json files.
   - Top-level start/stop/restart operate on initialized Furo services.
   - Top-level init client creates, enables, and starts both client and AIRS.
-  - Top-level init server creates, enables, and starts the server.
+  - Top-level init server creates, enables, and starts the standalone/node server.
+  - Top-level init server-master creates, enables, and starts the server master.
   - Run 'init' once per role before using other commands.
   - 'stateus' is accepted as an alias for 'status'.
 EOF
@@ -81,7 +82,7 @@ current_install_version() {
     local binary
     local output
 
-    for binary in furo-client furo-server furo-airs; do
+    for binary in furo-client furo-server furo-server-master furo-airs; do
         if [[ ! -x "$SCRIPT_DIR/$binary" ]]; then
             continue
         fi
@@ -288,7 +289,7 @@ update_install() {
         return
     fi
 
-    for role in server client airs; do
+    for role in server server-master client airs; do
         if service_name="$(optional_service_name "$role")"; then
             if command -v "$SYSTEMCTL_BIN" >/dev/null 2>&1 && run_systemctl is-active --quiet "$service_name"; then
                 active_services+=("$service_name")
@@ -330,20 +331,28 @@ update_install() {
 
 validate_role() {
     case "$1" in
-        server|client|airs) ;;
-        *) fail "invalid role '$1'; expected 'server', 'client', or 'airs'" ;;
+        server-node) printf 'server' ;;
+        server|server-master|client|airs) printf '%s' "$1" ;;
+        *) fail "invalid role '$1'; expected 'server', 'server-node', 'server-master', 'client', or 'airs'" ;;
     esac
 }
 
 set_role_vars() {
     local role="$1"
 
+    role="$(validate_role "$role")"
     case "$role" in
         server)
             ROLE_BINARY="furo-server"
             ROLE_CONFIG="config.server.json"
             ROLE_DESCRIPTION_DEFAULT="Furo Server"
             ROLE_SERVICE_DEFAULT="furo-server"
+            ;;
+        server-master)
+            ROLE_BINARY="furo-server-master"
+            ROLE_CONFIG="config.server-master.json"
+            ROLE_DESCRIPTION_DEFAULT="Furo Server Master"
+            ROLE_SERVICE_DEFAULT="furo-server-master"
             ;;
         client)
             ROLE_BINARY="furo-client"
@@ -367,6 +376,11 @@ prompt_with_default() {
     local prompt="$1"
     local default_value="$2"
     local answer=""
+
+    if [[ "${FURO_SERVICE_NONINTERACTIVE:-0}" == "1" ]]; then
+        printf '%s' "$default_value"
+        return
+    fi
 
     read -r -p "$prompt [$default_value]: " answer
     if [[ -z "$answer" ]]; then
@@ -468,7 +482,7 @@ top_level_status() {
     local enabled_state
 
     printf '%-6s %-28s %s %s\n' "ROLE" "SERVICE" "ACTIVE" "ENABLED"
-    for role in server client airs; do
+    for role in server server-master client airs; do
         if ! service_name="$(optional_service_name "$role")"; then
             print_compact_status "$role" "-" "not-initialized" "-"
             continue
@@ -494,7 +508,7 @@ top_level_start() {
     local found=0
 
     run_systemctl daemon-reload
-    for role in server client airs; do
+    for role in server server-master client airs; do
         if ! service_name="$(optional_service_name "$role")"; then
             continue
         fi
@@ -514,7 +528,7 @@ top_level_stop() {
     local service_name
     local found=0
 
-    for role in airs client server; do
+    for role in airs client server-master server; do
         if ! service_name="$(optional_service_name "$role")"; then
             continue
         fi
@@ -537,7 +551,7 @@ top_level_restart() {
     local found=0
 
     run_systemctl daemon-reload
-    for role in server client airs; do
+    for role in server server-master client airs; do
         if ! service_name="$(optional_service_name "$role")"; then
             continue
         fi
@@ -613,10 +627,15 @@ EOF
 top_level_init() {
     local target="$1"
     case "$target" in
-        server)
+        server|server-node)
             set_role_vars server
             init_service server
             enable_and_start_service server
+            ;;
+        server-master)
+            set_role_vars server-master
+            init_service server-master
+            enable_and_start_service server-master
             ;;
         client)
             set_role_vars client
@@ -627,7 +646,7 @@ top_level_init() {
             enable_and_start_service airs
             ;;
         *)
-            fail "invalid init target '$target'; expected 'server' or 'client'"
+            fail "invalid init target '$target'; expected 'server', 'server-node', 'server-master', or 'client'"
             ;;
     esac
 }
@@ -698,7 +717,7 @@ main() {
     local role="$1"
     local action="$2"
 
-    validate_role "$role"
+    role="$(validate_role "$role")"
     set_role_vars "$role"
 
     case "$action" in

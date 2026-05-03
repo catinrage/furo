@@ -13,6 +13,7 @@ $RELAY_BUFFER_SIZE = 256 * 1024;
 $RELAY_IO_CHUNK_SIZE = 128 * 1024;
 $RELAY_MAX_PENDING_BYTES = 4 * 1024 * 1024;
 $RELAY_ENABLE_LOGS = false;
+$RELAY_ROUTE_MAP_FILE = __DIR__ . '/furo-route-map.json';
 
 ignore_user_abort(true);
 set_time_limit(0);
@@ -33,6 +34,103 @@ function failJson(string $message, int $code = 400, array $extra = []): void
     http_response_code($code);
     header('Content-Type: application/json');
     echo json_encode(array_merge(['error' => $message], $extra), JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function cleanNamespace(string $value): string
+{
+    $clean = preg_replace('/[^a-zA-Z0-9_\-\.]/', '', $value) ?? '';
+    return $clean !== '' ? $clean : 'default';
+}
+
+function routeMapPath(): string
+{
+    global $RELAY_ROUTE_MAP_FILE;
+    $namespace = cleanNamespace((string)($_GET['namespace'] ?? 'default'));
+    if ($namespace === 'default') {
+        return $RELAY_ROUTE_MAP_FILE;
+    }
+    $dir = dirname($RELAY_ROUTE_MAP_FILE);
+    $base = basename($RELAY_ROUTE_MAP_FILE, '.json');
+    return $dir . '/' . $base . '-' . $namespace . '.json';
+}
+
+function readRouteMap(): void
+{
+    $path = routeMapPath();
+    header('Content-Type: application/json');
+    if (!is_file($path)) {
+        echo json_encode([
+            'namespace' => cleanNamespace((string)($_GET['namespace'] ?? 'default')),
+            'fleet_id' => '',
+            'generation' => 0,
+            'active' => null,
+            'standby' => [],
+            'retired' => [],
+            'updated_at' => null,
+        ], JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+
+    $fh = @fopen($path, 'rb');
+    if ($fh === false) {
+        failJson('Route map is not readable', 500);
+    }
+    flock($fh, LOCK_SH);
+    $content = stream_get_contents($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    if ($content === false || trim($content) === '') {
+        echo '{}';
+        exit;
+    }
+    echo $content;
+    exit;
+}
+
+function writeRouteMap(): void
+{
+    $payload = file_get_contents('php://input');
+    if ($payload === false || trim($payload) === '') {
+        failJson('Route map body is required', 400);
+    }
+    $decoded = json_decode($payload, true);
+    if (!is_array($decoded)) {
+        failJson('Route map body must be JSON object', 400);
+    }
+    $encoded = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+    if ($encoded === false) {
+        failJson('Route map JSON encode failed', 400);
+    }
+    $encoded .= "\n";
+
+    $path = routeMapPath();
+    $dir = dirname($path);
+    if (!is_dir($dir) || !is_writable($dir)) {
+        failJson('Route map directory is not writable', 500, ['path' => $dir]);
+    }
+    $tmp = tempnam($dir, '.furo-route-map.');
+    if ($tmp === false) {
+        failJson('Route map temp file failed', 500);
+    }
+
+    $fh = @fopen($tmp, 'wb');
+    if ($fh === false) {
+        @unlink($tmp);
+        failJson('Route map temp file is not writable', 500);
+    }
+    flock($fh, LOCK_EX);
+    fwrite($fh, $encoded);
+    fflush($fh);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    @chmod($tmp, 0640);
+    if (!@rename($tmp, $path)) {
+        @unlink($tmp);
+        failJson('Route map replace failed', 500);
+    }
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true], JSON_UNESCAPED_SLASHES);
     exit;
 }
 
@@ -361,8 +459,18 @@ function socket_write_all(Socket $socket, string $payload): void
 auth($RELAY_API_KEY);
 $action = $_GET['action'] ?? null;
 
+if ($action === 'route-map') {
+    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+        readRouteMap();
+    }
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' || $_SERVER['REQUEST_METHOD'] === 'PUT') {
+        writeRouteMap();
+    }
+    failJson('Invalid route-map method', 405, ['expected' => 'GET, POST, or PUT']);
+}
+
 if ($action !== 'session') {
-    failJson('Invalid action', 400, ['expected' => 'session']);
+    failJson('Invalid action', 400, ['expected' => 'session or route-map']);
 }
 
 if (!function_exists('socket_create')) {

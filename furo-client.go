@@ -64,30 +64,33 @@ const (
 )
 
 var (
-	configPath      = flag.String("c", "config.client.json", "Path to client config JSON")
-	showVersion     = flag.Bool("version", false, "Print version and exit")
-	apiKey          string
-	socksListen     string
-	socksAuth       string
-	agentListen     string
-	publicHost      string
-	publicPort      int
-	serverHost      string
-	serverPort      int
-	adminListen     string
-	openTimeout     time.Duration
-	keepalivePeriod time.Duration
-	writeTimeout    = defaultWriteTimeout
-	minFramePayload = defaultMinFramePayload
-	midFramePayload = defaultMidFramePayload
-	maxFramePayload = defaultMaxFramePayload
-	sessionCount    int
-	logFilePath     string
-	clientID        string
-	routeSelection  routeSelectionStrategy
-	relayURL        string
-	clientRoutes    []clientRouteConfig
-	airsSettings    clientAIRSConfig
+	configPath       = flag.String("c", "config.client.json", "Path to client config JSON")
+	showVersion      = flag.Bool("version", false, "Print version and exit")
+	pingMaster       = flag.Bool("ping-master", false, "Ping configured master URL or relay route-map cache and exit")
+	pingMasterURL    = flag.String("ping-master-url", "", "Override master URL for --ping-master")
+	apiKey           string
+	socksListen      string
+	socksAuth        string
+	agentListen      string
+	publicHost       string
+	publicPort       int
+	serverHost       string
+	serverPort       int
+	adminListen      string
+	openTimeout      time.Duration
+	keepalivePeriod  time.Duration
+	writeTimeout     = defaultWriteTimeout
+	minFramePayload  = defaultMinFramePayload
+	midFramePayload  = defaultMidFramePayload
+	maxFramePayload  = defaultMaxFramePayload
+	sessionCount     int
+	logFilePath      string
+	clientID         string
+	routeSelection   routeSelectionStrategy
+	relayURL         string
+	clientRoutes     []clientRouteConfig
+	airsSettings     clientAIRSConfig
+	routeMapSettings clientRouteMapConfig
 )
 
 var (
@@ -120,6 +123,7 @@ type clientConfigFile struct {
 	SessionCount       int                     `json:"session_count"`
 	LogFile            string                  `json:"log_file"`
 	AIRS               clientAIRSConfig        `json:"airs"`
+	MasterRoutes       clientRouteMapConfig    `json:"master_routes"`
 }
 
 type clientAIRSConfig struct {
@@ -137,6 +141,18 @@ type clientRouteConfigFile struct {
 	ServerPort   int    `json:"server_port"`
 	SessionCount int    `json:"session_count"`
 	Enabled      *bool  `json:"enabled"`
+	ManagedBy    string `json:"managed_by,omitempty"`
+	Role         string `json:"role,omitempty"`
+	Generation   int64  `json:"generation,omitempty"`
+}
+
+type clientRouteMapConfig struct {
+	Enabled              bool   `json:"enabled"`
+	Namespace            string `json:"namespace,omitempty"`
+	FleetID              string `json:"fleet_id,omitempty"`
+	MasterURL            string `json:"master_url,omitempty"`
+	PollIntervalSeconds  int    `json:"poll_interval_seconds,omitempty"`
+	FailoverGraceSeconds int    `json:"failover_grace_seconds,omitempty"`
 }
 
 type routeSelectionStrategy string
@@ -157,6 +173,9 @@ type clientRouteConfig struct {
 	ServerPort   int
 	SessionCount int
 	Enabled      bool
+	ManagedBy    string
+	Role         string
+	Generation   int64
 }
 
 type clientRouteState struct {
@@ -209,6 +228,12 @@ func defaultClientConfig() clientConfigFile {
 			InspectBinary:     "inspect",
 			ServiceScript:     "service.sh",
 			ClientServiceRole: "client",
+		},
+		MasterRoutes: clientRouteMapConfig{
+			Enabled:              false,
+			Namespace:            "default",
+			PollIntervalSeconds:  30,
+			FailoverGraceSeconds: 5,
 		},
 	}
 }
@@ -350,6 +375,9 @@ func buildClientRoutes(cfg clientConfigFile) ([]clientRouteConfig, int, error) {
 			ServerPort:   route.ServerPort,
 			SessionCount: route.SessionCount,
 			Enabled:      enabled,
+			ManagedBy:    route.ManagedBy,
+			Role:         route.Role,
+			Generation:   route.Generation,
 		}
 		routes = append(routes, routeCfg)
 		if routeCfg.Enabled {
@@ -450,6 +478,17 @@ func loadClientConfig(path string) error {
 	}
 	if airsSettings.ClientServiceRole == "" {
 		airsSettings.ClientServiceRole = "client"
+	}
+	routeMapSettings = cfg.MasterRoutes
+	routeMapSettings.Namespace = sanitizeSessionComponent(routeMapSettings.Namespace)
+	if routeMapSettings.Namespace == "" {
+		routeMapSettings.Namespace = "default"
+	}
+	if routeMapSettings.PollIntervalSeconds == 0 {
+		routeMapSettings.PollIntervalSeconds = 30
+	}
+	if routeMapSettings.FailoverGraceSeconds == 0 {
+		routeMapSettings.FailoverGraceSeconds = 5
 	}
 	return nil
 }
@@ -1653,6 +1692,21 @@ func (s *MuxSession) loop() {
 		running := s.requestRunning
 		s.mu.Unlock()
 
+		if !s.route.cfg.Enabled {
+			if connected {
+				s.closeSession(0, errors.New("route disabled"))
+			}
+			timer := time.NewTimer(sessionPollDelay)
+			select {
+			case <-timer.C:
+			case <-s.loopWake:
+				if !timer.Stop() {
+					<-timer.C
+				}
+			}
+			continue
+		}
+
 		retryWait := s.retryWait(time.Now())
 		if !connected && !running && retryWait == 0 {
 			go s.requestSession()
@@ -1675,12 +1729,14 @@ func (s *MuxSession) loop() {
 }
 
 type SessionPool struct {
-	sessions    map[string]*MuxSession
-	order       []*MuxSession
-	routes      []*clientRouteState
-	strategy    routeSelectionStrategy
-	rr          uint32
-	stateChange chan struct{}
+	mu                      sync.RWMutex
+	sessions                map[string]*MuxSession
+	order                   []*MuxSession
+	routes                  []*clientRouteState
+	strategy                routeSelectionStrategy
+	rr                      uint32
+	stateChange             chan struct{}
+	localFailoverGeneration int64
 }
 
 type sessionLoadSnapshot struct {
@@ -1765,12 +1821,230 @@ type clientRouteStatus struct {
 	ServerPort         int    `json:"server_port"`
 	SessionCount       int    `json:"session_count"`
 	Enabled            bool   `json:"enabled"`
+	ManagedBy          string `json:"managed_by,omitempty"`
+	Role               string `json:"role,omitempty"`
+	Generation         int64  `json:"generation,omitempty"`
 	ConnectedSessions  int    `json:"connected_sessions"`
 	ReadySessions      int    `json:"ready_sessions"`
 	ActiveStreams      int    `json:"active_streams"`
 	PendingFrames      int64  `json:"pending_frames"`
 	PendingBytes       int64  `json:"pending_bytes"`
 	EstimatedLatencyMs int64  `json:"estimated_latency_ms"`
+}
+
+type relayRouteMap struct {
+	Namespace  string           `json:"namespace"`
+	FleetID    string           `json:"fleet_id"`
+	Generation int64            `json:"generation"`
+	Active     *relayRouteSpec  `json:"active"`
+	Standby    []relayRouteSpec `json:"standby"`
+	Retired    []string         `json:"retired"`
+	UpdatedAt  string           `json:"updated_at"`
+}
+
+type relayRouteSpec struct {
+	ID           string `json:"id"`
+	RelayURL     string `json:"relay_url"`
+	PublicHost   string `json:"public_host,omitempty"`
+	PublicPort   int    `json:"public_port,omitempty"`
+	ServerHost   string `json:"server_host"`
+	ServerPort   int    `json:"server_port"`
+	SessionCount int    `json:"session_count"`
+}
+
+func managedByForRouteMap(routeMap relayRouteMap) string {
+	if strings.TrimSpace(routeMap.FleetID) != "" {
+		return strings.TrimSpace(routeMap.FleetID)
+	}
+	return "server-master"
+}
+
+func routeConfigFromRelaySpec(spec relayRouteSpec, managedBy, role string, generation int64, enabled bool) clientRouteConfig {
+	sessionCountValue := spec.SessionCount
+	if sessionCountValue <= 0 {
+		sessionCountValue = 1
+	}
+	relayURLValue := spec.RelayURL
+	if relayURLValue == "" {
+		relayURLValue = relayURL
+	}
+	return clientRouteConfig{
+		ID:           sanitizeSessionComponent(spec.ID),
+		RelayURL:     relayURLValue,
+		PublicHost:   spec.PublicHost,
+		PublicPort:   spec.PublicPort,
+		ServerHost:   spec.ServerHost,
+		ServerPort:   spec.ServerPort,
+		SessionCount: sessionCountValue,
+		Enabled:      enabled,
+		ManagedBy:    managedBy,
+		Role:         role,
+		Generation:   generation,
+	}
+}
+
+func relayRouteMapURL(base string, namespace ...string) (string, error) {
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	values := parsed.Query()
+	values.Set("action", "route-map")
+	if len(namespace) > 0 && strings.TrimSpace(namespace[0]) != "" {
+		values.Set("namespace", sanitizeSessionComponent(namespace[0]))
+	}
+	parsed.RawQuery = values.Encode()
+	return parsed.String(), nil
+}
+
+func fetchRelayRouteMap(ctx context.Context, base string) (relayRouteMap, error) {
+	endpoint, err := relayRouteMapURL(base, routeMapSettings.Namespace)
+	if err != nil {
+		return relayRouteMap{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return relayRouteMap{}, err
+	}
+	req.Header.Set("X-API-KEY", apiKey)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return relayRouteMap{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return relayRouteMap{}, fmt.Errorf("route-map status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var routeMap relayRouteMap
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 256*1024)).Decode(&routeMap); err != nil {
+		return relayRouteMap{}, err
+	}
+	return routeMap, nil
+}
+
+func routeConfigMap(cfg clientRouteConfig) map[string]any {
+	route := map[string]any{
+		"id":            cfg.ID,
+		"relay_url":     cfg.RelayURL,
+		"server_host":   cfg.ServerHost,
+		"server_port":   cfg.ServerPort,
+		"session_count": cfg.SessionCount,
+		"enabled":       cfg.Enabled,
+	}
+	if cfg.PublicHost != "" {
+		route["public_host"] = cfg.PublicHost
+	}
+	if cfg.PublicPort > 0 {
+		route["public_port"] = cfg.PublicPort
+	}
+	if cfg.ManagedBy != "" {
+		route["managed_by"] = cfg.ManagedBy
+	}
+	if cfg.Role != "" {
+		route["role"] = cfg.Role
+	}
+	if cfg.Generation > 0 {
+		route["generation"] = cfg.Generation
+	}
+	return route
+}
+
+func persistRelayRouteMap(routeMap relayRouteMap) error {
+	data, err := os.ReadFile(*configPath)
+	if err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	managedBy := managedByForRouteMap(routeMap)
+	retired := make(map[string]struct{})
+	for _, id := range routeMap.Retired {
+		if sanitized := sanitizeSessionComponent(id); sanitized != "" {
+			retired[sanitized] = struct{}{}
+		}
+	}
+	routes := make([]any, 0)
+	if existing, ok := raw["routes"].([]any); ok {
+		for _, value := range existing {
+			route, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			routeID := sanitizeSessionComponent(stringFromMap(route, "id"))
+			routeManagedBy := stringFromMap(route, "managed_by")
+			if routeManagedBy == managedBy {
+				if _, isRetired := retired[routeID]; isRetired {
+					continue
+				}
+				continue
+			}
+			routes = append(routes, route)
+		}
+	}
+	if routeMap.Active != nil {
+		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true)
+		routes = append(routes, routeConfigMap(cfg))
+	}
+	for _, standby := range routeMap.Standby {
+		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false)
+		routes = append(routes, routeConfigMap(cfg))
+	}
+	raw["routes"] = routes
+	delete(raw, "relay_url")
+	delete(raw, "server_host")
+	delete(raw, "server_port")
+	delete(raw, "session_count")
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	return os.WriteFile(*configPath, out, 0644)
+}
+
+func persistPromotedManagedRoute(promoted clientRouteConfig) error {
+	data, err := os.ReadFile(*configPath)
+	if err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	existing, _ := raw["routes"].([]any)
+	routes := make([]any, 0, len(existing))
+	found := false
+	for _, value := range existing {
+		route, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if stringFromMap(route, "managed_by") == promoted.ManagedBy {
+			if sanitizeSessionComponent(stringFromMap(route, "id")) == promoted.ID {
+				routes = append(routes, routeConfigMap(promoted))
+				found = true
+				continue
+			}
+			if stringFromMap(route, "role") == "active" {
+				route["enabled"] = false
+				route["role"] = "retired"
+			}
+		}
+		routes = append(routes, route)
+	}
+	if !found {
+		routes = append(routes, routeConfigMap(promoted))
+	}
+	raw["routes"] = routes
+	out, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	return os.WriteFile(*configPath, out, 0644)
 }
 
 func newSessionPool(count int) *SessionPool {
@@ -1821,6 +2095,148 @@ func newSessionPoolForRoutes(routeCfgs []clientRouteConfig, strategy routeSelect
 	return p
 }
 
+func (p *SessionPool) findRouteLocked(id string) *clientRouteState {
+	for _, route := range p.routes {
+		if route.cfg.ID == id {
+			return route
+		}
+	}
+	return nil
+}
+
+func (p *SessionPool) ensureRouteSessionsLocked(route *clientRouteState) {
+	if !route.cfg.Enabled {
+		return
+	}
+	existing := 0
+	for _, session := range p.order {
+		if session.route == route {
+			existing++
+		}
+	}
+	for i := existing; i < route.cfg.SessionCount; i++ {
+		sid := fmt.Sprintf("%s__%s__sess_%d", clientID, route.cfg.ID, i+1)
+		if _, exists := p.sessions[sid]; exists {
+			continue
+		}
+		session := newMuxSession(p, route, i, sid)
+		p.sessions[sid] = session
+		p.order = append(p.order, session)
+		go session.loop()
+		go session.statsLoop()
+	}
+}
+
+func (p *SessionPool) upsertManagedRoute(cfg clientRouteConfig) {
+	if cfg.ID == "" || cfg.ServerHost == "" || cfg.ServerPort <= 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	route := p.findRouteLocked(cfg.ID)
+	if route == nil {
+		route = &clientRouteState{cfg: cfg}
+		p.routes = append(p.routes, route)
+	} else {
+		route.cfg = cfg
+	}
+	p.ensureRouteSessionsLocked(route)
+	p.notifyStateChange()
+}
+
+func (p *SessionPool) disableRetiredManagedRoutes(managedBy string, generation int64, keep map[string]struct{}, retired map[string]struct{}) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, route := range p.routes {
+		if route.cfg.ManagedBy != managedBy {
+			continue
+		}
+		_, isKeep := keep[route.cfg.ID]
+		_, isRetired := retired[route.cfg.ID]
+		if isRetired || (!isKeep && route.cfg.Generation < generation) {
+			route.cfg.Enabled = false
+			route.cfg.Role = "retired"
+		}
+	}
+	p.notifyStateChange()
+}
+
+func (p *SessionPool) applyRelayRouteMap(routeMap relayRouteMap) {
+	if routeMap.Generation <= 0 {
+		return
+	}
+	if atomic.LoadInt64(&p.localFailoverGeneration) >= routeMap.Generation {
+		return
+	}
+	managedBy := managedByForRouteMap(routeMap)
+	keep := make(map[string]struct{})
+	retired := make(map[string]struct{})
+	for _, id := range routeMap.Retired {
+		if sanitized := sanitizeSessionComponent(id); sanitized != "" {
+			retired[sanitized] = struct{}{}
+		}
+	}
+	if routeMap.Active != nil {
+		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true)
+		if cfg.ID != "" {
+			keep[cfg.ID] = struct{}{}
+			p.upsertManagedRoute(cfg)
+		}
+	}
+	for _, standby := range routeMap.Standby {
+		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false)
+		if cfg.ID != "" {
+			keep[cfg.ID] = struct{}{}
+			p.upsertManagedRoute(cfg)
+		}
+	}
+	p.disableRetiredManagedRoutes(managedBy, routeMap.Generation, keep, retired)
+}
+
+func (p *SessionPool) managedActiveReady() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	ready := 0
+	for _, session := range p.order {
+		if session.route.cfg.ManagedBy == "" || session.route.cfg.Role != "active" || !session.route.cfg.Enabled {
+			continue
+		}
+		if session.isReady() {
+			ready++
+		}
+	}
+	return ready
+}
+
+func (p *SessionPool) promoteManagedStandby() (clientRouteConfig, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var chosen *clientRouteState
+	for _, route := range p.routes {
+		if route.cfg.ManagedBy == "" || route.cfg.Role != "standby" {
+			continue
+		}
+		if chosen == nil || route.cfg.Generation > chosen.cfg.Generation {
+			chosen = route
+		}
+	}
+	if chosen == nil {
+		return clientRouteConfig{}, false
+	}
+	for _, route := range p.routes {
+		if route.cfg.ManagedBy == chosen.cfg.ManagedBy && route.cfg.Role == "active" {
+			route.cfg.Enabled = false
+			route.cfg.Role = "retired"
+		}
+	}
+	chosen.cfg.Role = "active"
+	chosen.cfg.Enabled = true
+	atomic.StoreInt64(&p.localFailoverGeneration, chosen.cfg.Generation)
+	p.ensureRouteSessionsLocked(chosen)
+	p.notifyStateChange()
+	return chosen.cfg, true
+}
+
 func reserveSessionCount(count int) int {
 	var reserved int
 	switch {
@@ -1843,6 +2259,8 @@ func (p *SessionPool) notifyStateChange() {
 }
 
 func (p *SessionPool) start() {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	for _, s := range p.order {
 		go s.loop()
 		go s.statsLoop()
@@ -1850,6 +2268,8 @@ func (p *SessionPool) start() {
 }
 
 func (p *SessionPool) totalActive() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	total := 0
 	for _, s := range p.order {
 		total += s.activeCount()
@@ -1896,6 +2316,8 @@ func (s *MuxSession) snapshot() clientSessionStatus {
 }
 
 func buildClientStatus(pool *SessionPool) clientStatusResponse {
+	pool.mu.RLock()
+	defer pool.mu.RUnlock()
 	status := clientStatusResponse{
 		Service:        "furo-client",
 		Version:        appVersion,
@@ -1933,6 +2355,9 @@ func buildClientStatus(pool *SessionPool) clientStatusResponse {
 			ServerPort:         route.cfg.ServerPort,
 			SessionCount:       route.cfg.SessionCount,
 			Enabled:            route.cfg.Enabled,
+			ManagedBy:          route.cfg.ManagedBy,
+			Role:               route.cfg.Role,
+			Generation:         route.cfg.Generation,
 			EstimatedLatencyMs: route.latency().Milliseconds(),
 		}
 		routeStatusByID[route.cfg.ID] = &status.Routes[idx]
@@ -2657,6 +3082,8 @@ func runClientAdminServer(pool *SessionPool) error {
 }
 
 func (p *SessionPool) getByID(sid string) *MuxSession {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	return p.sessions[sid]
 }
 
@@ -2766,6 +3193,8 @@ type routeCandidate struct {
 }
 
 func (p *SessionPool) selectReadySession() (*MuxSession, int) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	candidates := make([]routeCandidate, 0, len(p.routes))
 	totalReady := 0
 	for _, route := range p.routes {
@@ -2928,6 +3357,115 @@ func runAgentListener(pool *SessionPool) error {
 	}
 }
 
+func runManagedRouteMapLoop(pool *SessionPool) {
+	if !routeMapSettings.Enabled {
+		return
+	}
+	pollInterval := time.Duration(routeMapSettings.PollIntervalSeconds) * time.Second
+	if pollInterval <= 0 {
+		pollInterval = 30 * time.Second
+	}
+	failoverGrace := time.Duration(routeMapSettings.FailoverGraceSeconds) * time.Second
+	if failoverGrace <= 0 {
+		failoverGrace = 5 * time.Second
+	}
+	var activeEmptySince time.Time
+	fetchAndApply := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		routeMap, err := fetchRelayRouteMap(ctx, relayURL)
+		if err != nil {
+			logEvent("[CLIENT] route_map_fetch_failed err=%v", err)
+			return
+		}
+		if routeMapSettings.FleetID != "" && routeMap.FleetID != "" && routeMap.FleetID != routeMapSettings.FleetID {
+			logEvent("[CLIENT] route_map_ignored fleet_id=%s want=%s", routeMap.FleetID, routeMapSettings.FleetID)
+			return
+		}
+		if routeMap.Namespace != "" && routeMap.Namespace != routeMapSettings.Namespace {
+			logEvent("[CLIENT] route_map_ignored namespace=%s want=%s", routeMap.Namespace, routeMapSettings.Namespace)
+			return
+		}
+		pool.applyRelayRouteMap(routeMap)
+		if err := persistRelayRouteMap(routeMap); err != nil {
+			logEvent("[CLIENT] route_map_persist_failed err=%v", err)
+		}
+	}
+	fetchAndApply()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	healthTicker := time.NewTicker(time.Second)
+	defer healthTicker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			fetchAndApply()
+		case <-healthTicker.C:
+			if pool.managedActiveReady() > 0 {
+				activeEmptySince = time.Time{}
+				continue
+			}
+			if activeEmptySince.IsZero() {
+				activeEmptySince = time.Now()
+				continue
+			}
+			if time.Since(activeEmptySince) < failoverGrace {
+				continue
+			}
+			promoted, ok := pool.promoteManagedStandby()
+			if !ok {
+				continue
+			}
+			logEvent("[CLIENT] managed_failover_promoted route=%s generation=%d", promoted.ID, promoted.Generation)
+			if err := persistPromotedManagedRoute(promoted); err != nil {
+				logEvent("[CLIENT] managed_failover_persist_failed err=%v", err)
+			}
+			activeEmptySince = time.Time{}
+		}
+	}
+}
+
+func pingMasterFromClient() error {
+	target := strings.TrimSpace(*pingMasterURL)
+	if target == "" {
+		target = strings.TrimSpace(routeMapSettings.MasterURL)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if target != "" {
+		parsed, err := url.Parse(target)
+		if err != nil {
+			return err
+		}
+		if parsed.Path == "" || parsed.Path == "/" {
+			parsed.Path = "/healthz"
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("X-API-KEY", apiKey)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			return fmt.Errorf("master status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		fmt.Printf("ping master ok: %s\n%s\n", parsed.String(), strings.TrimSpace(string(body)))
+		return nil
+	}
+	routeMap, err := fetchRelayRouteMap(ctx, relayURL)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("ping master route-map ok: fleet=%s generation=%d active=%t standby=%d updated_at=%s\n", routeMap.FleetID, routeMap.Generation, routeMap.Active != nil, len(routeMap.Standby), routeMap.UpdatedAt)
+	return nil
+}
+
 func main() {
 	flag.Parse()
 
@@ -2938,6 +3476,12 @@ func main() {
 
 	if err := loadClientConfig(*configPath); err != nil {
 		log.Fatalf("failed to load client config %s: %v", *configPath, err)
+	}
+	if *pingMaster {
+		if err := pingMasterFromClient(); err != nil {
+			log.Fatalf("ping master failed: %v", err)
+		}
+		return
 	}
 
 	if logFilePath != "" {
@@ -2967,6 +3511,7 @@ func main() {
 		}()
 	}
 	pool.start()
+	go runManagedRouteMapLoop(pool)
 
 	conf := buildSOCKSConfig(pool)
 
