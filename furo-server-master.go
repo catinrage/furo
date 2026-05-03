@@ -295,7 +295,7 @@ func (a *masterApp) findNodeLocked(id string) *masterNode {
 
 func nodeUnavailable(status string) bool {
 	switch status {
-	case "dead", "deleted", "deleting", "delete_failed":
+	case "dead", "deleted", "deleting", "delete_failed", "verify_failed":
 		return true
 	default:
 		return false
@@ -304,11 +304,20 @@ func nodeUnavailable(status string) bool {
 
 func nodeNeedsProvision(status string) bool {
 	switch status {
-	case "", "creating", "create_wait_failed", "created", "bootstrapping", "bootstrap_failed", "verifying", "verify_failed":
+	case "", "creating", "create_wait_failed", "created", "bootstrapping", "bootstrap_failed", "verifying":
 		return true
 	default:
 		return false
 	}
+}
+
+func (a *masterApp) retireNodeIDLocked(nodeID string) {
+	for _, retiredID := range a.state.Retired {
+		if retiredID == nodeID {
+			return
+		}
+	}
+	a.state.Retired = append(a.state.Retired, nodeID)
 }
 
 func (a *masterApp) activeNodeLocked() *masterNode {
@@ -497,7 +506,7 @@ func (a *masterApp) pruneSurplusNodes() {
 		node.Status = "deleting"
 		node.LastError = "surplus active node; another active is selected"
 		node.UpdatedAt = now
-		a.state.Retired = append(a.state.Retired, node.ID)
+		a.retireNodeIDLocked(node.ID)
 		deleteNodes = append(deleteNodes, *node)
 		a.state.Generation++
 		log.Printf("[FURO-MASTER] marked surplus active for deletion id=%s order=%s ip=%s selected_active=%s", node.ID, node.OrderID, node.IP, a.state.ActiveID)
@@ -520,7 +529,7 @@ func (a *masterApp) pruneSurplusNodes() {
 		node.Status = "deleting"
 		node.LastError = "surplus standby node above backup_count"
 		node.UpdatedAt = now
-		a.state.Retired = append(a.state.Retired, node.ID)
+		a.retireNodeIDLocked(node.ID)
 		deleteNodes = append(deleteNodes, *node)
 		a.state.Generation++
 		log.Printf("[FURO-MASTER] marked surplus standby for deletion id=%s order=%s ip=%s backup_count=%d", node.ID, node.OrderID, node.IP, a.cfg.BackupCount)
@@ -535,6 +544,37 @@ func (a *masterApp) pruneSurplusNodes() {
 
 	for _, node := range deleteNodes {
 		go a.deleteNodeOrder(context.Background(), node, "surplus")
+	}
+}
+
+func (a *masterApp) pruneVerifyFailedStandbys() {
+	a.mu.Lock()
+	var deleteNodes []masterNode
+	now := time.Now().UTC().Format(time.RFC3339)
+	for idx := range a.state.Nodes {
+		node := &a.state.Nodes[idx]
+		if node.Namespace != a.cfg.Namespace || node.Role != "standby" || node.Status != "verify_failed" {
+			continue
+		}
+		node.Status = "deleting"
+		if node.LastError == "" {
+			node.LastError = "standby relay verification failed"
+		}
+		node.UpdatedAt = now
+		a.retireNodeIDLocked(node.ID)
+		deleteNodes = append(deleteNodes, *node)
+		a.state.Generation++
+		log.Printf("[FURO-MASTER] marked verify-failed standby for deletion id=%s order=%s ip=%s err=%s", node.ID, node.OrderID, node.IP, node.LastError)
+	}
+	if len(deleteNodes) > 0 {
+		if err := a.saveStateLocked(); err != nil {
+			log.Printf("[FURO-MASTER] save verify-failed prune state failed err=%v", err)
+		}
+	}
+	a.mu.Unlock()
+
+	for _, node := range deleteNodes {
+		go a.deleteNodeOrder(context.Background(), node, "standby_verify_failed")
 	}
 }
 
@@ -579,6 +619,7 @@ func (a *masterApp) ensureFleet(ctx context.Context) error {
 	if err := a.importProviderNodes(ctx); err != nil {
 		log.Printf("[FURO-MASTER] provider import failed err=%v", err)
 	}
+	a.pruneVerifyFailedStandbys()
 	a.pruneSurplusNodes()
 
 	a.mu.Lock()
@@ -780,7 +821,7 @@ func (a *masterApp) provisionNode(ctx context.Context, nodeID string) error {
 		}
 		log.Printf("[FURO-MASTER] standby relay health check started id=%s ip=%s target=%s:%d", local.ID, local.IP, a.cfg.RelayHealthHost, a.cfg.RelayHealthPort)
 		if err := a.verifyNodeRelayAccessFunc(ctx, local); err != nil {
-			a.markNodeProvisionError(local.ID, "verify_failed", err)
+			a.discardStandbyNodeForReplacement(local.ID, "standby_relay_health_failed", err)
 			return err
 		}
 		log.Printf("[FURO-MASTER] standby relay health check ok id=%s ip=%s", local.ID, local.IP)
@@ -830,6 +871,37 @@ func (a *masterApp) markNodeProvisionError(nodeID, status string, cause error) {
 		return
 	}
 	log.Printf("[FURO-MASTER] node provision failed id=%s role=%s order=%s ip=%s status=%s attempt=%d err=%v", node.ID, node.Role, node.OrderID, node.IP, node.Status, node.ProvisionAttempts, cause)
+}
+
+func (a *masterApp) discardStandbyNodeForReplacement(nodeID, reason string, cause error) {
+	a.mu.Lock()
+	node := a.findNodeLocked(nodeID)
+	if node == nil {
+		a.mu.Unlock()
+		log.Printf("[FURO-MASTER] discard standby skipped id=%s reason=%s err=node_not_found cause=%v", nodeID, reason, cause)
+		return
+	}
+	if node.Role != "standby" {
+		a.mu.Unlock()
+		log.Printf("[FURO-MASTER] discard standby skipped id=%s role=%s reason=%s cause=%v", nodeID, node.Role, reason, cause)
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	node.Status = "deleting"
+	node.LastError = fmt.Sprintf("%s: %v", reason, cause)
+	node.UpdatedAt = now
+	a.retireNodeIDLocked(node.ID)
+	a.state.Generation++
+	local := *node
+	generation := a.state.Generation
+	err := a.saveStateLocked()
+	a.mu.Unlock()
+	if err != nil {
+		log.Printf("[FURO-MASTER] save standby discard state failed id=%s err=%v", nodeID, err)
+		return
+	}
+	log.Printf("[FURO-MASTER] standby discarded id=%s order=%s ip=%s reason=%s generation=%d", local.ID, local.OrderID, local.IP, reason, generation)
+	go a.deleteNodeOrder(context.Background(), local, reason)
 }
 
 func (a *masterApp) bootstrapNode(ctx context.Context, node masterNode) error {
@@ -1022,12 +1094,12 @@ func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) e
 			promoted.Status = "ready"
 			promoted.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			a.state.ActiveID = promoted.ID
-			a.state.Retired = append(a.state.Retired, nodeID)
+			a.retireNodeIDLocked(nodeID)
 			a.state.Generation++
 			log.Printf("[FURO-MASTER] promoted standby id=%s old_active=%s generation=%d", promoted.ID, nodeID, a.state.Generation)
 		} else {
 			a.state.ActiveID = ""
-			a.state.Retired = append(a.state.Retired, nodeID)
+			a.retireNodeIDLocked(nodeID)
 			a.state.Generation++
 			log.Printf("[FURO-MASTER] no standby available after active death old_active=%s generation=%d", nodeID, a.state.Generation)
 		}
@@ -1163,6 +1235,46 @@ func (a *masterApp) authenticate(r *http.Request) bool {
 	return r.Header.Get("X-API-KEY") == a.cfg.APIKey || r.URL.Query().Get("key") == a.cfg.APIKey
 }
 
+func (a *masterApp) recordNodeReport(report nodeReport) string {
+	role := report.Role
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	node := a.findNodeLocked(report.NodeID)
+	if node == nil {
+		log.Printf("[FURO-MASTER] node report from unknown id=%s role=%s status=%s namespace=%s", report.NodeID, report.Role, report.Status, report.Namespace)
+		return role
+	}
+
+	previousStatus := node.Status
+	node.LastReportAt = now
+	node.LastReportState = report.Status
+	node.UpdatedAt = now
+	role = node.Role
+	if report.Status == "ready" && node.Status != "ready" {
+		if nodeUnavailable(node.Status) {
+			if err := a.saveStateLocked(); err != nil {
+				log.Printf("[FURO-MASTER] save node report failed id=%s status=%s err=%v", node.ID, report.Status, err)
+			}
+			log.Printf("[FURO-MASTER] node ready report ignored id=%s role=%s previous_status=%s reason=node_unavailable", node.ID, node.Role, previousStatus)
+			return role
+		}
+		node.Status = "ready"
+		node.LastError = ""
+		if node.ReadyAt == "" {
+			node.ReadyAt = now
+		}
+		a.state.Generation++
+		log.Printf("[FURO-MASTER] node report promoted state id=%s role=%s previous_status=%s new_status=ready generation=%d", node.ID, node.Role, previousStatus, a.state.Generation)
+	}
+	if err := a.saveStateLocked(); err != nil {
+		log.Printf("[FURO-MASTER] save node report failed id=%s status=%s err=%v", node.ID, report.Status, err)
+	}
+	log.Printf("[FURO-MASTER] node report id=%s role=%s status=%s ip=%s state_status=%s", node.ID, node.Role, report.Status, node.IP, node.Status)
+	return role
+}
+
 func writeJSON(w http.ResponseWriter, code int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -1208,19 +1320,7 @@ func (a *masterApp) runControlServer() error {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "action": "replace", "role": "dead"})
 			return
 		}
-		role := report.Role
-		a.mu.Lock()
-		if node := a.findNodeLocked(report.NodeID); node != nil {
-			node.LastReportAt = time.Now().UTC().Format(time.RFC3339)
-			node.LastReportState = report.Status
-			node.UpdatedAt = node.LastReportAt
-			role = node.Role
-			_ = a.saveStateLocked()
-			log.Printf("[FURO-MASTER] node report id=%s role=%s status=%s ip=%s", node.ID, node.Role, report.Status, node.IP)
-		} else {
-			log.Printf("[FURO-MASTER] node report from unknown id=%s role=%s status=%s namespace=%s", report.NodeID, report.Role, report.Status, report.Namespace)
-		}
-		a.mu.Unlock()
+		role := a.recordNodeReport(report)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "role": role})
 	})
 	log.Printf("[FURO-MASTER] control listener on %s", a.cfg.Listen)

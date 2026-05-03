@@ -56,6 +56,15 @@ func (f *fakeCaasifyAPI) listOrders(ctx context.Context) ([]caasifyListedOrder, 
 	return append([]caasifyListedOrder(nil), f.orders...), nil
 }
 
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestMasterPromotesStandbyOnDeadActive(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := defaultMasterConfig()
@@ -202,6 +211,141 @@ func TestMasterPersistsNodeBeforeBootstrapFailure(t *testing.T) {
 	}
 	if len(app.state.Nodes) != 1 || app.state.ActiveID != node.ID {
 		t.Fatalf("state after reconcile active=%q nodes=%d, want same active only", app.state.ActiveID, len(app.state.Nodes))
+	}
+}
+
+func TestMasterReadyReportClearsBootstrapFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.Namespace = "sky-01"
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.CaasifyToken = "token"
+	cfg.RelayURL = "http://relay.test/furo.php"
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	app.state = masterState{
+		Namespace:  "sky-01",
+		FleetID:    "furo-sky-01",
+		Generation: 6,
+		Nodes: []masterNode{
+			{Namespace: "sky-01", ID: "standby-a", OrderID: "order-a", IP: "192.0.2.10", Role: "standby", Status: "bootstrap_failed", LastError: "text file busy"},
+		},
+	}
+	if err := app.saveStateLocked(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	role := app.recordNodeReport(nodeReport{Namespace: "sky-01", NodeID: "standby-a", Role: "standby", Status: "ready"})
+	if role != "standby" {
+		t.Fatalf("role = %q, want standby", role)
+	}
+	node := app.findNodeLocked("standby-a")
+	if node == nil {
+		t.Fatal("node not found after report")
+	}
+	if node.Status != "ready" || node.LastError != "" || node.ReadyAt == "" {
+		t.Fatalf("node after ready report = %#v, want ready with cleared error", node)
+	}
+	if app.state.Generation != 7 {
+		t.Fatalf("generation = %d, want 7", app.state.Generation)
+	}
+}
+
+func TestMasterDiscardsStandbyWhenRelayCheckFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.Namespace = "sky-01"
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.CaasifyToken = "token"
+	cfg.RelayURL = "http://relay.test/furo.php"
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	fake := &fakeCaasifyAPI{}
+	app.caasify = fake
+	app.bootstrapNodeFunc = func(context.Context, masterNode) error {
+		return nil
+	}
+	app.verifyNodeRelayAccessFunc = func(context.Context, masterNode) error {
+		return errors.New("relay blocked")
+	}
+	if err := app.loadState(); err != nil {
+		t.Fatalf("loadState() error = %v", err)
+	}
+
+	if _, err := app.createAndBootstrapNode(context.Background(), "standby"); err == nil {
+		t.Fatal("createAndBootstrapNode() error = nil, want relay verification failure")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		fake.mu.Lock()
+		deleteCount := fake.deleteCount
+		fake.mu.Unlock()
+		if deleteCount > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	fake.mu.Lock()
+	deleteCount := fake.deleteCount
+	fake.mu.Unlock()
+	if deleteCount != 1 {
+		t.Fatalf("delete count = %d, want 1", deleteCount)
+	}
+
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if len(app.state.Nodes) != 1 {
+		t.Fatalf("nodes = %d, want 1", len(app.state.Nodes))
+	}
+	node := app.state.Nodes[0]
+	if node.Status != "deleted" && node.Status != "deleting" {
+		t.Fatalf("node status = %q, want deleting/deleted", node.Status)
+	}
+	if !containsString(app.state.Retired, node.ID) {
+		t.Fatalf("retired = %#v, want %s", app.state.Retired, node.ID)
+	}
+	routeMap := app.routeMapLocked()
+	if len(routeMap.Standby) != 0 {
+		t.Fatalf("standby routes = %#v, want none", routeMap.Standby)
+	}
+}
+
+func TestMasterReadyReportDoesNotReviveDeletingStandby(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.Namespace = "sky-01"
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.CaasifyToken = "token"
+	cfg.RelayURL = "http://relay.test/furo.php"
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	app.state = masterState{
+		Namespace:  "sky-01",
+		FleetID:    "furo-sky-01",
+		Generation: 6,
+		Nodes: []masterNode{
+			{Namespace: "sky-01", ID: "standby-a", OrderID: "order-a", IP: "192.0.2.10", Role: "standby", Status: "deleting", LastError: "relay blocked"},
+		},
+		Retired: []string{"standby-a"},
+	}
+	if err := app.saveStateLocked(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	role := app.recordNodeReport(nodeReport{Namespace: "sky-01", NodeID: "standby-a", Role: "standby", Status: "ready"})
+	if role != "standby" {
+		t.Fatalf("role = %q, want standby", role)
+	}
+	node := app.findNodeLocked("standby-a")
+	if node == nil {
+		t.Fatal("node not found after report")
+	}
+	if node.Status != "deleting" {
+		t.Fatalf("node status = %q, want deleting", node.Status)
+	}
+	if app.state.Generation != 6 {
+		t.Fatalf("generation = %d, want 6", app.state.Generation)
 	}
 }
 
