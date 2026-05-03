@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -138,16 +139,20 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 }
 
 type masterNode struct {
-	ID              string `json:"id"`
-	Namespace       string `json:"namespace"`
-	OrderID         string `json:"order_id"`
-	IP              string `json:"ip"`
-	Role            string `json:"role"`
-	Status          string `json:"status"`
-	Password        string `json:"password,omitempty"`
-	CreatedAt       string `json:"created_at"`
-	LastReportAt    string `json:"last_report_at,omitempty"`
-	LastReportState string `json:"last_report_state,omitempty"`
+	ID                string `json:"id"`
+	Namespace         string `json:"namespace"`
+	OrderID           string `json:"order_id"`
+	IP                string `json:"ip"`
+	Role              string `json:"role"`
+	Status            string `json:"status"`
+	Password          string `json:"password,omitempty"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
+	ReadyAt           string `json:"ready_at,omitempty"`
+	ProvisionAttempts int    `json:"provision_attempts,omitempty"`
+	LastError         string `json:"last_error,omitempty"`
+	LastReportAt      string `json:"last_report_at,omitempty"`
+	LastReportState   string `json:"last_report_state,omitempty"`
 }
 
 type masterState struct {
@@ -182,21 +187,27 @@ func sanitizeMasterID(value string) string {
 }
 
 type masterApp struct {
-	cfg       masterConfigFile
-	statePath string
-	mu        sync.Mutex
-	state     masterState
-	caasify   *caasifyClient
-	startedAt time.Time
+	cfg                       masterConfigFile
+	statePath                 string
+	mu                        sync.Mutex
+	reconcileMu               sync.Mutex
+	state                     masterState
+	caasify                   caasifyAPI
+	startedAt                 time.Time
+	bootstrapNodeFunc         func(context.Context, masterNode) error
+	verifyNodeRelayAccessFunc func(context.Context, masterNode) error
 }
 
 func newMasterApp(cfg masterConfigFile) *masterApp {
-	return &masterApp{
+	app := &masterApp{
 		cfg:       cfg,
 		statePath: resolvePath(filepath.Dir(*masterConfigPath), cfg.StateFile),
 		caasify:   newCaasifyClient(cfg.CaasifyToken),
 		startedAt: time.Now(),
 	}
+	app.bootstrapNodeFunc = app.bootstrapNode
+	app.verifyNodeRelayAccessFunc = app.verifyNodeRelayAccess
+	return app
 }
 
 func resolvePath(base, value string) string {
@@ -212,6 +223,7 @@ func (a *masterApp) loadState() error {
 	data, err := os.ReadFile(a.statePath)
 	if errors.Is(err, os.ErrNotExist) {
 		a.state = defaultMasterState(a.cfg.Namespace)
+		log.Printf("[FURO-MASTER] state file missing; creating namespace=%s fleet_id=%s path=%s", a.state.Namespace, a.state.FleetID, a.statePath)
 		return a.saveStateLocked()
 	}
 	if err != nil {
@@ -229,14 +241,24 @@ func (a *masterApp) loadState() error {
 	if a.state.FleetID == "" {
 		a.state.FleetID = defaultMasterState(a.cfg.Namespace).FleetID
 	}
+	if a.state.Nodes == nil {
+		a.state.Nodes = []masterNode{}
+	}
+	if a.state.Retired == nil {
+		a.state.Retired = []string{}
+	}
 	for idx := range a.state.Nodes {
 		if a.state.Nodes[idx].Namespace == "" {
 			a.state.Nodes[idx].Namespace = a.cfg.Namespace
+		}
+		if a.state.Nodes[idx].UpdatedAt == "" {
+			a.state.Nodes[idx].UpdatedAt = a.state.UpdatedAt
 		}
 	}
 	if a.state.Generation <= 0 {
 		a.state.Generation = 1
 	}
+	log.Printf("[FURO-MASTER] state loaded namespace=%s fleet_id=%s generation=%d active_id=%s nodes=%d retired=%d path=%s", a.state.Namespace, a.state.FleetID, a.state.Generation, a.state.ActiveID, len(a.state.Nodes), len(a.state.Retired), a.statePath)
 	return nil
 }
 
@@ -266,48 +288,362 @@ func (a *masterApp) findNodeLocked(id string) *masterNode {
 	return nil
 }
 
+func nodeUnavailable(status string) bool {
+	switch status {
+	case "dead", "deleted", "deleting", "delete_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func nodeNeedsProvision(status string) bool {
+	switch status {
+	case "", "creating", "create_wait_failed", "created", "bootstrapping", "bootstrap_failed", "verifying", "verify_failed":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *masterApp) activeNodeLocked() *masterNode {
 	if a.state.ActiveID == "" {
 		return nil
 	}
-	return a.findNodeLocked(a.state.ActiveID)
+	node := a.findNodeLocked(a.state.ActiveID)
+	if node == nil || nodeUnavailable(node.Status) {
+		return nil
+	}
+	return node
 }
 
 func (a *masterApp) standbyNodesLocked() []masterNode {
 	var standby []masterNode
 	for _, node := range a.state.Nodes {
-		if node.Namespace == a.cfg.Namespace && node.Role == "standby" && node.Status != "deleted" && node.Status != "deleting" {
+		if node.Namespace == a.cfg.Namespace && node.Role == "standby" && !nodeUnavailable(node.Status) {
 			standby = append(standby, node)
 		}
 	}
 	return standby
 }
 
+func (a *masterApp) activeReadyLocked() bool {
+	node := a.activeNodeLocked()
+	return node != nil && node.Status == "ready"
+}
+
+func (a *masterApp) pendingProvisionNodeIDsLocked() []string {
+	var ids []string
+	for _, node := range a.state.Nodes {
+		if node.Namespace != a.cfg.Namespace || nodeUnavailable(node.Status) {
+			continue
+		}
+		if nodeNeedsProvision(node.Status) {
+			ids = append(ids, node.ID)
+		}
+	}
+	return ids
+}
+
 func (a *masterApp) nextNodeID(role string) string {
 	return fmt.Sprintf("%s-%s-%s-%d", a.cfg.NotePrefix, a.cfg.Namespace, role, time.Now().Unix())
 }
 
-func (a *masterApp) ensureFleet(ctx context.Context) error {
+func (a *masterApp) parseManagedNodeID(value string) (string, string, bool) {
+	value = strings.TrimSpace(value)
+	activePrefix := fmt.Sprintf("%s-%s-active-", a.cfg.NotePrefix, a.cfg.Namespace)
+	standbyPrefix := fmt.Sprintf("%s-%s-standby-", a.cfg.NotePrefix, a.cfg.Namespace)
+	switch {
+	case strings.HasPrefix(value, activePrefix):
+		return value, "active", true
+	case strings.HasPrefix(value, standbyPrefix):
+		return value, "standby", true
+	default:
+		return "", "", false
+	}
+}
+
+func nodeTimestamp(id string) int64 {
+	parts := strings.Split(id, "-")
+	if len(parts) == 0 {
+		return 0
+	}
+	value, _ := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+	return value
+}
+
+func (a *masterApp) importProviderNodes(ctx context.Context) error {
+	orders, err := a.caasify.listOrders(ctx)
+	if err != nil {
+		return err
+	}
 	a.mu.Lock()
-	needActive := a.activeNodeLocked() == nil
-	standbyNeed := a.cfg.BackupCount - len(a.standbyNodesLocked())
-	a.mu.Unlock()
-	if needActive {
-		if _, err := a.createAndBootstrapNode(ctx, "active"); err != nil {
-			return err
+	defer a.mu.Unlock()
+
+	knownOrders := make(map[string]struct{}, len(a.state.Nodes))
+	knownIDs := make(map[string]struct{}, len(a.state.Nodes))
+	for _, node := range a.state.Nodes {
+		if node.OrderID != "" {
+			knownOrders[node.OrderID] = struct{}{}
+		}
+		knownIDs[node.ID] = struct{}{}
+	}
+
+	imported := 0
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, order := range orders {
+		id, role, ok := a.parseManagedNodeID(order.Note)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(order.Status) {
+		case "passive", "cancelled", "canceled", "deleted", "terminated":
+			log.Printf("[FURO-MASTER] provider node skipped id=%s order=%s status=%s reason=inactive_order", id, order.OrderID, order.Status)
+			continue
+		}
+		if _, ok := knownOrders[order.OrderID]; ok {
+			continue
+		}
+		if _, ok := knownIDs[id]; ok {
+			continue
+		}
+		node := masterNode{
+			ID:        id,
+			Namespace: a.cfg.Namespace,
+			OrderID:   order.OrderID,
+			IP:        order.IP,
+			Role:      role,
+			Status:    "created",
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		a.state.Nodes = append(a.state.Nodes, node)
+		knownOrders[order.OrderID] = struct{}{}
+		knownIDs[id] = struct{}{}
+		imported++
+		log.Printf("[FURO-MASTER] imported provider node id=%s role=%s order=%s ip=%s provider_status=%s reason=matching_namespace_note", node.ID, node.Role, node.OrderID, node.IP, order.Status)
+	}
+
+	if imported == 0 {
+		log.Printf("[FURO-MASTER] provider import complete imported=0 matching_namespace=%s", a.cfg.Namespace)
+		return nil
+	}
+
+	if a.activeNodeLocked() == nil {
+		bestID := ""
+		var bestTS int64
+		for _, node := range a.state.Nodes {
+			if node.Namespace != a.cfg.Namespace || node.Role != "active" || nodeUnavailable(node.Status) {
+				continue
+			}
+			if ts := nodeTimestamp(node.ID); bestID == "" || ts > bestTS {
+				bestID = node.ID
+				bestTS = ts
+			}
+		}
+		if bestID != "" {
+			a.state.ActiveID = bestID
+			log.Printf("[FURO-MASTER] selected imported active id=%s reason=no_active_in_state", bestID)
 		}
 	}
+
+	a.state.Generation++
+	if err := a.saveStateLocked(); err != nil {
+		return err
+	}
+	log.Printf("[FURO-MASTER] provider import saved imported=%d generation=%d", imported, a.state.Generation)
+	return nil
+}
+
+func (a *masterApp) pruneSurplusNodes() {
+	a.mu.Lock()
+	var deleteNodes []masterNode
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	active := a.activeNodeLocked()
+	if active == nil {
+		bestID := ""
+		var bestTS int64
+		for _, node := range a.state.Nodes {
+			if node.Namespace != a.cfg.Namespace || node.Role != "active" || nodeUnavailable(node.Status) {
+				continue
+			}
+			if ts := nodeTimestamp(node.ID); bestID == "" || ts > bestTS {
+				bestID = node.ID
+				bestTS = ts
+			}
+		}
+		if bestID != "" {
+			a.state.ActiveID = bestID
+			active = a.findNodeLocked(bestID)
+			a.state.Generation++
+			log.Printf("[FURO-MASTER] selected active id=%s reason=surplus_prune_no_active", bestID)
+		}
+	}
+
+	for idx := range a.state.Nodes {
+		node := &a.state.Nodes[idx]
+		if node.Namespace != a.cfg.Namespace || node.Role != "active" || nodeUnavailable(node.Status) {
+			continue
+		}
+		if active != nil && node.ID == active.ID {
+			continue
+		}
+		node.Status = "deleting"
+		node.LastError = "surplus active node; another active is selected"
+		node.UpdatedAt = now
+		a.state.Retired = append(a.state.Retired, node.ID)
+		deleteNodes = append(deleteNodes, *node)
+		a.state.Generation++
+		log.Printf("[FURO-MASTER] marked surplus active for deletion id=%s order=%s ip=%s selected_active=%s", node.ID, node.OrderID, node.IP, a.state.ActiveID)
+	}
+
+	var standbys []*masterNode
+	for idx := range a.state.Nodes {
+		node := &a.state.Nodes[idx]
+		if node.Namespace == a.cfg.Namespace && node.Role == "standby" && !nodeUnavailable(node.Status) {
+			standbys = append(standbys, node)
+		}
+	}
+	sort.Slice(standbys, func(i, j int) bool {
+		return nodeTimestamp(standbys[i].ID) > nodeTimestamp(standbys[j].ID)
+	})
+	for idx, node := range standbys {
+		if idx < a.cfg.BackupCount {
+			continue
+		}
+		node.Status = "deleting"
+		node.LastError = "surplus standby node above backup_count"
+		node.UpdatedAt = now
+		a.state.Retired = append(a.state.Retired, node.ID)
+		deleteNodes = append(deleteNodes, *node)
+		a.state.Generation++
+		log.Printf("[FURO-MASTER] marked surplus standby for deletion id=%s order=%s ip=%s backup_count=%d", node.ID, node.OrderID, node.IP, a.cfg.BackupCount)
+	}
+
+	if len(deleteNodes) > 0 {
+		if err := a.saveStateLocked(); err != nil {
+			log.Printf("[FURO-MASTER] save surplus prune failed err=%v", err)
+		}
+	}
+	a.mu.Unlock()
+
+	for _, node := range deleteNodes {
+		go a.deleteNodeOrder(context.Background(), node, "surplus")
+	}
+}
+
+func (a *masterApp) deleteNodeOrder(ctx context.Context, node masterNode, reason string) {
+	if node.OrderID == "" {
+		log.Printf("[FURO-MASTER] delete skipped id=%s reason=%s err=missing_order_id", node.ID, reason)
+		return
+	}
+	log.Printf("[FURO-MASTER] deleting node id=%s role=%s order=%s ip=%s reason=%s", node.ID, node.Role, node.OrderID, node.IP, reason)
+	deleteCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	err := a.caasify.deleteOrder(deleteCtx, node.OrderID)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	current := a.findNodeLocked(node.ID)
+	if current == nil {
+		if err != nil {
+			log.Printf("[FURO-MASTER] delete finished for missing node id=%s order=%s err=%v", node.ID, node.OrderID, err)
+		}
+		return
+	}
+	current.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err != nil {
+		current.Status = "delete_failed"
+		current.LastError = err.Error()
+		log.Printf("[FURO-MASTER] delete node failed id=%s order=%s err=%v", node.ID, node.OrderID, err)
+	} else {
+		current.Status = "deleted"
+		current.LastError = ""
+		log.Printf("[FURO-MASTER] delete node accepted id=%s order=%s reason=%s", node.ID, node.OrderID, reason)
+	}
+	if saveErr := a.saveStateLocked(); saveErr != nil {
+		log.Printf("[FURO-MASTER] save delete state failed id=%s err=%v", node.ID, saveErr)
+	}
+}
+
+func (a *masterApp) ensureFleet(ctx context.Context) error {
+	a.reconcileMu.Lock()
+	defer a.reconcileMu.Unlock()
+
+	log.Printf("[FURO-MASTER] reconcile started namespace=%s backup_count=%d", a.cfg.Namespace, a.cfg.BackupCount)
+	if err := a.importProviderNodes(ctx); err != nil {
+		log.Printf("[FURO-MASTER] provider import failed err=%v", err)
+	}
+	a.pruneSurplusNodes()
+
+	a.mu.Lock()
+	pendingIDs := a.pendingProvisionNodeIDsLocked()
+	needActive := a.activeNodeLocked() == nil
+	activeReady := a.activeReadyLocked()
+	standbyNeed := 0
+	if activeReady {
+		standbyNeed = a.cfg.BackupCount - len(a.standbyNodesLocked())
+	}
+	log.Printf("[FURO-MASTER] reconcile state active_needed=%t active_ready=%t standby_needed=%d pending=%d generation=%d active_id=%s nodes=%d", needActive, activeReady, standbyNeed, len(pendingIDs), a.state.Generation, a.state.ActiveID, len(a.state.Nodes))
+	a.mu.Unlock()
+
+	var reconcileErr error
+	for _, nodeID := range pendingIDs {
+		if err := a.provisionNode(ctx, nodeID); err != nil {
+			reconcileErr = err
+			log.Printf("[FURO-MASTER] provision pending node failed id=%s err=%v", nodeID, err)
+		}
+	}
+
+	a.mu.Lock()
+	needActive = a.activeNodeLocked() == nil
+	activeReady = a.activeReadyLocked()
+	standbyNeed = 0
+	if activeReady {
+		standbyNeed = a.cfg.BackupCount - len(a.standbyNodesLocked())
+	}
+	a.mu.Unlock()
+	if needActive {
+		log.Printf("[FURO-MASTER] creating active reason=no_active_node")
+		if _, err := a.createAndBootstrapNode(ctx, "active"); err != nil {
+			reconcileErr = err
+			log.Printf("[FURO-MASTER] create active failed err=%v", err)
+		} else {
+			a.mu.Lock()
+			activeReady = a.activeReadyLocked()
+			if activeReady {
+				standbyNeed = a.cfg.BackupCount - len(a.standbyNodesLocked())
+			}
+			a.mu.Unlock()
+		}
+	}
+	if !activeReady {
+		log.Printf("[FURO-MASTER] standby creation skipped reason=active_not_ready")
+	}
 	for standbyNeed > 0 {
+		log.Printf("[FURO-MASTER] creating standby reason=below_backup_count remaining=%d", standbyNeed)
 		if _, err := a.createAndBootstrapNode(ctx, "standby"); err != nil {
-			return err
+			reconcileErr = err
+			log.Printf("[FURO-MASTER] create standby failed err=%v", err)
+			break
 		}
 		standbyNeed--
 	}
-	return a.publishRouteMap(ctx)
+	if err := a.publishRouteMap(ctx); err != nil {
+		reconcileErr = err
+		log.Printf("[FURO-MASTER] reconcile publish failed err=%v", err)
+	}
+	if reconcileErr != nil {
+		log.Printf("[FURO-MASTER] reconcile finished with error err=%v", reconcileErr)
+		return reconcileErr
+	}
+	log.Printf("[FURO-MASTER] reconcile finished ok")
+	return nil
 }
 
 func (a *masterApp) createAndBootstrapNode(ctx context.Context, role string) (masterNode, error) {
 	nodeID := a.nextNodeID(role)
+	log.Printf("[FURO-MASTER] caasify create requested id=%s role=%s product=%d template=%s ipv4=%d ipv6=%d", nodeID, role, a.cfg.ProductID, a.cfg.Template, a.cfg.IPv4, a.cfg.IPv6)
 	order, err := a.caasify.createVPS(ctx, caasifyCreateRequest{
 		ProductID: a.cfg.ProductID,
 		Note:      nodeID,
@@ -318,42 +654,177 @@ func (a *masterApp) createAndBootstrapNode(ctx context.Context, role string) (ma
 	if err != nil {
 		return masterNode{}, err
 	}
-	info, err := a.caasify.waitForOrderReady(ctx, order.OrderID)
-	if err != nil {
-		return masterNode{}, err
-	}
+	log.Printf("[FURO-MASTER] caasify create accepted id=%s role=%s order=%s", nodeID, role, order.OrderID)
+	now := time.Now().UTC().Format(time.RFC3339)
 	node := masterNode{
 		ID:        nodeID,
 		Namespace: a.cfg.Namespace,
 		OrderID:   order.OrderID,
-		IP:        info.IP,
-		Password:  info.Password,
 		Role:      role,
-		Status:    "created",
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Status:    "creating",
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
-	if err := a.bootstrapNode(ctx, node); err != nil {
-		return masterNode{}, err
-	}
-	if role == "standby" {
-		if err := a.verifyNodeRelayAccess(ctx, node); err != nil {
-			_ = a.caasify.deleteOrder(context.Background(), node.OrderID)
-			return masterNode{}, err
-		}
-	}
-	node.Status = "ready"
 	a.mu.Lock()
 	if role == "active" {
 		a.state.ActiveID = node.ID
 	}
 	a.state.Nodes = append(a.state.Nodes, node)
-	a.state.Generation++
 	err = a.saveStateLocked()
 	a.mu.Unlock()
 	if err != nil {
 		return masterNode{}, err
 	}
+	log.Printf("[FURO-MASTER] node saved before provisioning id=%s role=%s order=%s status=%s", node.ID, node.Role, node.OrderID, node.Status)
+	if err := a.provisionNode(ctx, node.ID); err != nil {
+		return node, err
+	}
+	a.mu.Lock()
+	ready := a.findNodeLocked(node.ID)
+	if ready != nil {
+		node = *ready
+	}
+	a.mu.Unlock()
 	return node, nil
+}
+
+func (a *masterApp) provisionNode(ctx context.Context, nodeID string) error {
+	a.mu.Lock()
+	node := a.findNodeLocked(nodeID)
+	if node == nil {
+		a.mu.Unlock()
+		return fmt.Errorf("node %s not found", nodeID)
+	}
+	if node.Status == "ready" || nodeUnavailable(node.Status) {
+		log.Printf("[FURO-MASTER] provision skipped id=%s role=%s status=%s", node.ID, node.Role, node.Status)
+		a.mu.Unlock()
+		return nil
+	}
+	node.ProvisionAttempts++
+	node.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	node.LastError = ""
+	local := *node
+	if err := a.saveStateLocked(); err != nil {
+		a.mu.Unlock()
+		return err
+	}
+	a.mu.Unlock()
+
+	log.Printf("[FURO-MASTER] provision started id=%s role=%s order=%s status=%s attempt=%d ip=%s", local.ID, local.Role, local.OrderID, local.Status, local.ProvisionAttempts, local.IP)
+	if local.IP == "" || local.Password == "" {
+		log.Printf("[FURO-MASTER] waiting for caasify order id=%s order=%s reason=missing_ip_or_password ip_set=%t password_set=%t", local.ID, local.OrderID, local.IP != "", local.Password != "")
+		info, err := a.caasify.waitForOrderReady(ctx, local.OrderID)
+		if err != nil {
+			a.markNodeProvisionError(local.ID, "create_wait_failed", err)
+			return err
+		}
+		a.mu.Lock()
+		node = a.findNodeLocked(local.ID)
+		if node == nil {
+			a.mu.Unlock()
+			return fmt.Errorf("node %s disappeared while waiting for order", local.ID)
+		}
+		node.IP = info.IP
+		node.Password = info.Password
+		node.Status = "created"
+		node.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		local = *node
+		err = a.saveStateLocked()
+		a.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		log.Printf("[FURO-MASTER] caasify order ready id=%s order=%s ip=%s password_set=%t", local.ID, local.OrderID, local.IP, local.Password != "")
+	}
+
+	a.mu.Lock()
+	node = a.findNodeLocked(local.ID)
+	if node == nil {
+		a.mu.Unlock()
+		return fmt.Errorf("node %s disappeared before bootstrap", local.ID)
+	}
+	node.Status = "bootstrapping"
+	node.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	local = *node
+	err := a.saveStateLocked()
+	a.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	log.Printf("[FURO-MASTER] bootstrap started id=%s role=%s ip=%s script=%s", local.ID, local.Role, local.IP, a.cfg.BootstrapScriptPath)
+	if err := a.bootstrapNodeFunc(ctx, local); err != nil {
+		a.markNodeProvisionError(local.ID, "bootstrap_failed", err)
+		return err
+	}
+	log.Printf("[FURO-MASTER] bootstrap finished id=%s role=%s ip=%s", local.ID, local.Role, local.IP)
+
+	if local.Role == "standby" {
+		a.mu.Lock()
+		node = a.findNodeLocked(local.ID)
+		if node == nil {
+			a.mu.Unlock()
+			return fmt.Errorf("node %s disappeared before relay verification", local.ID)
+		}
+		node.Status = "verifying"
+		node.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		local = *node
+		err = a.saveStateLocked()
+		a.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		log.Printf("[FURO-MASTER] standby relay health check started id=%s ip=%s target=%s:%d", local.ID, local.IP, a.cfg.RelayHealthHost, a.cfg.RelayHealthPort)
+		if err := a.verifyNodeRelayAccessFunc(ctx, local); err != nil {
+			a.markNodeProvisionError(local.ID, "verify_failed", err)
+			return err
+		}
+		log.Printf("[FURO-MASTER] standby relay health check ok id=%s ip=%s", local.ID, local.IP)
+	}
+
+	a.mu.Lock()
+	node = a.findNodeLocked(local.ID)
+	if node == nil {
+		a.mu.Unlock()
+		return fmt.Errorf("node %s disappeared before ready", local.ID)
+	}
+	wasReady := node.Status == "ready"
+	node.Status = "ready"
+	node.LastError = ""
+	node.ReadyAt = time.Now().UTC().Format(time.RFC3339)
+	node.UpdatedAt = node.ReadyAt
+	if node.Role == "active" && a.state.ActiveID == "" {
+		a.state.ActiveID = node.ID
+	}
+	if !wasReady {
+		a.state.Generation++
+	}
+	err = a.saveStateLocked()
+	ready := *node
+	generation := a.state.Generation
+	a.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	log.Printf("[FURO-MASTER] node ready id=%s role=%s ip=%s generation=%d", ready.ID, ready.Role, ready.IP, generation)
+	return nil
+}
+
+func (a *masterApp) markNodeProvisionError(nodeID, status string, cause error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	node := a.findNodeLocked(nodeID)
+	if node == nil {
+		log.Printf("[FURO-MASTER] provision error for missing node id=%s status=%s err=%v", nodeID, status, cause)
+		return
+	}
+	node.Status = status
+	node.LastError = cause.Error()
+	node.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := a.saveStateLocked(); err != nil {
+		log.Printf("[FURO-MASTER] save provision error failed id=%s status=%s err=%v save_err=%v", nodeID, status, cause, err)
+		return
+	}
+	log.Printf("[FURO-MASTER] node provision failed id=%s role=%s order=%s ip=%s status=%s attempt=%d err=%v", node.ID, node.Role, node.OrderID, node.IP, node.Status, node.ProvisionAttempts, cause)
 }
 
 func (a *masterApp) bootstrapNode(ctx context.Context, node masterNode) error {
@@ -443,21 +914,24 @@ func shellQuote(value string) string {
 }
 
 func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) error {
-	var oldOrderID string
+	var oldNode masterNode
 	a.mu.Lock()
 	dead := a.findNodeLocked(nodeID)
 	if dead == nil {
 		a.mu.Unlock()
+		log.Printf("[FURO-MASTER] dead report ignored id=%s reason=node_not_found report_reason=%s", nodeID, reason)
 		return nil
 	}
+	log.Printf("[FURO-MASTER] dead report received id=%s role=%s order=%s ip=%s reason=%s", dead.ID, dead.Role, dead.OrderID, dead.IP, reason)
 	dead.Status = "dead"
 	dead.LastReportState = reason
 	dead.LastReportAt = time.Now().UTC().Format(time.RFC3339)
-	oldOrderID = dead.OrderID
+	dead.UpdatedAt = dead.LastReportAt
+	oldNode = *dead
 	if dead.Role == "active" && a.state.ActiveID == nodeID {
 		var promoted *masterNode
 		for idx := range a.state.Nodes {
-			if a.state.Nodes[idx].Role == "standby" && a.state.Nodes[idx].Status != "deleted" && a.state.Nodes[idx].Status != "deleting" {
+			if a.state.Nodes[idx].Role == "standby" && a.state.Nodes[idx].Status == "ready" {
 				promoted = &a.state.Nodes[idx]
 				break
 			}
@@ -465,9 +939,16 @@ func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) e
 		if promoted != nil {
 			promoted.Role = "active"
 			promoted.Status = "ready"
+			promoted.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			a.state.ActiveID = promoted.ID
 			a.state.Retired = append(a.state.Retired, nodeID)
 			a.state.Generation++
+			log.Printf("[FURO-MASTER] promoted standby id=%s old_active=%s generation=%d", promoted.ID, nodeID, a.state.Generation)
+		} else {
+			a.state.ActiveID = ""
+			a.state.Retired = append(a.state.Retired, nodeID)
+			a.state.Generation++
+			log.Printf("[FURO-MASTER] no standby available after active death old_active=%s generation=%d", nodeID, a.state.Generation)
 		}
 	}
 	err := a.saveStateLocked()
@@ -478,14 +959,8 @@ func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) e
 	if err := a.publishRouteMap(ctx); err != nil {
 		log.Printf("[FURO-MASTER] publish after dead failed: %v", err)
 	}
-	if oldOrderID != "" {
-		go func() {
-			deleteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			if err := a.caasify.deleteOrder(deleteCtx, oldOrderID); err != nil {
-				log.Printf("[FURO-MASTER] delete old node order=%s failed: %v", oldOrderID, err)
-			}
-		}()
+	if oldNode.OrderID != "" {
+		go a.deleteNodeOrder(context.Background(), oldNode, "dead")
 	}
 	return a.ensureFleet(ctx)
 }
@@ -521,7 +996,7 @@ func (a *masterApp) routeMapLocked() relayRouteMap {
 		if node.Namespace != a.cfg.Namespace {
 			continue
 		}
-		if node.Status == "deleted" || node.Status == "deleting" || node.IP == "" {
+		if node.Status != "ready" || node.IP == "" {
 			continue
 		}
 		spec := relayRouteSpec{
@@ -554,6 +1029,11 @@ func (a *masterApp) publishRouteMap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	activeID := ""
+	if routeMap.Active != nil {
+		activeID = routeMap.Active.ID
+	}
+	log.Printf("[FURO-MASTER] publishing route-map namespace=%s fleet_id=%s generation=%d active=%s standby=%d retired=%d endpoint=%s", routeMap.Namespace, routeMap.FleetID, routeMap.Generation, activeID, len(routeMap.Standby), len(routeMap.Retired), endpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return err
@@ -569,6 +1049,7 @@ func (a *masterApp) publishRouteMap(ctx context.Context) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("relay route-map publish status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	log.Printf("[FURO-MASTER] route-map publish ok namespace=%s generation=%d status=%d", routeMap.Namespace, routeMap.Generation, resp.StatusCode)
 	return nil
 }
 
@@ -651,8 +1132,12 @@ func (a *masterApp) runControlServer() error {
 		if node := a.findNodeLocked(report.NodeID); node != nil {
 			node.LastReportAt = time.Now().UTC().Format(time.RFC3339)
 			node.LastReportState = report.Status
+			node.UpdatedAt = node.LastReportAt
 			role = node.Role
 			_ = a.saveStateLocked()
+			log.Printf("[FURO-MASTER] node report id=%s role=%s status=%s ip=%s", node.ID, node.Role, report.Status, node.IP)
+		} else {
+			log.Printf("[FURO-MASTER] node report from unknown id=%s role=%s status=%s namespace=%s", report.NodeID, report.Role, report.Status, report.Namespace)
 		}
 		a.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "role": role})
@@ -686,12 +1171,33 @@ func (a *masterApp) runAdminServer() error {
 }
 
 func (a *masterApp) runPublishLoop() {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := a.publishRouteMap(ctx); err != nil {
+		log.Printf("[FURO-MASTER] initial route-map publish failed: %v", err)
+	}
+	cancel()
 	ticker := time.NewTicker(time.Duration(a.cfg.PublishIntervalSeconds) * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		if err := a.publishRouteMap(ctx); err != nil {
 			log.Printf("[FURO-MASTER] route-map publish failed: %v", err)
+		}
+		cancel()
+	}
+}
+
+func (a *masterApp) runReconcileLoop() {
+	interval := time.Duration(a.cfg.PublishIntervalSeconds) * time.Second
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		if err := a.ensureFleet(ctx); err != nil {
+			log.Printf("[FURO-MASTER] periodic reconcile failed: %v", err)
 		}
 		cancel()
 	}
@@ -748,6 +1254,13 @@ type caasifyClient struct {
 	client *http.Client
 }
 
+type caasifyAPI interface {
+	createVPS(context.Context, caasifyCreateRequest) (caasifyCreateResult, error)
+	waitForOrderReady(context.Context, string) (caasifyOrderInfo, error)
+	deleteOrder(context.Context, string) error
+	listOrders(context.Context) ([]caasifyListedOrder, error)
+}
+
 func newCaasifyClient(token string) *caasifyClient {
 	return &caasifyClient{token: token, client: &http.Client{Timeout: 30 * time.Second}}
 }
@@ -767,6 +1280,13 @@ type caasifyCreateResult struct {
 type caasifyOrderInfo struct {
 	IP       string
 	Password string
+}
+
+type caasifyListedOrder struct {
+	OrderID string
+	Note    string
+	IP      string
+	Status  string
 }
 
 func (c *caasifyClient) createVPS(ctx context.Context, input caasifyCreateRequest) (caasifyCreateResult, error) {
@@ -806,6 +1326,46 @@ func (c *caasifyClient) createVPS(ctx context.Context, input caasifyCreateReques
 		return caasifyCreateResult{}, fmt.Errorf("create response missing order id: %s", strings.TrimSpace(string(data)))
 	}
 	return caasifyCreateResult{OrderID: orderID}, nil
+}
+
+func (c *caasifyClient) listOrders(ctx context.Context) ([]caasifyListedOrder, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.caasify.com/api/orders", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("list orders status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	rawOrders, _ := decoded["data"].([]any)
+	orders := make([]caasifyListedOrder, 0, len(rawOrders))
+	for _, raw := range rawOrders {
+		item, _ := raw.(map[string]any)
+		if item == nil {
+			continue
+		}
+		order := caasifyListedOrder{
+			OrderID: jsonString(item, "id"),
+			Note:    jsonString(item, "note"),
+			IP:      firstIPv4(item),
+			Status:  jsonString(item, "status"),
+		}
+		if order.OrderID != "" {
+			orders = append(orders, order)
+		}
+	}
+	return orders, nil
 }
 
 func (c *caasifyClient) showOrder(ctx context.Context, orderID string) (caasifyOrderInfo, error) {
@@ -942,6 +1502,7 @@ func main() {
 	if err := app.loadState(); err != nil {
 		log.Fatalf("failed to load state: %v", err)
 	}
+	log.Printf("[FURO-MASTER] starting namespace=%s fleet_id=%s listen=%s admin_listen=%s public_url=%s relay_url=%s backup_count=%d state_file=%s", cfg.Namespace, app.state.FleetID, cfg.Listen, cfg.AdminListen, cfg.PublicURL, cfg.RelayURL, cfg.BackupCount, app.statePath)
 	if cfg.AdminListen != "" {
 		go func() {
 			if err := app.runAdminServer(); err != nil {
@@ -954,12 +1515,12 @@ func main() {
 			log.Fatalf("control server failed: %v", err)
 		}
 	}()
+	go app.runPublishLoop()
+	go app.runReconcileLoop()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	if err := app.ensureFleet(ctx); err != nil {
-		cancel()
-		log.Fatalf("failed to ensure fleet: %v", err)
+		log.Printf("[FURO-MASTER] initial reconcile failed; master stays running and will retry: %v", err)
 	}
 	cancel()
-	go app.runPublishLoop()
 	select {}
 }
