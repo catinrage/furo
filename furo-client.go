@@ -1960,6 +1960,17 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 		return err
 	}
 	managedBy := managedByForRouteMap(routeMap)
+	managedIDs := make(map[string]struct{})
+	if routeMap.Active != nil {
+		if id := sanitizeSessionComponent(routeMap.Active.ID); id != "" {
+			managedIDs[id] = struct{}{}
+		}
+	}
+	for _, standby := range routeMap.Standby {
+		if id := sanitizeSessionComponent(standby.ID); id != "" {
+			managedIDs[id] = struct{}{}
+		}
+	}
 	retired := make(map[string]struct{})
 	for _, id := range routeMap.Retired {
 		if sanitized := sanitizeSessionComponent(id); sanitized != "" {
@@ -1975,10 +1986,13 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 			}
 			routeID := sanitizeSessionComponent(stringFromMap(route, "id"))
 			routeManagedBy := stringFromMap(route, "managed_by")
+			if _, isRetired := retired[routeID]; isRetired {
+				continue
+			}
 			if routeManagedBy == managedBy {
-				if _, isRetired := retired[routeID]; isRetired {
-					continue
-				}
+				continue
+			}
+			if _, isNowManaged := managedIDs[routeID]; isNowManaged {
 				continue
 			}
 			routes = append(routes, route)

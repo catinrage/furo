@@ -731,6 +731,66 @@ func TestManagedRouteMapPersistAddsActiveAndStandby(t *testing.T) {
 	}
 }
 
+func TestManagedRouteMapPersistReplacesExistingRoutesWithSameID(t *testing.T) {
+	originalConfigPath := *configPath
+	t.Cleanup(func() { *configPath = originalConfigPath })
+
+	configFile := filepath.Join(t.TempDir(), "config.client.json")
+	*configPath = configFile
+	if err := os.WriteFile(configFile, []byte(`{
+  "api_key": "secret",
+  "socks_listen": "127.0.0.1:0",
+  "agent_listen": "127.0.0.1:0",
+  "routes": [
+    {"id": "furo-server-sky-01-active-1777830226", "relay_url": "http://f1.ra1n.xyz/furo/index.php", "server_host": "91.107.240.246", "server_port": 8443, "session_count": 4, "enabled": true},
+    {"id": "furo-server-sky-01-standby-1777832225", "relay_url": "http://f1.ra1n.xyz/furo/index.php", "server_host": "91.107.247.120", "server_port": 8443, "session_count": 8, "enabled": false},
+    {"id": "manual-extra", "relay_url": "http://f1.ra1n.xyz/furo/index.php", "server_host": "192.0.2.10", "server_port": 8443, "session_count": 1, "enabled": true}
+  ]
+}`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	err := persistRelayRouteMap(relayRouteMap{
+		Namespace:  "sky-01",
+		FleetID:    "furo-sky-01",
+		Generation: 3,
+		Active:     &relayRouteSpec{ID: "furo-server-sky-01-active-1777830226", RelayURL: "http://f1.ra1n.xyz/furo/index.php", ServerHost: "91.107.240.246", ServerPort: 8443, SessionCount: 4},
+		Standby:    []relayRouteSpec{{ID: "furo-server-sky-01-standby-1777832225", RelayURL: "http://f1.ra1n.xyz/furo/index.php", ServerHost: "91.107.247.120", ServerPort: 8443, SessionCount: 4}},
+	})
+	if err != nil {
+		t.Fatalf("persistRelayRouteMap() error = %v", err)
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var got struct {
+		Routes []clientRouteConfigFile `json:"routes"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("config json: %v", err)
+	}
+	if len(got.Routes) != 3 {
+		t.Fatalf("routes count = %d, want manual-extra + managed active + managed standby", len(got.Routes))
+	}
+	counts := map[string]int{}
+	for _, route := range got.Routes {
+		counts[route.ID]++
+	}
+	if counts["furo-server-sky-01-active-1777830226"] != 1 || counts["furo-server-sky-01-standby-1777832225"] != 1 {
+		t.Fatalf("route counts = %#v, want active and standby deduped", counts)
+	}
+	if got.Routes[0].ID != "manual-extra" || got.Routes[0].ManagedBy != "" {
+		t.Fatalf("first route = %#v, want unrelated manual route preserved", got.Routes[0])
+	}
+	if got.Routes[1].ManagedBy != "furo-sky-01" || got.Routes[1].Role != "active" {
+		t.Fatalf("active route = %#v, want managed active", got.Routes[1])
+	}
+	if got.Routes[2].ManagedBy != "furo-sky-01" || got.Routes[2].Role != "standby" || got.Routes[2].SessionCount != 4 {
+		t.Fatalf("standby route = %#v, want managed standby replacing old manual value", got.Routes[2])
+	}
+}
+
 func TestPromoteManagedStandbyDisablesOldActive(t *testing.T) {
 	trueValue := true
 	falseValue := false
