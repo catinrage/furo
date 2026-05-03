@@ -15,17 +15,19 @@ import (
 )
 
 type fakeCaasifyAPI struct {
-	mu          sync.Mutex
-	createCount int
-	deleteCount int
-	orders      []caasifyListedOrder
-	ready       map[string]caasifyOrderInfo
+	mu           sync.Mutex
+	createCount  int
+	deleteCount  int
+	createInputs []caasifyCreateRequest
+	orders       []caasifyListedOrder
+	ready        map[string]caasifyOrderInfo
 }
 
 func (f *fakeCaasifyAPI) createVPS(ctx context.Context, input caasifyCreateRequest) (caasifyCreateResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createCount++
+	f.createInputs = append(f.createInputs, input)
 	orderID := input.Note + "-order"
 	if f.ready == nil {
 		f.ready = map[string]caasifyOrderInfo{}
@@ -295,6 +297,44 @@ func TestMasterPersistsNodeBeforeBootstrapFailure(t *testing.T) {
 	}
 	if len(app.state.Nodes) != 1 || app.state.ActiveID != node.ID {
 		t.Fatalf("state after reconcile active=%q nodes=%d, want same active only", app.state.ActiveID, len(app.state.Nodes))
+	}
+}
+
+func TestMasterCreateUsesConfiguredProviderPool(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.Namespace = "sky-01"
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.CaasifyToken = "token"
+	cfg.RelayURL = "http://relay.test/furo.php"
+	cfg.ProviderPool = []caasifyProviderOption{
+		{Name: "test-region", Note: "VPS-Test", ProductID: 4242, Template: "test-template", IPv4: 1, IPv6: 0},
+	}
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	fake := &fakeCaasifyAPI{}
+	app.caasify = fake
+	app.bootstrapNodeFunc = func(context.Context, masterNode) error {
+		return nil
+	}
+	app.verifyNodeRelayAccessFunc = func(context.Context, masterNode) error {
+		return nil
+	}
+	if err := app.loadState(); err != nil {
+		t.Fatalf("loadState() error = %v", err)
+	}
+
+	if _, err := app.createAndBootstrapNode(context.Background(), "standby"); err != nil {
+		t.Fatalf("createAndBootstrapNode() error = %v", err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.createInputs) != 1 {
+		t.Fatalf("create inputs = %d, want 1", len(fake.createInputs))
+	}
+	input := fake.createInputs[0]
+	if input.ProductID != 4242 || input.Template != "test-template" || input.IPv4 != 1 || input.IPv6 != 0 {
+		t.Fatalf("create input = %#v, want configured provider", input)
 	}
 }
 

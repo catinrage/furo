@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -36,29 +38,39 @@ var (
 )
 
 type masterConfigFile struct {
-	Namespace                string `json:"namespace"`
-	APIKey                   string `json:"api_key"`
-	Listen                   string `json:"listen"`
-	PublicURL                string `json:"public_url"`
-	AdminListen              string `json:"admin_listen"`
-	CaasifyToken             string `json:"caasify_token"`
-	StateFile                string `json:"state_file"`
-	LogFile                  string `json:"log_file"`
-	RelayURL                 string `json:"relay_url"`
-	RelayHealthHost          string `json:"relay_health_host"`
-	RelayHealthPort          int    `json:"relay_health_port"`
-	ServerAgentPort          int    `json:"server_agent_port"`
-	RouteSessionCount        int    `json:"route_session_count"`
-	BackupCount              int    `json:"backup_count"`
-	NodeCheckIntervalSeconds int    `json:"node_check_interval_seconds"`
-	NodeFailureThreshold     int    `json:"node_failure_threshold"`
-	PublishIntervalSeconds   int    `json:"publish_interval_seconds"`
-	ProductID                int    `json:"product_id"`
-	Template                 string `json:"template"`
-	NotePrefix               string `json:"note_prefix"`
-	IPv4                     int    `json:"ipv4"`
-	IPv6                     int    `json:"ipv6"`
-	BootstrapScriptPath      string `json:"bootstrap_script_path"`
+	Namespace                string                  `json:"namespace"`
+	APIKey                   string                  `json:"api_key"`
+	Listen                   string                  `json:"listen"`
+	PublicURL                string                  `json:"public_url"`
+	AdminListen              string                  `json:"admin_listen"`
+	CaasifyToken             string                  `json:"caasify_token"`
+	StateFile                string                  `json:"state_file"`
+	LogFile                  string                  `json:"log_file"`
+	RelayURL                 string                  `json:"relay_url"`
+	RelayHealthHost          string                  `json:"relay_health_host"`
+	RelayHealthPort          int                     `json:"relay_health_port"`
+	ServerAgentPort          int                     `json:"server_agent_port"`
+	RouteSessionCount        int                     `json:"route_session_count"`
+	BackupCount              int                     `json:"backup_count"`
+	NodeCheckIntervalSeconds int                     `json:"node_check_interval_seconds"`
+	NodeFailureThreshold     int                     `json:"node_failure_threshold"`
+	PublishIntervalSeconds   int                     `json:"publish_interval_seconds"`
+	ProductID                int                     `json:"product_id"`
+	Template                 string                  `json:"template"`
+	NotePrefix               string                  `json:"note_prefix"`
+	IPv4                     int                     `json:"ipv4"`
+	IPv6                     int                     `json:"ipv6"`
+	ProviderPool             []caasifyProviderOption `json:"provider_pool"`
+	BootstrapScriptPath      string                  `json:"bootstrap_script_path"`
+}
+
+type caasifyProviderOption struct {
+	Name      string `json:"name,omitempty"`
+	Note      string `json:"note,omitempty"`
+	ProductID int    `json:"product_id"`
+	Template  string `json:"template"`
+	IPv4      int    `json:"ipv4"`
+	IPv6      int    `json:"ipv6"`
 }
 
 func defaultMasterConfig() masterConfigFile {
@@ -81,7 +93,19 @@ func defaultMasterConfig() masterConfigFile {
 		NotePrefix:               "furo-server",
 		IPv4:                     1,
 		IPv6:                     1,
+		ProviderPool:             defaultCaasifyProviderPool(),
 		BootstrapScriptPath:      "scripts/bootstrap-server-node.sh.example",
+	}
+}
+
+func defaultCaasifyProviderPool() []caasifyProviderOption {
+	return []caasifyProviderOption{
+		{Name: "germany", Note: "VPS-Germany", ProductID: 3776, Template: "ubuntu-24.04", IPv4: 1, IPv6: 1},
+		{Name: "france", Note: "VPS-France-1C-1GB", ProductID: 103, Template: "2284", IPv4: 1, IPv6: 1},
+		{Name: "spain", Note: "VPS-Spain-1C-1GB", ProductID: 106, Template: "2284", IPv4: 1, IPv6: 1},
+		{Name: "netherlands", Note: "VPS-Netherlands-1C-1GB", ProductID: 97, Template: "2284", IPv4: 1, IPv6: 1},
+		{Name: "sweden", Note: "VPS-Sweden-1C-1GB", ProductID: 110, Template: "2284", IPv4: 1, IPv6: 1},
+		{Name: "finland", Note: "VPS-Finland-2C-4GB", ProductID: 3784, Template: "ubuntu-24.04", IPv4: 1, IPv6: 1},
 	}
 }
 
@@ -140,7 +164,56 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	if cfg.RelayHealthPort <= 0 {
 		cfg.RelayHealthPort = 443
 	}
+	cfg.ProviderPool = normalizeCaasifyProviderPool(cfg)
 	return cfg, nil
+}
+
+func normalizeCaasifyProviderPool(cfg masterConfigFile) []caasifyProviderOption {
+	pool := append([]caasifyProviderOption(nil), cfg.ProviderPool...)
+	if len(pool) == 0 {
+		pool = []caasifyProviderOption{{
+			Name:      "configured",
+			Note:      "configured top-level product",
+			ProductID: cfg.ProductID,
+			Template:  cfg.Template,
+			IPv4:      cfg.IPv4,
+			IPv6:      cfg.IPv6,
+		}}
+	}
+	for idx := range pool {
+		if pool[idx].ProductID <= 0 {
+			pool[idx].ProductID = cfg.ProductID
+		}
+		if pool[idx].Template == "" {
+			pool[idx].Template = cfg.Template
+		}
+		if pool[idx].IPv4 == 0 && pool[idx].IPv6 == 0 {
+			pool[idx].IPv4 = cfg.IPv4
+			pool[idx].IPv6 = cfg.IPv6
+		}
+		if pool[idx].IPv4 == 0 && pool[idx].IPv6 == 0 {
+			pool[idx].IPv4 = 1
+			pool[idx].IPv6 = 1
+		}
+		if pool[idx].Name == "" {
+			pool[idx].Name = sanitizeMasterID(pool[idx].Note)
+		}
+		if pool[idx].Name == "" {
+			pool[idx].Name = fmt.Sprintf("product-%d", pool[idx].ProductID)
+		}
+	}
+	return pool
+}
+
+func randomIndex(max int) int {
+	if max <= 1 {
+		return 0
+	}
+	value, err := crand.Int(crand.Reader, big.NewInt(int64(max)))
+	if err == nil {
+		return int(value.Int64())
+	}
+	return int(time.Now().UnixNano() % int64(max))
 }
 
 type masterNode struct {
@@ -361,6 +434,14 @@ func (a *masterApp) pendingProvisionNodeIDsLocked() []string {
 
 func (a *masterApp) nextNodeID(role string) string {
 	return fmt.Sprintf("%s-%s-%s-%d", a.cfg.NotePrefix, a.cfg.Namespace, role, time.Now().Unix())
+}
+
+func (a *masterApp) selectCaasifyProvider() caasifyProviderOption {
+	pool := a.cfg.ProviderPool
+	if len(pool) == 0 {
+		pool = normalizeCaasifyProviderPool(a.cfg)
+	}
+	return pool[randomIndex(len(pool))]
 }
 
 func (a *masterApp) parseManagedNodeID(value string) (string, string, bool) {
@@ -689,18 +770,20 @@ func (a *masterApp) ensureFleet(ctx context.Context) error {
 
 func (a *masterApp) createAndBootstrapNode(ctx context.Context, role string) (masterNode, error) {
 	nodeID := a.nextNodeID(role)
-	log.Printf("[FURO-MASTER] caasify create requested id=%s role=%s product=%d template=%s ipv4=%d ipv6=%d", nodeID, role, a.cfg.ProductID, a.cfg.Template, a.cfg.IPv4, a.cfg.IPv6)
+	provider := a.selectCaasifyProvider()
+	log.Printf("[FURO-MASTER] caasify provider selected id=%s role=%s provider=%s note=%s product=%d template=%s ipv4=%d ipv6=%d pool_size=%d", nodeID, role, provider.Name, provider.Note, provider.ProductID, provider.Template, provider.IPv4, provider.IPv6, len(a.cfg.ProviderPool))
+	log.Printf("[FURO-MASTER] caasify create requested id=%s role=%s provider=%s product=%d template=%s ipv4=%d ipv6=%d", nodeID, role, provider.Name, provider.ProductID, provider.Template, provider.IPv4, provider.IPv6)
 	order, err := a.caasify.createVPS(ctx, caasifyCreateRequest{
-		ProductID: a.cfg.ProductID,
+		ProductID: provider.ProductID,
 		Note:      nodeID,
-		Template:  a.cfg.Template,
-		IPv4:      a.cfg.IPv4,
-		IPv6:      a.cfg.IPv6,
+		Template:  provider.Template,
+		IPv4:      provider.IPv4,
+		IPv6:      provider.IPv6,
 	})
 	if err != nil {
 		return masterNode{}, err
 	}
-	log.Printf("[FURO-MASTER] caasify create accepted id=%s role=%s order=%s", nodeID, role, order.OrderID)
+	log.Printf("[FURO-MASTER] caasify create accepted id=%s role=%s order=%s provider=%s product=%d template=%s", nodeID, role, order.OrderID, provider.Name, provider.ProductID, provider.Template)
 	now := time.Now().UTC().Format(time.RFC3339)
 	node := masterNode{
 		ID:        nodeID,

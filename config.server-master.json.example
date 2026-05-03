@@ -21,5 +21,13 @@
   "note_prefix": "furo-server",
   "ipv4": 1,
   "ipv6": 1,
+  "provider_pool": [
+    {"name":"germany","note":"VPS-Germany","product_id":3776,"template":"ubuntu-24.04","ipv4":1,"ipv6":1},
+    {"name":"france","note":"VPS-France-1C-1GB","product_id":103,"template":"2284","ipv4":1,"ipv6":1},
+    {"name":"spain","note":"VPS-Spain-1C-1GB","product_id":106,"template":"2284","ipv4":1,"ipv6":1},
+    {"name":"netherlands","note":"VPS-Netherlands-1C-1GB","product_id":97,"template":"2284","ipv4":1,"ipv6":1},
+    {"name":"sweden","note":"VPS-Sweden-1C-1GB","product_id":110,"template":"2284","ipv4":1,"ipv6":1},
+    {"name":"finland","note":"VPS-Finland-2C-4GB","product_id":3784,"template":"ubuntu-24.04","ipv4":1,"ipv6":1}
+  ],
   "bootstrap_script_path": "scripts/bootstrap-server-node.sh.example"
 }
