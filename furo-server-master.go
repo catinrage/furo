@@ -954,21 +954,32 @@ func runSSHCommand(ctx context.Context, host, password, command string, stdin ..
 		output := newLineLogBuffer(fmt.Sprintf("[FURO-MASTER] ssh host=%s command=%q", host, command))
 		session.Stdout = output
 		session.Stderr = output
+		startedAt := time.Now()
+		log.Printf("[FURO-MASTER] ssh connected host=%s command=%q", host, command)
 		if err := session.Start(command); err != nil {
 			return output.String(), err
 		}
+		log.Printf("[FURO-MASTER] ssh command started host=%s command=%q", host, command)
 		done := make(chan error, 1)
 		go func() {
 			done <- session.Wait()
 		}()
-		select {
-		case err := <-done:
-			output.Flush()
-			return output.String(), err
-		case <-ctx.Done():
-			_ = session.Close()
-			output.Flush()
-			return output.String(), ctx.Err()
+		heartbeat := time.NewTicker(30 * time.Second)
+		defer heartbeat.Stop()
+		for {
+			select {
+			case err := <-done:
+				output.Flush()
+				log.Printf("[FURO-MASTER] ssh command finished host=%s command=%q duration=%s err=%v", host, command, time.Since(startedAt).Round(time.Second), err)
+				return output.String(), err
+			case <-heartbeat.C:
+				log.Printf("[FURO-MASTER] ssh command still running host=%s command=%q duration=%s", host, command, time.Since(startedAt).Round(time.Second))
+			case <-ctx.Done():
+				_ = session.Close()
+				output.Flush()
+				log.Printf("[FURO-MASTER] ssh command canceled host=%s command=%q duration=%s err=%v", host, command, time.Since(startedAt).Round(time.Second), ctx.Err())
+				return output.String(), ctx.Err()
+			}
 		}
 	}
 	return "", fmt.Errorf("ssh not ready: %w", lastErr)
