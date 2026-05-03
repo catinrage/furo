@@ -2476,6 +2476,12 @@ type adminConfigView struct {
 	AIRSOutboundRetrySeconds string
 	AIRSPostAddWaitSeconds   string
 	AIRSPostDetachSeconds    string
+	MasterRoutesEnabled      bool
+	MasterRoutesNamespace    string
+	MasterRoutesFleetID      string
+	MasterRoutesMasterURL    string
+	MasterRoutesPollSeconds  string
+	MasterRoutesGraceSeconds string
 	Routes                   []adminRouteView
 }
 
@@ -2489,6 +2495,12 @@ type adminRouteView struct {
 	ServerPort   string
 	SessionCount string
 	Enabled      bool
+	ManagedBy    string
+	Role         string
+	Generation   string
+	IsManaged    bool
+	IsActive     bool
+	IsStandby    bool
 }
 
 type adminInspectSummary struct {
@@ -2663,6 +2675,16 @@ func adminConfigViewFromMap(raw map[string]any) adminConfigView {
 		view.AIRSPostAddWaitSeconds = intStringFromMap(airs, "post_add_wait_seconds")
 		view.AIRSPostDetachSeconds = intStringFromMap(airs, "post_detach_wait_seconds")
 	}
+	if masterRoutes, ok := raw["master_routes"].(map[string]any); ok {
+		if enabled, exists := masterRoutes["enabled"].(bool); exists {
+			view.MasterRoutesEnabled = enabled
+		}
+		view.MasterRoutesNamespace = stringFromMap(masterRoutes, "namespace")
+		view.MasterRoutesFleetID = stringFromMap(masterRoutes, "fleet_id")
+		view.MasterRoutesMasterURL = stringFromMap(masterRoutes, "master_url")
+		view.MasterRoutesPollSeconds = intStringFromMap(masterRoutes, "poll_interval_seconds")
+		view.MasterRoutesGraceSeconds = intStringFromMap(masterRoutes, "failover_grace_seconds")
+	}
 	if routes, ok := raw["routes"].([]any); ok {
 		for idx, routeValue := range routes {
 			route, ok := routeValue.(map[string]any)
@@ -2673,6 +2695,8 @@ func adminConfigViewFromMap(raw map[string]any) adminConfigView {
 			if value, exists := route["enabled"].(bool); exists {
 				enabled = value
 			}
+			managedBy := stringFromMap(route, "managed_by")
+			role := stringFromMap(route, "role")
 			view.Routes = append(view.Routes, adminRouteView{
 				Index:        idx,
 				ID:           stringFromMap(route, "id"),
@@ -2683,6 +2707,12 @@ func adminConfigViewFromMap(raw map[string]any) adminConfigView {
 				ServerPort:   intStringFromMap(route, "server_port"),
 				SessionCount: intStringFromMap(route, "session_count"),
 				Enabled:      enabled,
+				ManagedBy:    managedBy,
+				Role:         role,
+				Generation:   intStringFromMap(route, "generation"),
+				IsManaged:    managedBy != "",
+				IsActive:     role == "active",
+				IsStandby:    role == "standby",
 			})
 		}
 	}
@@ -2745,6 +2775,17 @@ func saveClientConfigForm(r *http.Request) error {
 		}
 	}
 
+	masterRoutes := nestedMap(raw, "master_routes")
+	masterRoutes["enabled"] = r.FormValue("master_routes_enabled") == "on"
+	setOptionalStringField(masterRoutes, "namespace", r.FormValue("master_routes_namespace"))
+	setOptionalStringField(masterRoutes, "fleet_id", r.FormValue("master_routes_fleet_id"))
+	setOptionalStringField(masterRoutes, "master_url", r.FormValue("master_routes_master_url"))
+	for _, key := range []string{"poll_interval_seconds", "failover_grace_seconds"} {
+		if err := setIntField(masterRoutes, key, r.FormValue("master_routes_"+key)); err != nil {
+			return err
+		}
+	}
+
 	count, err := strconv.Atoi(r.FormValue("routes_count"))
 	if err != nil || count < 0 {
 		return errors.New("routes_count must be a number")
@@ -2767,6 +2808,11 @@ func saveClientConfigForm(r *http.Request) error {
 			return err
 		}
 		if err := setIntField(route, "session_count", r.FormValue(prefix+"session_count")); err != nil {
+			return err
+		}
+		setOptionalStringField(route, "managed_by", r.FormValue(prefix+"managed_by"))
+		setOptionalStringField(route, "role", r.FormValue(prefix+"role"))
+		if err := setIntField(route, "generation", r.FormValue(prefix+"generation")); err != nil {
 			return err
 		}
 		route["enabled"] = r.FormValue(prefix+"enabled") == "on"

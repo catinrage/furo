@@ -31,6 +31,7 @@
     <section class="main-pane">
       <nav class="tabs" aria-label="Panel sections">
         <a href="#network">Network</a>
+        <a href="#master">Master</a>
         <a href="#routes">Routes</a>
         <a href="#airs">AIRS</a>
         <a href="#runtime">Runtime</a>
@@ -60,6 +61,21 @@
           </div>
         </section>
 
+        <section class="section" id="master">
+          <div class="section-head">
+            <div><h2>Master Routes</h2><p>Route-map polling and local standby failover</p></div>
+            <span class="badge {{if .Config.MasterRoutesEnabled}}badge-ok{{else}}badge-muted{{end}}">{{if .Config.MasterRoutesEnabled}}Enabled{{else}}Disabled{{end}}</span>
+          </div>
+          <div class="form-grid">
+            <label class="check master-toggle"><input type="checkbox" name="master_routes_enabled" {{if .Config.MasterRoutesEnabled}}checked{{end}}> Enable master-managed routes</label>
+            <label>Namespace<input name="master_routes_namespace" value="{{.Config.MasterRoutesNamespace}}" placeholder="sky-01"></label>
+            <label>Fleet ID<input name="master_routes_fleet_id" value="{{.Config.MasterRoutesFleetID}}" placeholder="optional; empty accepts namespace"></label>
+            <label>Master URL<input name="master_routes_master_url" value="{{.Config.MasterRoutesMasterURL}}" placeholder="http://MASTER_PUBLIC_IP:19082"></label>
+            <label>Poll seconds<input name="master_routes_poll_interval_seconds" value="{{.Config.MasterRoutesPollSeconds}}" inputmode="numeric" placeholder="30"></label>
+            <label>Failover grace seconds<input name="master_routes_failover_grace_seconds" value="{{.Config.MasterRoutesGraceSeconds}}" inputmode="numeric" placeholder="5"></label>
+          </div>
+        </section>
+
         <section class="section" id="routes">
           <div class="section-head">
             <div><h2>Routes</h2><p>Enabled routes are used by the client and inspect.</p></div>
@@ -69,8 +85,17 @@
             {{range .Config.Routes}}
             <article class="route-card" data-route>
               <input type="hidden" name="routes_{{.Index}}_delete" value="0" data-delete>
+              <input type="hidden" name="routes_{{.Index}}_managed_by" value="{{.ManagedBy}}">
+              <input type="hidden" name="routes_{{.Index}}_role" value="{{.Role}}">
+              <input type="hidden" name="routes_{{.Index}}_generation" value="{{.Generation}}">
               <div class="route-title">
-                <label class="check"><input type="checkbox" name="routes_{{.Index}}_enabled" {{if .Enabled}}checked{{end}}> Enabled</label>
+                <div class="route-heading">
+                  <label class="check"><input type="checkbox" name="routes_{{.Index}}_enabled" {{if .Enabled}}checked{{end}}> Enabled</label>
+                  {{if .IsManaged}}<span class="badge badge-managed">Managed</span>{{end}}
+                  {{if .IsActive}}<span class="badge badge-active">Active</span>{{end}}
+                  {{if .IsStandby}}<span class="badge badge-standby">Standby</span>{{end}}
+                  {{if .Generation}}<span class="badge badge-muted">gen {{.Generation}}</span>{{end}}
+                </div>
                 <button type="button" class="danger" data-remove-route>Remove</button>
               </div>
               <div class="form-grid compact">
@@ -174,7 +199,13 @@
         <div class="section-head"><h2>Routes Live</h2></div>
         <div class="route-health">
           {{range .Status.Routes}}
-          <div><strong>{{.RouteID}}</strong><span>{{.ReadySessions}}/{{.SessionCount}} ready · {{.EstimatedLatencyMs}} ms</span></div>
+          <div class="{{if eq .Role "active"}}route-live-active{{else if eq .Role "standby"}}route-live-standby{{end}}">
+            <strong>{{.RouteID}}</strong>
+            <span>
+              {{if .ManagedBy}}<b class="mini-badge">{{.Role}}</b>{{end}}
+              {{.ReadySessions}}/{{.SessionCount}} ready · {{.EstimatedLatencyMs}} ms
+            </span>
+          </div>
           {{end}}
         </div>
       </section>
@@ -184,8 +215,11 @@
 <template id="route-template">
   <article class="route-card" data-route>
     <input type="hidden" name="routes___INDEX___delete" value="0" data-delete>
+    <input type="hidden" name="routes___INDEX___managed_by" value="">
+    <input type="hidden" name="routes___INDEX___role" value="">
+    <input type="hidden" name="routes___INDEX___generation" value="">
     <div class="route-title">
-      <label class="check"><input type="checkbox" name="routes___INDEX___enabled" checked> Enabled</label>
+      <div class="route-heading"><label class="check"><input type="checkbox" name="routes___INDEX___enabled" checked> Enabled</label></div>
       <button type="button" class="danger" data-remove-route>Remove</button>
     </div>
     <div class="form-grid compact">

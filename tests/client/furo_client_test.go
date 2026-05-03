@@ -97,9 +97,13 @@ func TestAdminPanelTemplateIncludesAIRSAndInspect(t *testing.T) {
 			Service:        "furo-client",
 			ClientID:       "client-test",
 			RouteSelection: string(routeSelectionLeastLoad),
+			Routes: []clientRouteStatus{
+				{RouteID: "active-a", ManagedBy: "fleet-a", Role: "active", SessionCount: 4, ReadySessions: 3},
+				{RouteID: "standby-a", ManagedBy: "fleet-a", Role: "standby", SessionCount: 4, ReadySessions: 0},
+			},
 		},
 		ConfigPath:         "/tmp/config.client.json",
-		Config:             adminConfigView{AdminListen: "127.0.0.1:19080"},
+		Config:             adminConfigView{AdminListen: "127.0.0.1:19080", MasterRoutesEnabled: true, MasterRoutesNamespace: "fleet-a"},
 		AdminListen:        "127.0.0.1:19080",
 		ClientServiceState: "client ok",
 		AIRSServiceState:   "airs ok",
@@ -108,7 +112,7 @@ func TestAdminPanelTemplateIncludesAIRSAndInspect(t *testing.T) {
 	})
 
 	body := rec.Body.String()
-	for _, token := range []string{"AIRS", `action="/inspect"`, "avg=12ms", "127.0.0.1:19080", "Save config"} {
+	for _, token := range []string{"AIRS", "Master Routes", "fleet-a", "active", "standby", `action="/inspect"`, "avg=12ms", "127.0.0.1:19080", "Save config"} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("panel output missing %q\n%s", token, body)
 		}
@@ -151,7 +155,8 @@ func TestSaveClientConfigFormWritesAdminListenAndPreservesUnknownAIRS(t *testing
   "frame_mid_size": 32768,
   "frame_max_size": 262144,
   "airs": {"custom_future_field": "keep-me"},
-  "routes": [{"id":"old","relay_url":"https://old.example/furo.php","server_host":"203.0.113.1","server_port":8443,"session_count":1,"enabled":true}]
+  "master_routes": {"custom_future_field": "keep-master", "enabled": false},
+  "routes": [{"id":"old","relay_url":"https://old.example/furo.php","server_host":"203.0.113.1","server_port":8443,"session_count":1,"enabled":true,"managed_by":"fleet-a","role":"active","generation":2}]
 }`
 	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -193,6 +198,12 @@ func TestSaveClientConfigFormWritesAdminListenAndPreservesUnknownAIRS(t *testing
 		"airs_outbound_check_retry_seconds":     {"480"},
 		"airs_post_add_wait_seconds":            {"5"},
 		"airs_post_detach_wait_seconds":         {"5"},
+		"master_routes_enabled":                 {"on"},
+		"master_routes_namespace":               {"sky-01"},
+		"master_routes_fleet_id":                {""},
+		"master_routes_master_url":              {"http://master.example:19082"},
+		"master_routes_poll_interval_seconds":   {"20"},
+		"master_routes_failover_grace_seconds":  {"5"},
 		"routes_count":                          {"1"},
 		"routes_0_id":                           {"relay-a"},
 		"routes_0_relay_url":                    {"https://relay.example/furo.php"},
@@ -201,6 +212,9 @@ func TestSaveClientConfigFormWritesAdminListenAndPreservesUnknownAIRS(t *testing
 		"routes_0_session_count":                {"3"},
 		"routes_0_public_host":                  {""},
 		"routes_0_public_port":                  {""},
+		"routes_0_managed_by":                   {"fleet-a"},
+		"routes_0_role":                         {"active"},
+		"routes_0_generation":                   {"3"},
 		"routes_0_enabled":                      {"on"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(form.Encode()))
@@ -227,9 +241,17 @@ func TestSaveClientConfigFormWritesAdminListenAndPreservesUnknownAIRS(t *testing
 	if airs["custom_future_field"] != "keep-me" {
 		t.Fatalf("custom_future_field = %v, want preserved", airs["custom_future_field"])
 	}
+	masterRoutes := got["master_routes"].(map[string]any)
+	if masterRoutes["custom_future_field"] != "keep-master" || masterRoutes["enabled"] != true || masterRoutes["namespace"] != "sky-01" {
+		t.Fatalf("master_routes = %#v, want saved master settings with unknown field preserved", masterRoutes)
+	}
 	routes := got["routes"].([]any)
-	if routes[0].(map[string]any)["id"] != "relay-a" {
-		t.Fatalf("route id = %v, want relay-a", routes[0].(map[string]any)["id"])
+	route := routes[0].(map[string]any)
+	if route["id"] != "relay-a" {
+		t.Fatalf("route id = %v, want relay-a", route["id"])
+	}
+	if route["managed_by"] != "fleet-a" || route["role"] != "active" || route["generation"] != float64(3) {
+		t.Fatalf("route managed metadata = %#v, want preserved", route)
 	}
 }
 
