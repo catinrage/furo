@@ -1859,7 +1859,7 @@ func managedByForRouteMap(routeMap relayRouteMap) string {
 	return "server-master"
 }
 
-func routeConfigFromRelaySpec(spec relayRouteSpec, managedBy, role string, generation int64, enabled bool) clientRouteConfig {
+func routeConfigFromRelaySpec(spec relayRouteSpec, managedBy, role string, generation int64, enabled bool, fallbackPublicHost string, fallbackPublicPort int) clientRouteConfig {
 	sessionCountValue := spec.SessionCount
 	if sessionCountValue <= 0 {
 		sessionCountValue = 1
@@ -1868,11 +1868,19 @@ func routeConfigFromRelaySpec(spec relayRouteSpec, managedBy, role string, gener
 	if relayURLValue == "" {
 		relayURLValue = relayURL
 	}
+	publicHostValue := spec.PublicHost
+	if publicHostValue == "" {
+		publicHostValue = fallbackPublicHost
+	}
+	publicPortValue := spec.PublicPort
+	if publicPortValue == 0 {
+		publicPortValue = fallbackPublicPort
+	}
 	return clientRouteConfig{
 		ID:           sanitizeSessionComponent(spec.ID),
 		RelayURL:     relayURLValue,
-		PublicHost:   spec.PublicHost,
-		PublicPort:   spec.PublicPort,
+		PublicHost:   publicHostValue,
+		PublicPort:   publicPortValue,
 		ServerHost:   spec.ServerHost,
 		ServerPort:   spec.ServerPort,
 		SessionCount: sessionCountValue,
@@ -1960,6 +1968,8 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 		return err
 	}
 	managedBy := managedByForRouteMap(routeMap)
+	fallbackPublicHost := stringFromMap(raw, "public_host")
+	fallbackPublicPort := intFromAny(raw["public_port"])
 	managedIDs := make(map[string]struct{})
 	if routeMap.Active != nil {
 		if id := sanitizeSessionComponent(routeMap.Active.ID); id != "" {
@@ -1999,11 +2009,11 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 		}
 	}
 	if routeMap.Active != nil {
-		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true)
+		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true, fallbackPublicHost, fallbackPublicPort)
 		routes = append(routes, routeConfigMap(cfg))
 	}
 	for _, standby := range routeMap.Standby {
-		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false)
+		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false, fallbackPublicHost, fallbackPublicPort)
 		routes = append(routes, routeConfigMap(cfg))
 	}
 	raw["routes"] = routes
@@ -2191,14 +2201,14 @@ func (p *SessionPool) applyRelayRouteMap(routeMap relayRouteMap) {
 		}
 	}
 	if routeMap.Active != nil {
-		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true)
+		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true, publicHost, publicPort)
 		if cfg.ID != "" {
 			keep[cfg.ID] = struct{}{}
 			p.upsertManagedRoute(cfg)
 		}
 	}
 	for _, standby := range routeMap.Standby {
-		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false)
+		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false, publicHost, publicPort)
 		if cfg.ID != "" {
 			keep[cfg.ID] = struct{}{}
 			p.upsertManagedRoute(cfg)
@@ -2555,6 +2565,20 @@ func stringFromMap(raw map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+func intFromAny(value any) int {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func intStringFromMap(raw map[string]any, key string) string {

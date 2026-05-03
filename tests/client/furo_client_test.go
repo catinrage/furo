@@ -726,8 +726,14 @@ func TestManagedRouteMapPersistAddsActiveAndStandby(t *testing.T) {
 	if got.Routes[1].Role != "active" || got.Routes[1].ManagedBy != "fleet-a" || got.Routes[1].Enabled == nil || !*got.Routes[1].Enabled {
 		t.Fatalf("active route = %#v", got.Routes[1])
 	}
+	if got.Routes[1].PublicHost != "198.51.100.10" || got.Routes[1].PublicPort != 28080 {
+		t.Fatalf("active public callback = %s:%d, want top-level fallback", got.Routes[1].PublicHost, got.Routes[1].PublicPort)
+	}
 	if got.Routes[2].Role != "standby" || got.Routes[2].Enabled == nil || *got.Routes[2].Enabled {
 		t.Fatalf("standby route = %#v", got.Routes[2])
+	}
+	if got.Routes[2].PublicHost != "198.51.100.10" || got.Routes[2].PublicPort != 28080 {
+		t.Fatalf("standby public callback = %s:%d, want top-level fallback", got.Routes[2].PublicHost, got.Routes[2].PublicPort)
 	}
 }
 
@@ -785,6 +791,9 @@ func TestManagedRouteMapPersistReplacesExistingRoutesWithSameID(t *testing.T) {
 	}
 	if got.Routes[1].ManagedBy != "furo-sky-01" || got.Routes[1].Role != "active" {
 		t.Fatalf("active route = %#v, want managed active", got.Routes[1])
+	}
+	if got.Routes[1].PublicHost != "" || got.Routes[1].PublicPort != 0 {
+		t.Fatalf("active public callback = %s:%d, want empty when no top-level fallback", got.Routes[1].PublicHost, got.Routes[1].PublicPort)
 	}
 	if got.Routes[2].ManagedBy != "furo-sky-01" || got.Routes[2].Role != "standby" || got.Routes[2].SessionCount != 4 {
 		t.Fatalf("standby route = %#v, want managed standby replacing old manual value", got.Routes[2])
