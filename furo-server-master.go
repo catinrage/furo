@@ -872,6 +872,54 @@ func runSSHScript(ctx context.Context, host, password, script string) error {
 	return nil
 }
 
+type lineLogBuffer struct {
+	mu      sync.Mutex
+	prefix  string
+	pending string
+	output  strings.Builder
+}
+
+func newLineLogBuffer(prefix string) *lineLogBuffer {
+	return &lineLogBuffer{prefix: prefix}
+}
+
+func (b *lineLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	text := string(p)
+	b.output.WriteString(text)
+	b.pending += text
+	for {
+		idx := strings.IndexByte(b.pending, '\n')
+		if idx < 0 {
+			break
+		}
+		line := strings.TrimRight(b.pending[:idx], "\r")
+		b.pending = b.pending[idx+1:]
+		if strings.TrimSpace(line) != "" {
+			log.Printf("%s %s", b.prefix, line)
+		}
+	}
+	return len(p), nil
+}
+
+func (b *lineLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.output.String()
+}
+
+func (b *lineLogBuffer) Flush() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	line := strings.TrimSpace(b.pending)
+	if line != "" {
+		log.Printf("%s %s", b.prefix, line)
+	}
+	b.pending = ""
+}
+
 func runSSHCommand(ctx context.Context, host, password, command string, stdin ...io.Reader) (string, error) {
 	deadline := time.Now().Add(10 * time.Minute)
 	addr := net.JoinHostPort(host, "22")
@@ -903,8 +951,25 @@ func runSSHCommand(ctx context.Context, host, password, command string, stdin ..
 		if len(stdin) > 0 && stdin[0] != nil {
 			session.Stdin = stdin[0]
 		}
-		output, err := session.CombinedOutput(command)
-		return string(output), err
+		output := newLineLogBuffer(fmt.Sprintf("[FURO-MASTER] ssh host=%s command=%q", host, command))
+		session.Stdout = output
+		session.Stderr = output
+		if err := session.Start(command); err != nil {
+			return output.String(), err
+		}
+		done := make(chan error, 1)
+		go func() {
+			done <- session.Wait()
+		}()
+		select {
+		case err := <-done:
+			output.Flush()
+			return output.String(), err
+		case <-ctx.Done():
+			_ = session.Close()
+			output.Flush()
+			return output.String(), ctx.Err()
+		}
 	}
 	return "", fmt.Errorf("ssh not ready: %w", lastErr)
 }

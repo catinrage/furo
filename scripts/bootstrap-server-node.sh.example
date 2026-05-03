@@ -16,9 +16,11 @@ require curl
 require tar
 require python3
 
+echo "[bootstrap] preparing workdir: $WORKDIR"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
+echo "[bootstrap] checking latest release from $API_URL"
 python3 - "$API_URL" > /tmp/furo-release.tsv <<'PY'
 import json
 import sys
@@ -41,13 +43,16 @@ PY
 
 ARCHIVE="$(cut -f1 /tmp/furo-release.tsv)"
 URL="$(cut -f2 /tmp/furo-release.tsv)"
+echo "[bootstrap] downloading release: $ARCHIVE"
 curl -fsSL -o "$ARCHIVE" "$URL"
+echo "[bootstrap] extracting release"
 rm -rf /tmp/furo-extract
 mkdir -p /tmp/furo-extract
 tar -xzf "$ARCHIVE" -C /tmp/furo-extract
 RELEASE_ROOT="$(find /tmp/furo-extract -mindepth 1 -maxdepth 1 -type d | head -n1)"
 cp -a "$RELEASE_ROOT"/. "$WORKDIR"/
 
+echo "[bootstrap] writing server config"
 cat > "$WORKDIR/config.server.json" <<EOF
 {
   "api_key": "{{api_key}}",
@@ -76,7 +81,11 @@ cat > "$WORKDIR/config.server.json" <<EOF
 }
 EOF
 
+echo "[bootstrap] installing furo-server service"
 chmod +x "$WORKDIR/service.sh" "$WORKDIR/furo-server"
 FURO_SERVICE_NONINTERACTIVE=1 "$WORKDIR/service.sh" init server
+echo "[bootstrap] running update"
 "$WORKDIR/service.sh" update --force || true
+echo "[bootstrap] restarting service"
 "$WORKDIR/service.sh" restart
+echo "[bootstrap] done"
