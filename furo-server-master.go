@@ -942,13 +942,6 @@ func main() {
 	if err := app.loadState(); err != nil {
 		log.Fatalf("failed to load state: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	if err := app.ensureFleet(ctx); err != nil {
-		cancel()
-		log.Fatalf("failed to ensure fleet: %v", err)
-	}
-	cancel()
-	go app.runPublishLoop()
 	if cfg.AdminListen != "" {
 		go func() {
 			if err := app.runAdminServer(); err != nil {
@@ -956,7 +949,17 @@ func main() {
 			}
 		}()
 	}
-	if err := app.runControlServer(); err != nil {
-		log.Fatalf("control server failed: %v", err)
+	go func() {
+		if err := app.runControlServer(); err != nil {
+			log.Fatalf("control server failed: %v", err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	if err := app.ensureFleet(ctx); err != nil {
+		cancel()
+		log.Fatalf("failed to ensure fleet: %v", err)
 	}
+	cancel()
+	go app.runPublishLoop()
+	select {}
 }
