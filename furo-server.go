@@ -1404,6 +1404,43 @@ func relayHealthOK() bool {
 	return true
 }
 
+func nodeRelayHealthReason(failures int) string {
+	return fmt.Sprintf("relay health check failed failures=%d threshold=%d target=%s:%d", failures, nodeSettings.FailureThreshold, nodeSettings.RelayHealthHost, nodeSettings.RelayHealthPort)
+}
+
+func reportNodeRelayHealth(failures *int, reportedDead *bool) {
+	if relayHealthOK() {
+		if *failures > 0 {
+			logEvent("[SERVER] node=%s role=%s relay_health_recovered failures=%d", nodeSettings.ID, nodeSettings.Role, *failures)
+		}
+		*failures = 0
+		*reportedDead = false
+		if err := reportNodeStatus("ready", "relay health check ok"); err != nil {
+			logEvent("[SERVER] node=%s role=%s ready_report_failed err=%v", nodeSettings.ID, nodeSettings.Role, err)
+		}
+		return
+	}
+
+	*failures++
+	reason := nodeRelayHealthReason(*failures)
+	logEvent("[SERVER] node=%s role=%s relay_health_failed failures=%d threshold=%d", nodeSettings.ID, nodeSettings.Role, *failures, nodeSettings.FailureThreshold)
+	if *failures < nodeSettings.FailureThreshold {
+		if err := reportNodeStatus("relay_failed", reason); err != nil {
+			logEvent("[SERVER] node=%s role=%s relay_failed_report_failed err=%v", nodeSettings.ID, nodeSettings.Role, err)
+		}
+		return
+	}
+
+	if *reportedDead {
+		return
+	}
+	if err := reportNodeStatus("dead", reason); err != nil {
+		logEvent("[SERVER] node=%s role=%s dead_report_failed err=%v", nodeSettings.ID, nodeSettings.Role, err)
+		return
+	}
+	*reportedDead = true
+}
+
 func runServerNodeLoop() {
 	if !nodeSettings.Enabled {
 		return
@@ -1412,30 +1449,13 @@ func runServerNodeLoop() {
 		logEvent("[SERVER] node disabled because node.id or node.master_url is empty")
 		return
 	}
-	_ = reportNodeStatus("ready", "")
-	ticker := time.NewTicker(time.Duration(nodeSettings.CheckIntervalSeconds) * time.Second)
-	defer ticker.Stop()
 	failures := 0
 	reportedDead := false
+	reportNodeRelayHealth(&failures, &reportedDead)
+	ticker := time.NewTicker(time.Duration(nodeSettings.CheckIntervalSeconds) * time.Second)
+	defer ticker.Stop()
 	for range ticker.C {
-		if nodeSettings.Role != "active" {
-			_ = reportNodeStatus("ready", "")
-			continue
-		}
-		if relayHealthOK() {
-			failures = 0
-			reportedDead = false
-			_ = reportNodeStatus("ready", "")
-			continue
-		}
-		failures++
-		logEvent("[SERVER] node=%s relay_health_failed failures=%d threshold=%d", nodeSettings.ID, failures, nodeSettings.FailureThreshold)
-		if failures >= nodeSettings.FailureThreshold && !reportedDead {
-			reportedDead = true
-			if err := reportNodeStatus("dead", "relay health check failed"); err != nil {
-				logEvent("[SERVER] node=%s dead_report_failed err=%v", nodeSettings.ID, err)
-			}
-		}
+		reportNodeRelayHealth(&failures, &reportedDead)
 	}
 }
 

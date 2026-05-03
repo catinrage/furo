@@ -1103,6 +1103,10 @@ func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) e
 			a.state.Generation++
 			log.Printf("[FURO-MASTER] no standby available after active death old_active=%s generation=%d", nodeID, a.state.Generation)
 		}
+	} else if dead.Role == "standby" {
+		a.retireNodeIDLocked(nodeID)
+		a.state.Generation++
+		log.Printf("[FURO-MASTER] retired dead standby id=%s generation=%d reason=%s", nodeID, a.state.Generation, reason)
 	}
 	err := a.saveStateLocked()
 	a.mu.Unlock()
@@ -1271,7 +1275,7 @@ func (a *masterApp) recordNodeReport(report nodeReport) string {
 	if err := a.saveStateLocked(); err != nil {
 		log.Printf("[FURO-MASTER] save node report failed id=%s status=%s err=%v", node.ID, report.Status, err)
 	}
-	log.Printf("[FURO-MASTER] node report id=%s role=%s status=%s ip=%s state_status=%s", node.ID, node.Role, report.Status, node.IP, node.Status)
+	log.Printf("[FURO-MASTER] node report id=%s role=%s status=%s ip=%s state_status=%s reason=%s", node.ID, node.Role, report.Status, node.IP, node.Status, report.Reason)
 	return role
 }
 

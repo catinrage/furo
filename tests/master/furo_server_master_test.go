@@ -110,6 +110,90 @@ func TestMasterPromotesStandbyOnDeadActive(t *testing.T) {
 	}
 }
 
+func TestMasterReplacesDeadStandby(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.CaasifyToken = "token"
+	cfg.BackupCount = 1
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	app.state = masterState{
+		Namespace:  "default",
+		FleetID:    "fleet-a",
+		Generation: 7,
+		ActiveID:   "active-1",
+		Nodes: []masterNode{
+			{Namespace: "default", ID: "active-1", IP: "192.0.2.1", Role: "active", Status: "ready"},
+			{Namespace: "default", ID: "standby-1", OrderID: "standby-order", IP: "192.0.2.2", Role: "standby", Status: "ready"},
+		},
+	}
+	if err := app.saveStateLocked(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") != "route-map" {
+			t.Fatalf("unexpected relay action %q", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer relay.Close()
+	app.cfg.RelayURL = relay.URL + "/relay.php"
+	fake := &fakeCaasifyAPI{}
+	app.caasify = fake
+	app.bootstrapNodeFunc = func(context.Context, masterNode) error {
+		return nil
+	}
+	app.verifyNodeRelayAccessFunc = func(context.Context, masterNode) error {
+		return nil
+	}
+
+	if err := app.handleDeadNode(context.Background(), "standby-1", "relay health check failed"); err != nil {
+		t.Fatalf("handleDeadNode() error = %v", err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		fake.mu.Lock()
+		deleteCount := fake.deleteCount
+		fake.mu.Unlock()
+		if deleteCount > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	fake.mu.Lock()
+	deleteCount := fake.deleteCount
+	createCount := fake.createCount
+	fake.mu.Unlock()
+	if deleteCount != 1 {
+		t.Fatalf("delete count = %d, want 1", deleteCount)
+	}
+	if createCount != 1 {
+		t.Fatalf("create count = %d, want 1", createCount)
+	}
+	if app.state.ActiveID != "active-1" {
+		t.Fatalf("active id = %q, want active-1", app.state.ActiveID)
+	}
+	if !containsString(app.state.Retired, "standby-1") {
+		t.Fatalf("retired = %#v, want standby-1", app.state.Retired)
+	}
+	readyStandbys := 0
+	for _, node := range app.state.Nodes {
+		if node.Role == "standby" && node.Status == "ready" {
+			if node.ID == "standby-1" {
+				t.Fatal("dead standby is still ready")
+			}
+			readyStandbys++
+		}
+	}
+	if readyStandbys != 1 {
+		t.Fatalf("ready standbys = %d, want 1", readyStandbys)
+	}
+}
+
 func TestMasterStateRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "state.json")
