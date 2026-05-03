@@ -48,6 +48,7 @@ type masterConfigFile struct {
 	RelayHealthHost          string `json:"relay_health_host"`
 	RelayHealthPort          int    `json:"relay_health_port"`
 	ServerAgentPort          int    `json:"server_agent_port"`
+	RouteSessionCount        int    `json:"route_session_count"`
 	BackupCount              int    `json:"backup_count"`
 	NodeCheckIntervalSeconds int    `json:"node_check_interval_seconds"`
 	NodeFailureThreshold     int    `json:"node_failure_threshold"`
@@ -70,6 +71,7 @@ func defaultMasterConfig() masterConfigFile {
 		RelayHealthHost:          "f2.ra1n.xyz",
 		RelayHealthPort:          443,
 		ServerAgentPort:          8443,
+		RouteSessionCount:        4,
 		BackupCount:              1,
 		NodeCheckIntervalSeconds: 10,
 		NodeFailureThreshold:     3,
@@ -131,6 +133,9 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	}
 	if cfg.ServerAgentPort <= 0 {
 		cfg.ServerAgentPort = 8443
+	}
+	if cfg.RouteSessionCount <= 0 {
+		cfg.RouteSessionCount = 4
 	}
 	if cfg.RelayHealthPort <= 0 {
 		cfg.RelayHealthPort = 443
@@ -1080,7 +1085,7 @@ func (a *masterApp) routeMapLocked() relayRouteMap {
 			RelayURL:     a.cfg.RelayURL,
 			ServerHost:   node.IP,
 			ServerPort:   a.cfg.ServerAgentPort,
-			SessionCount: 4,
+			SessionCount: a.cfg.RouteSessionCount,
 		}
 		if node.ID == a.state.ActiveID && node.Role == "active" {
 			routeMap.Active = &spec

@@ -131,6 +131,32 @@ func TestMasterStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMasterRouteMapUsesConfiguredSessionCount(t *testing.T) {
+	cfg := defaultMasterConfig()
+	cfg.CaasifyToken = "token"
+	cfg.RelayURL = "http://relay.test/furo.php"
+	cfg.RouteSessionCount = 9
+	app := newMasterApp(cfg)
+	app.state = masterState{
+		Namespace:  "default",
+		FleetID:    "furo-default",
+		Generation: 2,
+		ActiveID:   "active-a",
+		Nodes: []masterNode{
+			{Namespace: "default", ID: "active-a", Role: "active", Status: "ready", IP: "192.0.2.10"},
+			{Namespace: "default", ID: "standby-a", Role: "standby", Status: "ready", IP: "192.0.2.11"},
+		},
+	}
+
+	routeMap := app.routeMapLocked()
+	if routeMap.Active == nil || routeMap.Active.SessionCount != 9 {
+		t.Fatalf("active route = %#v, want session_count=9", routeMap.Active)
+	}
+	if len(routeMap.Standby) != 1 || routeMap.Standby[0].SessionCount != 9 {
+		t.Fatalf("standby routes = %#v, want session_count=9", routeMap.Standby)
+	}
+}
+
 func TestMasterPersistsNodeBeforeBootstrapFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := defaultMasterConfig()
