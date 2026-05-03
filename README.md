@@ -121,7 +121,7 @@ Key fields in `config.client.json`:
 - `airs`
   Optional Arvan IP Renew System config. AIRS shares this client config, periodically or reactively adds a fresh Arvan public IP, detaches the old public IP using the IP-specific `port_id`, switches the VPS outbound source IP, updates `public_host`, runs `inspect`, and restarts the client service.
 - `master_routes`
-  Optional server-master route-map polling. When enabled, the client fetches `action=route-map` from the relay, stores master-managed active and standby routes in `config.client.json`, keeps standby routes disabled so they stay clean, and promotes a cached standby when managed active routes have no ready sessions after `failover_grace_seconds`.
+  Optional server-master route-map polling. When enabled, the client fetches `action=route-map&namespace=<namespace>` from the relay, stores master-managed active and standby routes in `config.client.json`, keeps standby routes disabled so they stay clean, and promotes a cached standby when managed active routes have no ready sessions after `failover_grace_seconds`.
 
 Each route entry supports:
 
@@ -196,7 +196,7 @@ Key fields in `config.server.json`:
 - `log_file`
   Optional debug log path. Empty disables debug logs.
 - `node`
-  Optional server-node control block. If omitted or disabled, `furo-server` remains a standalone server. When enabled, active nodes report health to `furo-server-master`; standby nodes stay idle and do not touch the relay until promoted.
+  Optional server-node control block. If omitted or disabled, `furo-server` remains a standalone server. When enabled, active nodes report health to `furo-server-master`; standby nodes stay idle and do not touch the relay until promoted. Set `node.namespace` to match the master namespace.
 
 ### Server master config
 
@@ -206,6 +206,8 @@ Key fields in `config.server-master.json`:
 
 - `api_key`
   Shared control and tunnel secret. Must match client, server, and relay.
+- `namespace`
+  Fleet namespace. Use a different namespace for each independent master/client group sharing the same Caasify account or relay PHP.
 - `listen` / `public_url`
   Control listener for node reports and the public URL rendered into new node configs.
 - `admin_listen`
@@ -215,7 +217,7 @@ Key fields in `config.server-master.json`:
 - `state_file` / `log_file`
   Local durable fleet state and optional master log path.
 - `relay_url`
-  Deployed `furo-relay.php`; the master publishes active/standby route maps to this URL.
+  Deployed `furo-relay.php`; the master publishes active/standby route maps to this URL using its namespace.
 - `relay_health_host` / `relay_health_port`
   Host and port checked by active nodes and by the master over SSH before accepting a new standby.
 - `backup_count`
@@ -235,7 +237,7 @@ Top-of-file variables in `furo-relay.php`:
 - `$RELAY_MAX_PENDING_BYTES`
 - `$RELAY_ENABLE_LOGS`
 - `$RELAY_ROUTE_MAP_FILE`
-  Writable JSON cache for `action=route-map`. The master writes this file and clients read it with the same `api_key`.
+  Writable JSON cache for `action=route-map`. Non-default namespaces write sibling files like `furo-route-map-myfleet.json`. The master writes this file and clients read it with the same `api_key`.
 
 ## Build
 
@@ -335,6 +337,7 @@ Behavior:
 - `./service.sh init server-master` initializes, enables, and starts the server master service.
 - `./service.sh init client` initializes, enables, and starts both the client and AIRS services.
 - Set `FURO_SERVICE_NONINTERACTIVE=1` to accept default service names and descriptions from bootstrap scripts.
+- Set `FURO_SERVICE_NAMESPACE=name` to create namespaced systemd defaults and metadata such as `.service-client-name`.
 - `init` prompts for the service name and description.
 - `init` infers `WorkingDirectory` from the script location and `ExecStart` from `./furo-server -c config.server.json`, `./furo-server-master -c config.server-master.json`, `./furo-client -c config.client.json`, or `./furo-airs -c config.client.json`.
 - Other commands fail with a clear message until `init` has been completed for that role.

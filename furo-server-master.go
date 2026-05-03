@@ -110,6 +110,12 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	if cfg.PublicURL == "" {
 		cfg.PublicURL = "http://" + cfg.Listen
 	}
+	if cfg.StateFile == "" || cfg.StateFile == "furo-server-master-state.json" || cfg.StateFile == "furo-server-master-default-state.json" {
+		cfg.StateFile = fmt.Sprintf("furo-server-master-%s-state.json", cfg.Namespace)
+	}
+	if cfg.LogFile == "./furo-server-master.log" || cfg.LogFile == "furo-server-master.log" || cfg.LogFile == "./furo-server-master-default.log" {
+		cfg.LogFile = fmt.Sprintf("./furo-server-master-%s.log", cfg.Namespace)
+	}
 	if cfg.BackupCount < 0 {
 		return cfg, errors.New("backup_count must be >= 0")
 	}
@@ -222,6 +228,11 @@ func (a *masterApp) loadState() error {
 	}
 	if a.state.FleetID == "" {
 		a.state.FleetID = defaultMasterState(a.cfg.Namespace).FleetID
+	}
+	for idx := range a.state.Nodes {
+		if a.state.Nodes[idx].Namespace == "" {
+			a.state.Nodes[idx].Namespace = a.cfg.Namespace
+		}
 	}
 	if a.state.Generation <= 0 {
 		a.state.Generation = 1
@@ -507,6 +518,9 @@ func (a *masterApp) routeMapLocked() relayRouteMap {
 		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
 	for _, node := range a.state.Nodes {
+		if node.Namespace != a.cfg.Namespace {
+			continue
+		}
 		if node.Status == "deleted" || node.Status == "deleting" || node.IP == "" {
 			continue
 		}

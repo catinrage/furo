@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 SERVICE_DIR="${SYSTEMD_SERVICE_DIR:-/etc/systemd/system}"
 SERVICE_USER="${SERVICE_USER:-root}"
+FURO_SERVICE_NAMESPACE="${FURO_SERVICE_NAMESPACE:-}"
 FURO_UPDATE_REPO="${FURO_UPDATE_REPO:-catinrage/furo}"
 FURO_UPDATE_API_URL="${FURO_UPDATE_API_URL:-https://api.github.com/repos/${FURO_UPDATE_REPO}/releases}"
 FURO_UPDATE_INCLUDE_PRERELEASE="${FURO_UPDATE_INCLUDE_PRERELEASE:-1}"
@@ -37,6 +38,7 @@ Notes:
   - Top-level init client creates, enables, and starts both client and AIRS.
   - Top-level init server creates, enables, and starts the standalone/node server.
   - Top-level init server-master creates, enables, and starts the server master.
+  - Set FURO_SERVICE_NAMESPACE=name to keep service metadata and defaults separate.
   - Run 'init' once per role before using other commands.
   - 'stateus' is accepted as an alias for 'status'.
 EOF
@@ -337,6 +339,34 @@ validate_role() {
     esac
 }
 
+sanitize_namespace() {
+    local value="$1"
+    value="${value//[^A-Za-z0-9_.@-]/}"
+    printf '%s' "$value"
+}
+
+role_key() {
+    local role="$1"
+    local ns
+    ns="$(sanitize_namespace "$FURO_SERVICE_NAMESPACE")"
+    if [[ -n "$ns" ]]; then
+        printf '%s-%s' "$role" "$ns"
+    else
+        printf '%s' "$role"
+    fi
+}
+
+namespaced_default_service() {
+    local default_name="$1"
+    local ns
+    ns="$(sanitize_namespace "$FURO_SERVICE_NAMESPACE")"
+    if [[ -n "$ns" ]]; then
+        printf '%s-%s' "$default_name" "$ns"
+    else
+        printf '%s' "$default_name"
+    fi
+}
+
 set_role_vars() {
     local role="$1"
 
@@ -346,25 +376,25 @@ set_role_vars() {
             ROLE_BINARY="furo-server"
             ROLE_CONFIG="config.server.json"
             ROLE_DESCRIPTION_DEFAULT="Furo Server"
-            ROLE_SERVICE_DEFAULT="furo-server"
+            ROLE_SERVICE_DEFAULT="$(namespaced_default_service furo-server)"
             ;;
         server-master)
             ROLE_BINARY="furo-server-master"
             ROLE_CONFIG="config.server-master.json"
             ROLE_DESCRIPTION_DEFAULT="Furo Server Master"
-            ROLE_SERVICE_DEFAULT="furo-server-master"
+            ROLE_SERVICE_DEFAULT="$(namespaced_default_service furo-server-master)"
             ;;
         client)
             ROLE_BINARY="furo-client"
             ROLE_CONFIG="config.client.json"
             ROLE_DESCRIPTION_DEFAULT="Furo Client"
-            ROLE_SERVICE_DEFAULT="furo-client"
+            ROLE_SERVICE_DEFAULT="$(namespaced_default_service furo-client)"
             ;;
         airs)
             ROLE_BINARY="furo-airs"
             ROLE_CONFIG="config.client.json"
             ROLE_DESCRIPTION_DEFAULT="Furo AIRS"
-            ROLE_SERVICE_DEFAULT="furo-airs"
+            ROLE_SERVICE_DEFAULT="$(namespaced_default_service furo-airs)"
             ;;
     esac
 
@@ -402,7 +432,7 @@ service_file_path() {
 
 service_name_file_path() {
     local role="$1"
-    printf '%s/.service-%s-name' "$SCRIPT_DIR" "$role"
+    printf '%s/.service-%s-name' "$SCRIPT_DIR" "$(role_key "$role")"
 }
 
 save_service_name() {

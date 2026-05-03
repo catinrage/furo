@@ -51,12 +51,15 @@ func TestPHPRelayRouteMapReadWrite(t *testing.T) {
 	php := testutil.RequirePHP(t)
 	repoRoot := testutil.RepoRoot(t)
 	routeMapPath := filepath.Join(repoRoot, "furo-route-map.json")
+	namespacedRouteMapPath := filepath.Join(repoRoot, "furo-route-map-fleet-a.json")
 	_ = os.Remove(routeMapPath)
+	_ = os.Remove(namespacedRouteMapPath)
 	t.Cleanup(func() { _ = os.Remove(routeMapPath) })
+	t.Cleanup(func() { _ = os.Remove(namespacedRouteMapPath) })
 
 	addr := testutil.FreeAddr(t)
 	phpServer := testutil.StartProcess(t, php, []string{"-S", addr, "-t", repoRoot}, repoRoot, nil)
-	relayURL := fmt.Sprintf("http://%s/furo-relay.php?action=route-map", addr)
+	relayURL := fmt.Sprintf("http://%s/furo-relay.php?action=route-map&namespace=fleet-a", addr)
 
 	testutil.WaitForHTTP(t, relayURL, 10*time.Second, func(resp *http.Response) error {
 		if resp.StatusCode != http.StatusForbidden {
@@ -65,7 +68,7 @@ func TestPHPRelayRouteMapReadWrite(t *testing.T) {
 		return nil
 	}, phpServer)
 
-	payload := `{"fleet_id":"fleet-a","generation":4,"active":{"id":"active-a","relay_url":"http://relay/furo.php","server_host":"203.0.113.10","server_port":8443,"session_count":2},"standby":[],"retired":[]}`
+	payload := `{"namespace":"fleet-a","fleet_id":"fleet-a","generation":4,"active":{"id":"active-a","relay_url":"http://relay/furo.php","server_host":"203.0.113.10","server_port":8443,"session_count":2},"standby":[],"retired":[]}`
 	req, err := http.NewRequest(http.MethodPut, relayURL, bytes.NewBufferString(payload))
 	if err != nil {
 		t.Fatalf("new write request: %v", err)
@@ -94,7 +97,10 @@ func TestPHPRelayRouteMapReadWrite(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"fleet_id": "fleet-a"`) {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"namespace": "fleet-a"`) || !strings.Contains(string(body), `"fleet_id": "fleet-a"`) {
 		t.Fatalf("read status=%d body=%s\n%s", resp.StatusCode, strings.TrimSpace(string(body)), phpServer.Logs())
+	}
+	if _, err := os.Stat(namespacedRouteMapPath); err != nil {
+		t.Fatalf("namespaced route map file was not written: %v", err)
 	}
 }

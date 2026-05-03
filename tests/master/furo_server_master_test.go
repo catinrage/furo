@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -21,12 +22,13 @@ func TestMasterPromotesStandbyOnDeadActive(t *testing.T) {
 	app := newMasterApp(cfg)
 	app.statePath = cfg.StateFile
 	app.state = masterState{
+		Namespace:  "default",
 		FleetID:    "fleet-a",
 		Generation: 7,
 		ActiveID:   "active-1",
 		Nodes: []masterNode{
-			{ID: "active-1", IP: "192.0.2.1", Role: "active", Status: "ready"},
-			{ID: "standby-1", OrderID: "standby-order", IP: "192.0.2.2", Role: "standby", Status: "ready"},
+			{Namespace: "default", ID: "active-1", IP: "192.0.2.1", Role: "active", Status: "ready"},
+			{Namespace: "default", ID: "standby-1", OrderID: "standby-order", IP: "192.0.2.2", Role: "standby", Status: "ready"},
 		},
 	}
 	if err := app.saveStateLocked(); err != nil {
@@ -68,7 +70,7 @@ func TestMasterStateRoundTrip(t *testing.T) {
 		t.Fatalf("loadState() create error = %v", err)
 	}
 	app.state.ActiveID = "node-a"
-	app.state.Nodes = append(app.state.Nodes, masterNode{ID: "node-a", Role: "active", IP: "192.0.2.10"})
+	app.state.Nodes = append(app.state.Nodes, masterNode{Namespace: "default", ID: "node-a", Role: "active", IP: "192.0.2.10"})
 	if err := app.saveStateLocked(); err != nil {
 		t.Fatalf("saveStateLocked() error = %v", err)
 	}
@@ -86,11 +88,11 @@ func TestMasterStateRoundTrip(t *testing.T) {
 }
 
 func TestRelayRouteMapURLAddsAction(t *testing.T) {
-	got, err := relayRouteMapURL("https://example.com/furo-relay.php?x=1")
+	got, err := relayRouteMapURL("https://example.com/furo-relay.php?x=1", "fleet-a")
 	if err != nil {
 		t.Fatalf("relayRouteMapURL() error = %v", err)
 	}
-	if got != "https://example.com/furo-relay.php?action=route-map&x=1" && got != "https://example.com/furo-relay.php?x=1&action=route-map" {
+	if !strings.Contains(got, "action=route-map") || !strings.Contains(got, "namespace=fleet-a") || !strings.Contains(got, "x=1") {
 		t.Fatalf("route map url = %q", got)
 	}
 }

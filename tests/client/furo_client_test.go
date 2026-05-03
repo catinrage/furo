@@ -701,6 +701,7 @@ func TestManagedRouteMapPersistAddsActiveAndStandby(t *testing.T) {
 	}
 
 	err := persistRelayRouteMap(relayRouteMap{
+		Namespace:  "fleet-a",
 		FleetID:    "fleet-a",
 		Generation: 3,
 		Active:     &relayRouteSpec{ID: "active-a", RelayURL: "https://relay.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 2},

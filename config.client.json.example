@@ -37,6 +37,7 @@
   },
   "master_routes": {
     "enabled": false,
+    "namespace": "default",
     "fleet_id": "",
     "master_url": "http://MASTER_PUBLIC_IP:19082",
     "poll_interval_seconds": 30,

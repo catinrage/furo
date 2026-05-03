@@ -3462,7 +3462,7 @@ func pingMasterFromClient() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("ping master route-map ok: fleet=%s generation=%d active=%t standby=%d updated_at=%s\n", routeMap.FleetID, routeMap.Generation, routeMap.Active != nil, len(routeMap.Standby), routeMap.UpdatedAt)
+	fmt.Printf("ping master route-map ok: namespace=%s fleet=%s generation=%d active=%t standby=%d updated_at=%s\n", routeMap.Namespace, routeMap.FleetID, routeMap.Generation, routeMap.Active != nil, len(routeMap.Standby), routeMap.UpdatedAt)
 	return nil
 }
 

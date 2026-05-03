@@ -13,6 +13,7 @@
   "log_file": "",
   "node": {
     "enabled": false,
+    "namespace": "default",
     "id": "furo-server-node-1",
     "master_url": "http://MASTER_PUBLIC_IP:19082",
     "role": "active",
