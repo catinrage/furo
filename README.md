@@ -151,7 +151,7 @@ Key fields in `config.client.json` under `airs`:
 - `auto_renew_interval_seconds`
   Scheduled renewal interval. Set to `0` to disable scheduled renewals and renew only after inspect failures.
 - `cleanup_interval_minutes`
-  How often AIRS scans the server IP list and detaches any public IP that is neither `fixed_public_ip` nor a current configured `public_host`. Set to `0` to disable scheduled cleanup. Run `./furo-airs -c config.client.json --cleanup` for one manual cleanup pass.
+  How often AIRS scans the server IP list and detaches any public IP that is neither `fixed_public_ip` nor a current configured `public_host`. Scheduled cleanup also runs once at AIRS startup. Set to `0` to disable scheduled cleanup. Run `./furo-airs -c config.client.json --cleanup` for one manual cleanup pass.
 - `check_interval_seconds`
   How often AIRS runs the lightweight `inspect` check. This cannot be disabled.
 - `failure_confirm_attempts` / `failure_confirm_interval_seconds`
@@ -245,7 +245,7 @@ AIRS on the client-side VPS:
 ./furo-airs -c config.client.json --check-once
 ```
 
-`--once` and `--check-once` print step-by-step logs to the terminal automatically. Use `--verbose` when running the continuous daemon in the foreground and you also want logs on stdout.
+`--check-once` and the continuous AIRS loop run `inspect --all`, so every enabled route is checked. AIRS only renews the client public IP when all confirmed inspect failures point to the client callback side. Server-side failures such as server session limits, relay-to-server connection refused, or server handshake failures are logged and do not trigger IP renewal. `--once` and `--check-once` print step-by-step logs to the terminal automatically. Use `--verbose` when running the continuous daemon in the foreground and you also want logs on stdout.
 
 ### systemd service manager
 

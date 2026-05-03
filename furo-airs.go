@@ -160,6 +160,13 @@ type airsManager struct {
 	mu     sync.Mutex
 }
 
+type airsInspectResult struct {
+	Err           error
+	Output        string
+	RenewEligible bool
+	Reason        string
+}
+
 func main() {
 	flag.Parse()
 
@@ -193,8 +200,9 @@ func main() {
 			os.Exit(1)
 		}
 	case *airsCheckOnce:
-		if err := manager.inspect(context.Background()); err != nil {
-			manager.logf("inspect failed: %v", err)
+		result := manager.inspect(context.Background())
+		if result.Err != nil {
+			manager.logf("inspect failed: %v", result.Err)
 			os.Exit(1)
 		}
 		manager.logf("inspect succeeded")
@@ -374,6 +382,9 @@ func (m *airsManager) run(ctx context.Context) {
 		cleanupTicker = time.NewTicker(m.cfg.CleanupInterval)
 		defer cleanupTicker.Stop()
 		cleanupC = cleanupTicker.C
+		if err := m.cleanup(ctx, "startup"); err != nil {
+			m.logf("startup cleanup failed: %v", err)
+		}
 	}
 
 	for {
@@ -382,9 +393,15 @@ func (m *airsManager) run(ctx context.Context) {
 			m.logf("stopped: %v", ctx.Err())
 			return
 		case <-checkTicker.C:
-			if err := m.inspect(ctx); err != nil {
-				m.logf("inspect failed: %v", err)
-				if m.confirmInspectRecovered(ctx) {
+			result := m.inspect(ctx)
+			if result.Err != nil {
+				m.logf("inspect failed: %v", result.Err)
+				recovered, finalResult := m.confirmInspectRecovered(ctx)
+				if recovered {
+					continue
+				}
+				if !finalResult.RenewEligible {
+					m.logf("inspect failure confirmed but not client-side; skipping renew reason=%q", finalResult.Reason)
 					continue
 				}
 				m.logf("inspect failure confirmed after %d retries; starting renew", m.cfg.FailureConfirmAttempts)
@@ -406,7 +423,8 @@ func (m *airsManager) run(ctx context.Context) {
 	}
 }
 
-func (m *airsManager) confirmInspectRecovered(ctx context.Context) bool {
+func (m *airsManager) confirmInspectRecovered(ctx context.Context) (bool, airsInspectResult) {
+	var last airsInspectResult
 	for attempt := 1; attempt <= m.cfg.FailureConfirmAttempts; attempt++ {
 		m.logf(
 			"inspect failure confirmation waiting retry=%d/%d delay=%s",
@@ -416,29 +434,125 @@ func (m *airsManager) confirmInspectRecovered(ctx context.Context) bool {
 		)
 		if err := sleepContext(ctx, m.cfg.FailureConfirmInterval); err != nil {
 			m.logf("inspect failure confirmation stopped: %v", err)
-			return true
+			return true, airsInspectResult{Reason: "confirmation stopped"}
 		}
-		if err := m.inspect(ctx); err != nil {
-			m.logf("inspect confirmation retry failed retry=%d/%d err=%v", attempt, m.cfg.FailureConfirmAttempts, err)
+		result := m.inspect(ctx)
+		last = result
+		if result.Err != nil {
+			m.logf("inspect confirmation retry failed retry=%d/%d err=%v renew_eligible=%t reason=%q", attempt, m.cfg.FailureConfirmAttempts, result.Err, result.RenewEligible, result.Reason)
 			continue
 		}
 		m.logf("inspect recovered on confirmation retry=%d/%d; skipping renew", attempt, m.cfg.FailureConfirmAttempts)
-		return true
+		return true, result
 	}
-	return false
+	return false, last
 }
 
-func (m *airsManager) inspect(ctx context.Context) error {
+func (m *airsManager) inspect(ctx context.Context) airsInspectResult {
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, m.cfg.InspectBinary, "-c", m.cfg.ConfigPath)
+	cmd := exec.CommandContext(ctx, m.cfg.InspectBinary, "-c", m.cfg.ConfigPath, "--all")
 	cmd.Dir = m.cfg.WorkDir
 	output, err := cmd.CombinedOutput()
 	duration := time.Since(start)
+	trimmed := strings.TrimSpace(string(output))
 	if err != nil {
-		return fmt.Errorf("inspect duration=%s err=%w output=%s", duration.Round(time.Millisecond), err, strings.TrimSpace(string(output)))
+		renewEligible, reason := classifyAIRSInspectFailure(trimmed, m.cfg)
+		return airsInspectResult{
+			Err:           fmt.Errorf("inspect duration=%s err=%w output=%s", duration.Round(time.Millisecond), err, trimmed),
+			Output:        trimmed,
+			RenewEligible: renewEligible,
+			Reason:        reason,
+		}
 	}
 	m.logf("inspect duration=%s result=success", duration.Round(time.Millisecond))
-	return nil
+	return airsInspectResult{Output: trimmed, Reason: "success"}
+}
+
+func classifyAIRSInspectFailure(output string, cfg airsRuntimeConfig) (bool, string) {
+	if strings.TrimSpace(output) == "" {
+		return false, "inspect produced no output"
+	}
+	if strings.Contains(output, "✓ FURO inspect succeeded") {
+		return false, "at least one route succeeded"
+	}
+
+	failures := inspectFailureLines(output)
+	if len(failures) == 0 {
+		return false, "inspect failure stage was not reported"
+	}
+
+	clientHosts := currentAIRSProtectedIPs(cfg)
+	var clientSide int
+	for _, failure := range failures {
+		switch classifyAIRSFailureLine(failure, clientHosts) {
+		case "client":
+			clientSide++
+		case "server":
+			return false, "server-side inspect failure: " + failure
+		default:
+			return false, "non-client inspect failure: " + failure
+		}
+	}
+	if clientSide == len(failures) {
+		return true, fmt.Sprintf("all %d inspected route failures are client callback failures", len(failures))
+	}
+	return false, "mixed inspect failure classification"
+}
+
+func inspectFailureLines(output string) []string {
+	var failures []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Failure: ") {
+			failures = append(failures, strings.TrimPrefix(line, "Failure: "))
+		}
+	}
+	return failures
+}
+
+func classifyAIRSFailureLine(failure string, clientHosts map[string]struct{}) string {
+	switch {
+	case strings.HasPrefix(failure, "relay callback:"):
+		return "client"
+	case strings.HasPrefix(failure, "server handshake:"):
+		return "server"
+	case strings.Contains(failure, "server session limit reached"):
+		return "server"
+	}
+
+	if strings.HasPrefix(failure, "relay request:") {
+		if host := socketTargetHost(failure); host != "" {
+			if _, ok := clientHosts[host]; ok {
+				return "client"
+			}
+			return "server"
+		}
+	}
+	return "unknown"
+}
+
+func socketTargetHost(value string) string {
+	for _, marker := range []string{"socket_connect failed to ", "socket_connect timed out to "} {
+		idx := strings.Index(value, marker)
+		if idx < 0 {
+			continue
+		}
+		target := strings.TrimSpace(value[idx+len(marker):])
+		if target == "" {
+			return ""
+		}
+		target = strings.Fields(target)[0]
+		target = strings.TrimRight(target, ":")
+		host, _, err := net.SplitHostPort(target)
+		if err == nil {
+			return strings.Trim(host, "[]")
+		}
+		if cut := strings.LastIndex(target, ":"); cut > 0 {
+			return strings.Trim(target[:cut], "[]")
+		}
+		return strings.Trim(target, "[]")
+	}
+	return ""
 }
 
 func (m *airsManager) renew(ctx context.Context, reason string) error {
@@ -510,8 +624,11 @@ func (m *airsManager) renew(ctx context.Context, reason string) error {
 	m.logf("config public_host updated old=%s new=%s", oldIP, newIP.Address)
 
 	m.logf("running post-renew inspect")
-	if err := m.inspect(ctx); err != nil {
-		return fmt.Errorf("post-renew inspect: %w", err)
+	if result := m.inspect(ctx); result.Err != nil {
+		if result.RenewEligible {
+			return fmt.Errorf("post-renew inspect still reports client-side failure: %w", result.Err)
+		}
+		m.logf("post-renew inspect failed but failure is not client-side; activating new IP anyway reason=%q err=%v", result.Reason, result.Err)
 	}
 	m.logf("restarting client service role=%s", m.cfg.ClientServiceRole)
 	if err := m.restartClient(ctx); err != nil {

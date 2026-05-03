@@ -104,6 +104,91 @@ func TestLoadAIRSConfigCleanupIntervalMinutes(t *testing.T) {
 	}
 }
 
+func TestClassifyAIRSInspectFailureAllowsClientCallbackRenew(t *testing.T) {
+	t.Parallel()
+
+	output := `FURO inspect running
+
+✓ Route: furo-server-de-03
+✓ Client callback: 37.152.190.163:28080
+✓ Server agent: 5.75.198.238:8443
+✓ Listener: primary 0.0.0.0:28080 is busy; using temporary listener [::]:42369 and advertising public port 42369
+✓ Session: inspect_1
+
+✗ FURO inspect failed
+
+Failure: relay request: status 502: socket_connect failed to 37.152.190.163:42369: Connection refused`
+
+	eligible, reason := classifyAIRSInspectFailure(output, airsRuntimeConfig{
+		PublicHost:    "37.152.190.163",
+		FixedPublicIP: "37.152.190.18",
+	})
+	if !eligible {
+		t.Fatalf("eligible = false, want true; reason=%s", reason)
+	}
+}
+
+func TestClassifyAIRSInspectFailureRejectsServerRefused(t *testing.T) {
+	t.Parallel()
+
+	output := `FURO inspect running
+
+✓ Route: furo-server-de-03
+✓ Client callback: 37.152.190.163:28080
+✓ Server agent: 5.75.198.238:8443
+✓ Relay callback: relay connected back and session attach succeeded
+
+✗ FURO inspect failed
+
+Failure: relay request: status 502: socket_connect failed to 5.75.198.238:8443: Connection refused`
+
+	eligible, reason := classifyAIRSInspectFailure(output, airsRuntimeConfig{
+		PublicHost:    "37.152.190.163",
+		FixedPublicIP: "37.152.190.18",
+	})
+	if eligible {
+		t.Fatalf("eligible = true, want false; reason=%s", reason)
+	}
+}
+
+func TestClassifyAIRSInspectFailureRejectsServerSessionLimit(t *testing.T) {
+	t.Parallel()
+
+	output := `FURO inspect running
+
+✓ Route: furo-server-de-02
+
+✗ FURO inspect failed
+
+Failure: relay request: status 502: server session limit reached; increase server max_sessions`
+
+	eligible, reason := classifyAIRSInspectFailure(output, airsRuntimeConfig{PublicHost: "37.152.190.163"})
+	if eligible {
+		t.Fatalf("eligible = true, want false; reason=%s", reason)
+	}
+}
+
+func TestClassifyAIRSInspectFailureRejectsPartialRouteSuccess(t *testing.T) {
+	t.Parallel()
+
+	output := `FURO inspect running
+
+✓ Route: good
+
+✓ FURO inspect succeeded
+
+✓ Route: bad
+
+✗ FURO inspect failed
+
+Failure: relay callback: timed out waiting for relay to connect back to agent_listen`
+
+	eligible, reason := classifyAIRSInspectFailure(output, airsRuntimeConfig{PublicHost: "37.152.190.163"})
+	if eligible {
+		t.Fatalf("eligible = true, want false when another route succeeded; reason=%s", reason)
+	}
+}
+
 func TestUpdateClientPublicHostRewritesManagedHosts(t *testing.T) {
 	t.Parallel()
 
