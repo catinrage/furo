@@ -99,7 +99,9 @@ func TestMasterPromotesStandbyOnDeadActive(t *testing.T) {
 	}))
 	defer relay.Close()
 	app.cfg.RelayURL = relay.URL + "/relay.php"
-	app.caasify = &fakeCaasifyAPI{}
+	app.caasify = &fakeCaasifyAPI{
+		orders: []caasifyListedOrder{{OrderID: "standby-order", Status: "running"}},
+	}
 
 	if err := app.handleDeadNode(context.Background(), "active-1", "test failure"); err != nil {
 		t.Fatalf("handleDeadNode() error = %v", err)
@@ -196,6 +198,79 @@ func TestMasterReplacesDeadStandby(t *testing.T) {
 	}
 }
 
+func TestEnsureFleetDeletesMissingProviderNodeAndCreatesActive(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.ProviderBackend = "caasify"
+	cfg.CaasifyToken = "token"
+	cfg.BackupCount = 0
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	app.caasify = &fakeCaasifyAPI{}
+	app.bootstrapNodeFunc = func(context.Context, masterNode) error { return nil }
+	app.verifyNodeRelayAccessFunc = func(context.Context, masterNode) error { return nil }
+	app.state = masterState{
+		Namespace:  "default",
+		FleetID:    "furo-default",
+		Generation: 4,
+		Nodes: []masterNode{{
+			Namespace: "default",
+			ID:        "stale-standby",
+			OrderID:   "missing-order",
+			IP:        "192.0.2.44",
+			Role:      "standby",
+			Status:    "bootstrap_failed",
+		}},
+	}
+	if err := app.saveStateLocked(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer relay.Close()
+	app.cfg.RelayURL = relay.URL + "/relay.php"
+
+	if err := app.ensureFleet(context.Background()); err != nil {
+		t.Fatalf("ensureFleet() error = %v", err)
+	}
+	if app.state.ActiveID == "" {
+		t.Fatal("active id is empty, want replacement active")
+	}
+	if app.state.ActiveID == "stale-standby" {
+		t.Fatal("stale standby was reused as active")
+	}
+	var staleStatus string
+	for _, node := range app.state.Nodes {
+		if node.ID == "stale-standby" {
+			staleStatus = node.Status
+		}
+	}
+	if staleStatus != "deleted" {
+		t.Fatalf("stale status = %q, want deleted", staleStatus)
+	}
+}
+
+func TestProvisionErrorDoesNotResurrectDeletedNode(t *testing.T) {
+	cfg := defaultMasterConfig()
+	app := newMasterApp(cfg)
+	app.state = masterState{
+		Namespace: "default",
+		FleetID:   "furo-default",
+		Nodes: []masterNode{{
+			Namespace: "default",
+			ID:        "node-a",
+			Status:    "deleted",
+		}},
+	}
+	app.markNodeProvisionError("node-a", "bootstrap_failed", errors.New("late bootstrap failure"))
+	if got := app.state.Nodes[0].Status; got != "deleted" {
+		t.Fatalf("status = %q, want deleted", got)
+	}
+}
+
 func TestMasterStateRoundTrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "state.json")
@@ -283,6 +358,7 @@ func TestMasterPersistsNodeBeforeBootstrapFailure(t *testing.T) {
 	if node.Status != "bootstrap_failed" || node.OrderID == "" || node.IP == "" || node.Password == "" {
 		t.Fatalf("node after bootstrap failure = %#v, want saved bootstrap_failed with order/ip/password", node)
 	}
+	fake.orders = []caasifyListedOrder{{OrderID: node.OrderID, Status: "running"}}
 
 	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

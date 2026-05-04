@@ -680,7 +680,7 @@ func (a *masterApp) pendingProvisionNodeIDsLocked() []string {
 }
 
 func (a *masterApp) nextNodeID(role string) string {
-	return fmt.Sprintf("%s-%s-%s-%d", a.cfg.NotePrefix, a.cfg.Namespace, role, time.Now().Unix())
+	return fmt.Sprintf("%s-%s-%s-%d", a.cfg.NotePrefix, a.cfg.Namespace, role, time.Now().UnixNano())
 }
 
 func (a *masterApp) selectCaasifyProvider() caasifyProviderOption {
@@ -724,14 +724,21 @@ func (a *masterApp) importProviderNodes(ctx context.Context) error {
 
 	knownOrders := make(map[string]struct{}, len(a.state.Nodes))
 	knownIDs := make(map[string]struct{}, len(a.state.Nodes))
+	providerOrders := make(map[string]struct{}, len(orders))
 	for _, node := range a.state.Nodes {
 		if node.OrderID != "" {
 			knownOrders[node.OrderID] = struct{}{}
 		}
 		knownIDs[node.ID] = struct{}{}
 	}
+	for _, order := range orders {
+		if order.OrderID != "" {
+			providerOrders[order.OrderID] = struct{}{}
+		}
+	}
 
 	imported := 0
+	changed := false
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, order := range orders {
 		id, role, ok := a.parseManagedNodeID(order.Note)
@@ -766,12 +773,27 @@ func (a *masterApp) importProviderNodes(ctx context.Context) error {
 		knownOrders[order.OrderID] = struct{}{}
 		knownIDs[id] = struct{}{}
 		imported++
+		changed = true
 		log.Printf("[FURO-MASTER] imported provider node id=%s role=%s order=%s ip=%s provider_status=%s reason=matching_namespace_note", node.ID, node.Role, node.OrderID, node.IP, order.Status)
 	}
 
-	if imported == 0 {
-		log.Printf("[FURO-MASTER] provider import complete imported=0 matching_namespace=%s", a.cfg.Namespace)
-		return nil
+	for idx := range a.state.Nodes {
+		node := &a.state.Nodes[idx]
+		if node.Namespace != a.cfg.Namespace || node.OrderID == "" || nodeUnavailable(node.Status) {
+			continue
+		}
+		if _, exists := providerOrders[node.OrderID]; exists {
+			continue
+		}
+		node.Status = "deleted"
+		node.LastError = "provider node missing from list"
+		node.UpdatedAt = now
+		a.retireNodeIDLocked(node.ID)
+		if a.state.ActiveID == node.ID {
+			a.state.ActiveID = ""
+		}
+		changed = true
+		log.Printf("[FURO-MASTER] marked missing provider node deleted id=%s role=%s order=%s ip=%s reason=not_found_in_provider_list", node.ID, node.Role, node.OrderID, node.IP)
 	}
 
 	if a.activeNodeLocked() == nil {
@@ -788,10 +810,15 @@ func (a *masterApp) importProviderNodes(ctx context.Context) error {
 		}
 		if bestID != "" {
 			a.state.ActiveID = bestID
+			changed = true
 			log.Printf("[FURO-MASTER] selected imported active id=%s reason=no_active_in_state", bestID)
 		}
 	}
 
+	if !changed {
+		log.Printf("[FURO-MASTER] provider import complete imported=0 missing=0 matching_namespace=%s", a.cfg.Namespace)
+		return nil
+	}
 	a.state.Generation++
 	if err := a.saveStateLocked(); err != nil {
 		return err
@@ -1229,6 +1256,10 @@ func (a *masterApp) markNodeProvisionError(nodeID, status string, cause error) {
 	node := a.findNodeLocked(nodeID)
 	if node == nil {
 		log.Printf("[FURO-MASTER] provision error for missing node id=%s status=%s err=%v", nodeID, status, cause)
+		return
+	}
+	if nodeUnavailable(node.Status) {
+		log.Printf("[FURO-MASTER] provision error ignored for unavailable node id=%s current_status=%s attempted_status=%s err=%v", nodeID, node.Status, status, cause)
 		return
 	}
 	node.Status = status
