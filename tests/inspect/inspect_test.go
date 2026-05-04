@@ -113,6 +113,9 @@ func TestInspectLoadClientConfigSelectsRequestedRoute(t *testing.T) {
 	if cfg.PublicHost != "198.51.100.20" || cfg.PublicPort != 28080 {
 		t.Fatalf("public callback = %s:%d, want inherited 198.51.100.20:28080", cfg.PublicHost, cfg.PublicPort)
 	}
+	if cfg.SessionCount != 2 {
+		t.Fatalf("session_count = %d, want selected route value 2", cfg.SessionCount)
+	}
 }
 
 func TestInspectLoadAllClientConfigsSelectsEnabledRoutes(t *testing.T) {

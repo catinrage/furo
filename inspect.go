@@ -16,6 +16,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -34,7 +35,8 @@ const (
 
 const (
 	inspectFrameHeaderSize  = 9
-	inspectMaxFramePayload  = 128 * 1024
+	inspectMaxFramePayload  = 1024 * 1024
+	inspectDefaultFrameMax  = 128 * 1024
 	inspectLineLimit        = 2048
 	inspectAcceptTimeout    = 20 * time.Second
 	inspectRelayWaitTimeout = 20 * time.Second
@@ -48,6 +50,7 @@ var (
 	inspectAllRoutes  = flag.Bool("all", false, "Inspect all enabled routes in config.client.json")
 	speedTestEnabled  = flag.Bool("speed-test", false, "Run a download speed test through the relay")
 	speedTestURL      = flag.String("speed-test-url", "https://nbg1-speed.hetzner.com/100MB.bin", "URL used for the optional speed test")
+	speedTestStreams  = flag.Int("speed-test-streams", 0, "Parallel speed-test sessions; 0 uses the selected route session_count")
 )
 
 func init() {
@@ -78,16 +81,18 @@ func init() {
 }
 
 type inspectClientConfig struct {
-	Routes      []inspectRouteConfigFile `json:"routes"`
-	RelayURL    string                   `json:"relay_url"`
-	APIKey      string                   `json:"api_key"`
-	AgentListen string                   `json:"agent_listen"`
-	PublicHost  string                   `json:"public_host"`
-	PublicPort  int                      `json:"public_port"`
-	ServerHost  string                   `json:"server_host"`
-	ServerPort  int                      `json:"server_port"`
-	OpenTimeout string                   `json:"open_timeout"`
-	Keepalive   string                   `json:"keepalive"`
+	Routes       []inspectRouteConfigFile `json:"routes"`
+	RelayURL     string                   `json:"relay_url"`
+	APIKey       string                   `json:"api_key"`
+	AgentListen  string                   `json:"agent_listen"`
+	PublicHost   string                   `json:"public_host"`
+	PublicPort   int                      `json:"public_port"`
+	ServerHost   string                   `json:"server_host"`
+	ServerPort   int                      `json:"server_port"`
+	OpenTimeout  string                   `json:"open_timeout"`
+	Keepalive    string                   `json:"keepalive"`
+	FrameMaxSize int                      `json:"frame_max_size"`
+	SessionCount int                      `json:"session_count"`
 
 	SelectedRouteID string `json:"-"`
 }
@@ -426,7 +431,7 @@ func (s *inspectStream) Write(buf []byte) (int, error) {
 
 	total := 0
 	for len(buf) > 0 {
-		chunkSize := inspectMaxFramePayload
+		chunkSize := s.session.maxFramePayload
 		if chunkSize > len(buf) {
 			chunkSize = len(buf)
 		}
@@ -464,7 +469,8 @@ func (s *inspectStream) SetReadDeadline(time.Time) error  { return nil }
 func (s *inspectStream) SetWriteDeadline(time.Time) error { return nil }
 
 type inspectSession struct {
-	conn net.Conn
+	conn            net.Conn
+	maxFramePayload int
 
 	writeMu     sync.Mutex
 	closeOnce   sync.Once
@@ -480,13 +486,20 @@ type inspectSession struct {
 	sessionErrM sync.Mutex
 }
 
-func newInspectSession(conn net.Conn) *inspectSession {
+func newInspectSession(conn net.Conn, maxFramePayload int) *inspectSession {
+	if maxFramePayload <= 0 {
+		maxFramePayload = inspectDefaultFrameMax
+	}
+	if maxFramePayload > inspectMaxFramePayload {
+		maxFramePayload = inspectMaxFramePayload
+	}
 	return &inspectSession{
-		conn:    conn,
-		done:    make(chan struct{}),
-		streams: make(map[uint32]*inspectStream),
-		helloCh: make(chan error, 1),
-		pongCh:  make(chan struct{}, 1),
+		conn:            conn,
+		maxFramePayload: maxFramePayload,
+		done:            make(chan struct{}),
+		streams:         make(map[uint32]*inspectStream),
+		helloCh:         make(chan error, 1),
+		pongCh:          make(chan struct{}, 1),
 	}
 }
 
@@ -625,7 +638,7 @@ func (s *inspectSession) readLoop() {
 	defer s.close(io.EOF)
 
 	for {
-		frame, err := inspectReadFrame(s.conn)
+		frame, err := inspectReadFrame(s.conn, s.maxFramePayload)
 		if err != nil {
 			if !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 				s.setErr(err)
@@ -679,13 +692,15 @@ func (s *inspectSession) readLoop() {
 
 func inspectDefaultClientConfig() inspectClientConfig {
 	return inspectClientConfig{
-		RelayURL:    "https://hidaco.site/tools/rel/soc/furo-relay.php",
-		APIKey:      "my_super_secret_123456789",
-		AgentListen: "0.0.0.0:28080",
-		PublicPort:  28080,
-		ServerPort:  28081,
-		OpenTimeout: "45s",
-		Keepalive:   "30s",
+		RelayURL:     "https://hidaco.site/tools/rel/soc/furo-relay.php",
+		APIKey:       "my_super_secret_123456789",
+		AgentListen:  "0.0.0.0:28080",
+		PublicPort:   28080,
+		ServerPort:   28081,
+		OpenTimeout:  "45s",
+		Keepalive:    "30s",
+		FrameMaxSize: inspectDefaultFrameMax,
+		SessionCount: 1,
 	}
 }
 
@@ -714,6 +729,18 @@ func inspectLoadClientConfigFile(path string) (inspectClientConfig, time.Duratio
 	if _, err := time.ParseDuration(cfg.Keepalive); err != nil {
 		return inspectClientConfig{}, 0, fmt.Errorf("parse keepalive: %w", err)
 	}
+	if cfg.FrameMaxSize == 0 {
+		cfg.FrameMaxSize = inspectDefaultFrameMax
+	}
+	if cfg.FrameMaxSize < 4096 {
+		return inspectClientConfig{}, 0, errors.New("frame_max_size must be >= 4096")
+	}
+	if cfg.FrameMaxSize > inspectMaxFramePayload {
+		return inspectClientConfig{}, 0, fmt.Errorf("frame_max_size must be <= %d", inspectMaxFramePayload)
+	}
+	if cfg.SessionCount <= 0 {
+		cfg.SessionCount = 1
+	}
 
 	return cfg, openTimeout, nil
 }
@@ -741,6 +768,9 @@ func inspectApplyRoute(cfg inspectClientConfig, route inspectRouteConfigFile) in
 	cfg.PublicPort = route.PublicPort
 	cfg.ServerHost = route.ServerHost
 	cfg.ServerPort = route.ServerPort
+	if route.SessionCount > 0 {
+		cfg.SessionCount = route.SessionCount
+	}
 	return cfg
 }
 
@@ -885,13 +915,16 @@ func inspectWriteFrame(w io.Writer, typ byte, streamID uint32, payload []byte) e
 	return inspectWriteFull(w, payload)
 }
 
-func inspectReadFrame(r io.Reader) (inspectFrame, error) {
+func inspectReadFrame(r io.Reader, maxPayload int) (inspectFrame, error) {
+	if maxPayload <= 0 {
+		maxPayload = inspectDefaultFrameMax
+	}
 	var header [inspectFrameHeaderSize]byte
 	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return inspectFrame{}, err
 	}
 	n := binary.BigEndian.Uint32(header[5:9])
-	if n > 16*1024*1024 {
+	if int(n) > maxPayload {
 		return inspectFrame{}, fmt.Errorf("frame too large: %d", n)
 	}
 
@@ -1038,6 +1071,122 @@ func inspectListen(cfg inspectClientConfig) (net.Listener, int, string, error) {
 	return ln, tcpAddr.Port, summary, nil
 }
 
+type inspectAttachedSession struct {
+	session   *inspectSession
+	relayBody io.Closer
+	sid       string
+}
+
+func (a *inspectAttachedSession) Close() {
+	if a == nil {
+		return
+	}
+	if a.session != nil {
+		a.session.close(net.ErrClosed)
+	}
+	if a.relayBody != nil {
+		_ = a.relayBody.Close()
+	}
+}
+
+func inspectOpenRelaySession(ctx context.Context, cfg inspectClientConfig, ln net.Listener, listenPort int, sid string, report *inspectReport, verbose bool) (*inspectAttachedSession, error) {
+	if verbose {
+		report.add("Session", sid)
+	}
+
+	relayCtx, relayCancel := context.WithCancel(ctx)
+	defer relayCancel()
+	relayResults := inspectStartRelayRequest(relayCtx, cfg, sid, listenPort)
+
+	acceptCh := make(chan inspectAcceptResult, 1)
+	go func() {
+		conn, err := ln.Accept()
+		acceptCh <- inspectAcceptResult{conn: conn, err: err}
+	}()
+
+	waitCtx, waitCancel := context.WithTimeout(ctx, inspectAcceptTimeout)
+	defer waitCancel()
+
+	var conn net.Conn
+	var relayBody io.Closer
+	var relayReady bool
+	var relayErr error
+	defer func() {
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if relayBody != nil && !relayReady {
+			_ = relayBody.Close()
+		}
+	}()
+
+	for conn == nil || !relayReady {
+		select {
+		case result := <-acceptCh:
+			if result.err != nil {
+				if relayErr != nil {
+					return nil, relayErr
+				}
+				return nil, inspectStageError("relay callback", result.err)
+			}
+			if conn == nil {
+				conn = result.conn
+				if err := inspectAttachRelay(conn, cfg.APIKey, sid); err != nil {
+					return nil, inspectStageError("relay callback", err)
+				}
+				if verbose {
+					report.add("Relay callback", "relay connected back and session attach succeeded")
+				}
+			}
+		case result := <-relayResults:
+			if result.err != nil {
+				relayErr = result.err
+				if conn == nil {
+					return nil, relayErr
+				}
+				return nil, relayErr
+			}
+			relayReady = true
+			relayBody = result.body
+			if verbose {
+				report.add("Relay request", "relay accepted the session and connected both sides")
+			}
+		case <-waitCtx.Done():
+			if relayErr != nil {
+				return nil, relayErr
+			}
+			if conn == nil {
+				return nil, inspectStageError("relay callback", errors.New("timed out waiting for relay to connect back to agent_listen"))
+			}
+			if !relayReady {
+				return nil, inspectStageError("relay request", errors.New("timed out waiting for relay to confirm the bridged session"))
+			}
+			return nil, waitCtx.Err()
+		}
+	}
+
+	session := newInspectSession(conn, cfg.FrameMaxSize)
+	conn = nil
+	go session.readLoop()
+
+	if err := session.sendFrame(inspectFrameHello, 0, []byte(cfg.APIKey)); err != nil {
+		session.close(net.ErrClosed)
+		return nil, inspectStageError("server handshake", fmt.Errorf("send hello: %w", err))
+	}
+	helloCtx, cancel := context.WithTimeout(ctx, inspectHelloTimeout)
+	err := session.waitHelloAck(helloCtx)
+	cancel()
+	if err != nil {
+		session.close(net.ErrClosed)
+		return nil, inspectStageError("server handshake", fmt.Errorf("wait hello ack: %w", err))
+	}
+	if verbose {
+		report.add("Server handshake", "received HELLO_ACK from the server agent")
+	}
+
+	return &inspectAttachedSession{session: session, relayBody: relayBody, sid: sid}, nil
+}
+
 func inspectAttachRelay(conn net.Conn, apiKey, sid string) error {
 	if err := conn.SetDeadline(time.Now().Add(inspectRelayWaitTimeout)); err != nil {
 		return err
@@ -1077,13 +1226,23 @@ func inspectApplicationPings(ctx context.Context, session *inspectSession) (time
 	return total / time.Duration(len(samples)), samples, nil
 }
 
-func inspectRunSpeedTest(ctx context.Context, session *inspectSession, report *inspectReport, rawURL string, openTimeout time.Duration) (string, error) {
+func inspectSpeedTestStreamCount(cfg inspectClientConfig) int {
+	if *speedTestStreams > 0 {
+		return *speedTestStreams
+	}
+	if cfg.SessionCount > 0 {
+		return cfg.SessionCount
+	}
+	return 1
+}
+
+func inspectDownloadSpeedStream(ctx context.Context, session *inspectSession, rawURL string, openTimeout time.Duration, bufSize int, onRead func(int64)) (int64, int64, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return "", inspectStageError("speed test", fmt.Errorf("parse url: %w", err))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("parse url: %w", err))
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return "", inspectStageError("speed test", fmt.Errorf("unsupported scheme %q", parsed.Scheme))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("unsupported scheme %q", parsed.Scheme))
 	}
 
 	host := parsed.Hostname()
@@ -1098,14 +1257,14 @@ func inspectRunSpeedTest(ctx context.Context, session *inspectSession, report *i
 
 	portNum, err := net.LookupPort("tcp", port)
 	if err != nil {
-		return "", inspectStageError("speed test", fmt.Errorf("parse port: %w", err))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("parse port: %w", err))
 	}
 
 	openCtx, cancel := context.WithTimeout(ctx, openTimeout)
 	stream, err := session.openStream(openCtx, host, uint16(portNum))
 	cancel()
 	if err != nil {
-		return "", inspectStageError("speed test", fmt.Errorf("open stream to %s:%s: %w", host, port, err))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("open stream to %s:%s: %w", host, port, err))
 	}
 	defer stream.Close()
 
@@ -1115,7 +1274,7 @@ func inspectRunSpeedTest(ctx context.Context, session *inspectSession, report *i
 		handshakeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
-			return "", inspectStageError("speed test", fmt.Errorf("tls handshake: %w", err))
+			return 0, 0, inspectStageError("speed test", fmt.Errorf("tls handshake: %w", err))
 		}
 		defer tlsConn.Close()
 		transportConn = tlsConn
@@ -1127,7 +1286,7 @@ func inspectRunSpeedTest(ctx context.Context, session *inspectSession, report *i
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", inspectStageError("speed test", fmt.Errorf("build request: %w", err))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("build request: %w", err))
 	}
 
 	request := fmt.Sprintf(
@@ -1136,54 +1295,122 @@ func inspectRunSpeedTest(ctx context.Context, session *inspectSession, report *i
 		parsed.Host,
 	)
 	if err := inspectWriteString(transportConn, request); err != nil {
-		return "", inspectStageError("speed test", fmt.Errorf("send request: %w", err))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("send request: %w", err))
 	}
 
 	reader := bufio.NewReader(transportConn)
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
-		return "", inspectStageError("speed test", fmt.Errorf("read response: %w", err))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("read response: %w", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", inspectStageError("speed test", fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
+		return 0, 0, inspectStageError("speed test", fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 
-	report.note("Speed test", fmt.Sprintf("downloading from %s", rawURL))
-
-	start := time.Now()
 	totalBytes := resp.ContentLength
 	var downloaded int64
-	buf := make([]byte, 32*1024)
-	lastUpdate := time.Time{}
+	if bufSize < 32*1024 {
+		bufSize = 32 * 1024
+	}
+	buf := make([]byte, bufSize)
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			downloaded += int64(n)
-			now := time.Now()
-			if lastUpdate.IsZero() || now.Sub(lastUpdate) >= 200*time.Millisecond {
-				report.updateProgress("Speed test", downloaded, totalBytes, now.Sub(start))
-				lastUpdate = now
+			if onRead != nil {
+				onRead(int64(n))
 			}
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			return "", inspectStageError("speed test", fmt.Errorf("download: %w", readErr))
+			return totalBytes, downloaded, inspectStageError("speed test", fmt.Errorf("download: %w", readErr))
 		}
+	}
+	return totalBytes, downloaded, nil
+}
+
+func inspectRunSpeedTest(ctx context.Context, sessions []*inspectSession, report *inspectReport, rawURL string, openTimeout time.Duration, frameMax int) (string, error) {
+	if len(sessions) == 0 {
+		return "", inspectStageError("speed test", errors.New("no sessions available"))
+	}
+	streamCount := len(sessions)
+	bufSize := frameMax
+	if bufSize < 256*1024 {
+		bufSize = 256 * 1024
+	}
+	if bufSize > inspectMaxFramePayload {
+		bufSize = inspectMaxFramePayload
+	}
+	report.note("Speed test", fmt.Sprintf("downloading from %s with %d parallel session(s), frame_max=%s", rawURL, streamCount, inspectFormatBytes(int64(frameMax))))
+
+	speedCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	start := time.Now()
+	var downloaded atomic.Int64
+	var totalBytes atomic.Int64
+	var wg sync.WaitGroup
+	errCh := make(chan error, streamCount)
+
+	for _, session := range sessions {
+		wg.Add(1)
+		go func(session *inspectSession) {
+			defer wg.Done()
+			contentLength, _, err := inspectDownloadSpeedStream(speedCtx, session, rawURL, openTimeout, bufSize, func(n int64) {
+				downloaded.Add(n)
+			})
+			if contentLength > 0 {
+				totalBytes.Add(contentLength)
+			}
+			if err != nil {
+				errCh <- err
+				cancel()
+			}
+		}(session)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			report.updateProgress("Speed test", downloaded.Load(), totalBytes.Load(), time.Since(start))
+		case <-done:
+			goto finished
+		case <-ctx.Done():
+			cancel()
+			return "", inspectStageError("speed test", ctx.Err())
+		}
+	}
+
+finished:
+	select {
+	case err := <-errCh:
+		return "", err
+	default:
 	}
 	elapsed := time.Since(start)
 	if elapsed <= 0 {
 		elapsed = time.Nanosecond
 	}
-	report.updateProgress("Speed test", downloaded, totalBytes, elapsed)
+	finalDownloaded := downloaded.Load()
+	report.updateProgress("Speed test", finalDownloaded, totalBytes.Load(), elapsed)
 
-	mbps := float64(downloaded*8) / elapsed.Seconds() / 1_000_000
-	mibps := float64(downloaded) / elapsed.Seconds() / (1024 * 1024)
-	return fmt.Sprintf("%.2f Mbps (%.2f MiB/s over %s in %s)", mbps, mibps, inspectFormatBytes(downloaded), elapsed.Round(time.Millisecond)), nil
+	mbps := float64(finalDownloaded*8) / elapsed.Seconds() / 1_000_000
+	mibps := float64(finalDownloaded) / elapsed.Seconds() / (1024 * 1024)
+	return fmt.Sprintf("%.2f Mbps (%.2f MiB/s over %s in %s, streams=%d)", mbps, mibps, inspectFormatBytes(finalDownloaded), elapsed.Round(time.Millisecond), streamCount), nil
 }
 
 func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.Duration, runSpeedTest bool, speedURL string, report *inspectReport) error {
@@ -1201,96 +1428,18 @@ func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.D
 	report.add("Listener", listenSummary)
 
 	sid := fmt.Sprintf("inspect_%d", time.Now().UnixNano())
-	report.add("Session", sid)
-
-	relayCtx, relayCancel := context.WithCancel(ctx)
-	defer relayCancel()
-	relayResults := inspectStartRelayRequest(relayCtx, cfg, sid, listenPort)
-
-	acceptCh := make(chan inspectAcceptResult, 1)
-	go func() {
-		conn, err := ln.Accept()
-		acceptCh <- inspectAcceptResult{conn: conn, err: err}
-	}()
-
-	var relayBody io.Closer
-	defer func() {
-		if relayBody != nil {
-			_ = relayBody.Close()
-		}
-	}()
-
-	waitCtx, waitCancel := context.WithTimeout(ctx, inspectAcceptTimeout)
-	defer waitCancel()
-
-	var conn net.Conn
-	defer func() {
-		if conn != nil {
-			_ = conn.Close()
-		}
-	}()
-	var relayReady bool
-	var relayErr error
-
-	for conn == nil || !relayReady {
-		select {
-		case result := <-acceptCh:
-			if result.err != nil {
-				if relayErr != nil {
-					return relayErr
-				}
-				return inspectStageError("relay callback", result.err)
-			}
-			if conn == nil {
-				conn = result.conn
-				if err := inspectAttachRelay(conn, cfg.APIKey, sid); err != nil {
-					conn.Close()
-					return inspectStageError("relay callback", err)
-				}
-				report.add("Relay callback", "relay connected back and session attach succeeded")
-			}
-		case result := <-relayResults:
-			if result.err != nil {
-				relayErr = result.err
-				if conn == nil {
-					return relayErr
-				}
-				return relayErr
-			}
-			relayReady = true
-			relayBody = result.body
-			report.add("Relay request", "relay accepted the session and connected both sides")
-		case <-waitCtx.Done():
-			if relayErr != nil {
-				return relayErr
-			}
-			if conn == nil {
-				return inspectStageError("relay callback", errors.New("timed out waiting for relay to connect back to agent_listen"))
-			}
-			if !relayReady {
-				return inspectStageError("relay request", errors.New("timed out waiting for relay to confirm the bridged session"))
-			}
-			return waitCtx.Err()
-		}
-	}
-
-	session := newInspectSession(conn)
-	conn = nil
-	defer session.close(net.ErrClosed)
-	go session.readLoop()
-
-	if err := session.sendFrame(inspectFrameHello, 0, []byte(cfg.APIKey)); err != nil {
-		return inspectStageError("server handshake", fmt.Errorf("send hello: %w", err))
-	}
-	helloCtx, cancel := context.WithTimeout(ctx, inspectHelloTimeout)
-	err = session.waitHelloAck(helloCtx)
-	cancel()
+	primary, err := inspectOpenRelaySession(ctx, cfg, ln, listenPort, sid, report, true)
 	if err != nil {
-		return inspectStageError("server handshake", fmt.Errorf("wait hello ack: %w", err))
+		return err
 	}
-	report.add("Server handshake", "received HELLO_ACK from the server agent")
+	attachments := []*inspectAttachedSession{primary}
+	defer func() {
+		for i := len(attachments) - 1; i >= 0; i-- {
+			attachments[i].Close()
+		}
+	}()
 
-	avgPing, samples, err := inspectApplicationPings(ctx, session)
+	avgPing, samples, err := inspectApplicationPings(ctx, primary.session)
 	if err != nil {
 		return err
 	}
@@ -1301,7 +1450,23 @@ func inspectRun(ctx context.Context, cfg inspectClientConfig, openTimeout time.D
 	report.add("Ping", fmt.Sprintf("avg=%s samples=%s", avgPing.Round(time.Millisecond), strings.Join(parts, ", ")))
 
 	if runSpeedTest {
-		speedSummary, err := inspectRunSpeedTest(ctx, session, report, speedURL, openTimeout)
+		streams := inspectSpeedTestStreamCount(cfg)
+		if streams > 1 {
+			report.note("Speed sessions", fmt.Sprintf("opening %d additional temporary session(s)", streams-1))
+		}
+		for len(attachments) < streams {
+			extraSID := fmt.Sprintf("inspect_%d_%d", time.Now().UnixNano(), len(attachments)+1)
+			extra, err := inspectOpenRelaySession(ctx, cfg, ln, listenPort, extraSID, report, false)
+			if err != nil {
+				return err
+			}
+			attachments = append(attachments, extra)
+		}
+		sessions := make([]*inspectSession, 0, len(attachments))
+		for _, attachment := range attachments {
+			sessions = append(sessions, attachment.session)
+		}
+		speedSummary, err := inspectRunSpeedTest(ctx, sessions, report, speedURL, openTimeout, cfg.FrameMaxSize)
 		if err != nil {
 			return err
 		}
