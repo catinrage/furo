@@ -13,7 +13,18 @@
   "doprax_location_option_id": "ec5bc1aa-db5f-48a8-8d88-ef654a2a6dc8",
   "doprax_os_option_id": "ec9473a2-caa6-4197-95a4-7ee7e2b59dba",
   "doprax_access_method": "password",
+  "doprax_login_retry_attempts": 3,
+  "doprax_login_retry_delay_seconds": 5,
   "caasify_token": "",
+  "static_egress": {
+    "enabled": false,
+    "interface": "wg-furo",
+    "listen_port": 51820,
+    "subnet": "10.66.0.0/24",
+    "master_tunnel_ip": "10.66.0.1",
+    "node_route_table": 51820,
+    "auto_install_packages": true
+  },
   "state_file": "furo-server-master-default-state.json",
   "log_file": "./furo-server-master-default.log",
   "relay_url": "https://example.com/furo-relay.php",

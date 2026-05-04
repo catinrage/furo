@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	crand "crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -38,39 +42,43 @@ var (
 )
 
 type masterConfigFile struct {
-	Namespace                string                  `json:"namespace"`
-	APIKey                   string                  `json:"api_key"`
-	Listen                   string                  `json:"listen"`
-	PublicURL                string                  `json:"public_url"`
-	AdminListen              string                  `json:"admin_listen"`
-	ProviderBackend          string                  `json:"provider_backend"`
-	CaasifyToken             string                  `json:"caasify_token"`
-	DopraxAPIKey             string                  `json:"doprax_api_key"`
-	DopraxUsername           string                  `json:"doprax_username"`
-	DopraxPassword           string                  `json:"doprax_password"`
-	DopraxBaseURL            string                  `json:"doprax_base_url"`
-	DopraxProductVersionID   string                  `json:"doprax_product_version_id"`
-	DopraxLocationOptionID   string                  `json:"doprax_location_option_id"`
-	DopraxOSOptionID         string                  `json:"doprax_os_option_id"`
-	DopraxAccessMethod       string                  `json:"doprax_access_method"`
-	StateFile                string                  `json:"state_file"`
-	LogFile                  string                  `json:"log_file"`
-	RelayURL                 string                  `json:"relay_url"`
-	RelayHealthHost          string                  `json:"relay_health_host"`
-	RelayHealthPort          int                     `json:"relay_health_port"`
-	ServerAgentPort          int                     `json:"server_agent_port"`
-	RouteSessionCount        int                     `json:"route_session_count"`
-	BackupCount              int                     `json:"backup_count"`
-	NodeCheckIntervalSeconds int                     `json:"node_check_interval_seconds"`
-	NodeFailureThreshold     int                     `json:"node_failure_threshold"`
-	PublishIntervalSeconds   int                     `json:"publish_interval_seconds"`
-	ProductID                int                     `json:"product_id"`
-	Template                 string                  `json:"template"`
-	NotePrefix               string                  `json:"note_prefix"`
-	IPv4                     int                     `json:"ipv4"`
-	IPv6                     int                     `json:"ipv6"`
-	ProviderPool             []caasifyProviderOption `json:"provider_pool"`
-	BootstrapScriptPath      string                  `json:"bootstrap_script_path"`
+	Namespace                string                   `json:"namespace"`
+	APIKey                   string                   `json:"api_key"`
+	Listen                   string                   `json:"listen"`
+	PublicURL                string                   `json:"public_url"`
+	AdminListen              string                   `json:"admin_listen"`
+	ProviderBackend          string                   `json:"provider_backend"`
+	CaasifyToken             string                   `json:"caasify_token"`
+	DopraxAPIKey             string                   `json:"doprax_api_key"`
+	DopraxUsername           string                   `json:"doprax_username"`
+	DopraxPassword           string                   `json:"doprax_password"`
+	DopraxBaseURL            string                   `json:"doprax_base_url"`
+	DopraxProductVersionID   string                   `json:"doprax_product_version_id"`
+	DopraxLocationOptionID   string                   `json:"doprax_location_option_id"`
+	DopraxOSOptionID         string                   `json:"doprax_os_option_id"`
+	DopraxAccessMethod       string                   `json:"doprax_access_method"`
+	DopraxLoginRetryAttempts int                      `json:"doprax_login_retry_attempts"`
+	DopraxLoginRetryDelaySec int                      `json:"doprax_login_retry_delay_seconds"`
+	StaticEgress             masterStaticEgressConfig `json:"static_egress"`
+	StaticGressAlias         masterStaticEgressConfig `json:"static_gress"`
+	StateFile                string                   `json:"state_file"`
+	LogFile                  string                   `json:"log_file"`
+	RelayURL                 string                   `json:"relay_url"`
+	RelayHealthHost          string                   `json:"relay_health_host"`
+	RelayHealthPort          int                      `json:"relay_health_port"`
+	ServerAgentPort          int                      `json:"server_agent_port"`
+	RouteSessionCount        int                      `json:"route_session_count"`
+	BackupCount              int                      `json:"backup_count"`
+	NodeCheckIntervalSeconds int                      `json:"node_check_interval_seconds"`
+	NodeFailureThreshold     int                      `json:"node_failure_threshold"`
+	PublishIntervalSeconds   int                      `json:"publish_interval_seconds"`
+	ProductID                int                      `json:"product_id"`
+	Template                 string                   `json:"template"`
+	NotePrefix               string                   `json:"note_prefix"`
+	IPv4                     int                      `json:"ipv4"`
+	IPv6                     int                      `json:"ipv6"`
+	ProviderPool             []caasifyProviderOption  `json:"provider_pool"`
+	BootstrapScriptPath      string                   `json:"bootstrap_script_path"`
 }
 
 type caasifyProviderOption struct {
@@ -80,6 +88,16 @@ type caasifyProviderOption struct {
 	Template  string `json:"template"`
 	IPv4      int    `json:"ipv4"`
 	IPv6      int    `json:"ipv6"`
+}
+
+type masterStaticEgressConfig struct {
+	Enabled             bool   `json:"enabled"`
+	Interface           string `json:"interface"`
+	ListenPort          int    `json:"listen_port"`
+	Subnet              string `json:"subnet"`
+	MasterTunnelIP      string `json:"master_tunnel_ip"`
+	NodeRouteTable      int    `json:"node_route_table"`
+	AutoInstallPackages bool   `json:"auto_install_packages"`
 }
 
 func defaultMasterConfig() masterConfigFile {
@@ -93,6 +111,16 @@ func defaultMasterConfig() masterConfigFile {
 		DopraxLocationOptionID:   "ec5bc1aa-db5f-48a8-8d88-ef654a2a6dc8",
 		DopraxOSOptionID:         "ec9473a2-caa6-4197-95a4-7ee7e2b59dba",
 		DopraxAccessMethod:       "password",
+		DopraxLoginRetryAttempts: 3,
+		DopraxLoginRetryDelaySec: 5,
+		StaticEgress: masterStaticEgressConfig{
+			Interface:           "wg-furo",
+			ListenPort:          51820,
+			Subnet:              "10.66.0.0/24",
+			MasterTunnelIP:      "10.66.0.1",
+			NodeRouteTable:      51820,
+			AutoInstallPackages: true,
+		},
 		StateFile:                "furo-server-master-state.json",
 		RelayHealthHost:          "f2.ra1n.xyz",
 		RelayHealthPort:          443,
@@ -210,8 +238,66 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	if cfg.DopraxAccessMethod == "" {
 		cfg.DopraxAccessMethod = "password"
 	}
+	if cfg.DopraxLoginRetryAttempts <= 0 {
+		cfg.DopraxLoginRetryAttempts = 3
+	}
+	if cfg.DopraxLoginRetryDelaySec <= 0 {
+		cfg.DopraxLoginRetryDelaySec = 5
+	}
+	cfg.StaticEgress = normalizeMasterStaticEgressConfig(cfg.StaticEgress, cfg.StaticGressAlias)
+	if cfg.StaticEgress.Enabled {
+		if err := validateMasterStaticEgressConfig(cfg.StaticEgress); err != nil {
+			return cfg, err
+		}
+	}
 	cfg.ProviderPool = normalizeCaasifyProviderPool(cfg)
 	return cfg, nil
+}
+
+func normalizeMasterStaticEgressConfig(cfg, alias masterStaticEgressConfig) masterStaticEgressConfig {
+	if !cfg.Enabled && alias.Enabled {
+		cfg = alias
+	}
+	if cfg.Interface == "" {
+		cfg.Interface = "wg-furo"
+	}
+	if cfg.ListenPort == 0 {
+		cfg.ListenPort = 51820
+	}
+	if cfg.Subnet == "" {
+		cfg.Subnet = "10.66.0.0/24"
+	}
+	if cfg.MasterTunnelIP == "" {
+		cfg.MasterTunnelIP = "10.66.0.1"
+	}
+	if cfg.NodeRouteTable == 0 {
+		cfg.NodeRouteTable = 51820
+	}
+	return cfg
+}
+
+func validateMasterStaticEgressConfig(cfg masterStaticEgressConfig) error {
+	if cfg.ListenPort < 1 || cfg.ListenPort > 65535 {
+		return errors.New("static_egress.listen_port must be between 1 and 65535")
+	}
+	if cfg.NodeRouteTable <= 0 {
+		return errors.New("static_egress.node_route_table must be > 0")
+	}
+	if sanitizeMasterID(cfg.Interface) != cfg.Interface {
+		return errors.New("static_egress.interface contains unsupported characters")
+	}
+	ip := net.ParseIP(cfg.MasterTunnelIP).To4()
+	if ip == nil {
+		return errors.New("static_egress.master_tunnel_ip must be an IPv4 address")
+	}
+	_, subnet, err := net.ParseCIDR(cfg.Subnet)
+	if err != nil {
+		return fmt.Errorf("parse static_egress.subnet: %w", err)
+	}
+	if !subnet.Contains(ip) {
+		return errors.New("static_egress.master_tunnel_ip must be inside static_egress.subnet")
+	}
+	return nil
 }
 
 func normalizeCaasifyProviderPool(cfg masterConfigFile) []caasifyProviderOption {
@@ -277,30 +363,40 @@ func randomIndex(max int) int {
 }
 
 type masterNode struct {
-	ID                string `json:"id"`
-	Namespace         string `json:"namespace"`
-	OrderID           string `json:"order_id"`
-	IP                string `json:"ip"`
-	Role              string `json:"role"`
-	Status            string `json:"status"`
-	Password          string `json:"password,omitempty"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at,omitempty"`
-	ReadyAt           string `json:"ready_at,omitempty"`
-	ProvisionAttempts int    `json:"provision_attempts,omitempty"`
-	LastError         string `json:"last_error,omitempty"`
-	LastReportAt      string `json:"last_report_at,omitempty"`
-	LastReportState   string `json:"last_report_state,omitempty"`
+	ID                  string `json:"id"`
+	Namespace           string `json:"namespace"`
+	OrderID             string `json:"order_id"`
+	IP                  string `json:"ip"`
+	Role                string `json:"role"`
+	Status              string `json:"status"`
+	Password            string `json:"password,omitempty"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at,omitempty"`
+	ReadyAt             string `json:"ready_at,omitempty"`
+	ProvisionAttempts   int    `json:"provision_attempts,omitempty"`
+	LastError           string `json:"last_error,omitempty"`
+	LastReportAt        string `json:"last_report_at,omitempty"`
+	LastReportState     string `json:"last_report_state,omitempty"`
+	EgressEnabled       bool   `json:"egress_enabled,omitempty"`
+	EgressTunnelIP      string `json:"egress_tunnel_ip,omitempty"`
+	WireGuardPrivateKey string `json:"wireguard_private_key,omitempty"`
+	WireGuardPublicKey  string `json:"wireguard_public_key,omitempty"`
 }
 
 type masterState struct {
-	Namespace  string       `json:"namespace"`
-	FleetID    string       `json:"fleet_id"`
-	Generation int64        `json:"generation"`
-	ActiveID   string       `json:"active_id"`
-	Nodes      []masterNode `json:"nodes"`
-	Retired    []string     `json:"retired"`
-	UpdatedAt  string       `json:"updated_at"`
+	Namespace    string                  `json:"namespace"`
+	FleetID      string                  `json:"fleet_id"`
+	Generation   int64                   `json:"generation"`
+	ActiveID     string                  `json:"active_id"`
+	Nodes        []masterNode            `json:"nodes"`
+	Retired      []string                `json:"retired"`
+	StaticEgress masterStaticEgressState `json:"static_egress,omitempty"`
+	UpdatedAt    string                  `json:"updated_at"`
+}
+
+type masterStaticEgressState struct {
+	PrivateKey string `json:"private_key,omitempty"`
+	PublicKey  string `json:"public_key,omitempty"`
 }
 
 func defaultMasterState(namespace string) masterState {
@@ -332,6 +428,7 @@ type masterApp struct {
 	state                     masterState
 	caasify                   caasifyAPI
 	startedAt                 time.Time
+	staticEgressAvailable     bool
 	bootstrapNodeFunc         func(context.Context, masterNode) error
 	verifyNodeRelayAccessFunc func(context.Context, masterNode) error
 }
@@ -420,6 +517,78 @@ func (a *masterApp) saveStateLocked() error {
 		return err
 	}
 	return os.Rename(tmp, a.statePath)
+}
+
+func (a *masterApp) ensureMasterStaticEgressStateLocked() error {
+	if !a.cfg.StaticEgress.Enabled {
+		return nil
+	}
+	if a.state.StaticEgress.PrivateKey != "" && a.state.StaticEgress.PublicKey != "" {
+		return nil
+	}
+	privateKey, publicKey, err := generateWireGuardKeyPair()
+	if err != nil {
+		return err
+	}
+	a.state.StaticEgress.PrivateKey = privateKey
+	a.state.StaticEgress.PublicKey = publicKey
+	return nil
+}
+
+func (a *masterApp) ensureNodeStaticEgressLocked(node *masterNode) error {
+	if !a.cfg.StaticEgress.Enabled || node == nil {
+		return nil
+	}
+	if err := a.ensureMasterStaticEgressStateLocked(); err != nil {
+		return err
+	}
+	node.EgressEnabled = true
+	if node.EgressTunnelIP == "" {
+		ip, err := a.nextNodeTunnelIPLocked()
+		if err != nil {
+			return err
+		}
+		node.EgressTunnelIP = ip
+	}
+	if node.WireGuardPrivateKey == "" || node.WireGuardPublicKey == "" {
+		privateKey, publicKey, err := generateWireGuardKeyPair()
+		if err != nil {
+			return err
+		}
+		node.WireGuardPrivateKey = privateKey
+		node.WireGuardPublicKey = publicKey
+	}
+	return nil
+}
+
+func (a *masterApp) nextNodeTunnelIPLocked() (string, error) {
+	_, subnet, err := net.ParseCIDR(a.cfg.StaticEgress.Subnet)
+	if err != nil {
+		return "", err
+	}
+	base := subnet.IP.To4()
+	if base == nil {
+		return "", errors.New("static egress subnet must be IPv4")
+	}
+	used := map[string]struct{}{a.cfg.StaticEgress.MasterTunnelIP: {}}
+	for _, node := range a.state.Nodes {
+		if node.EgressTunnelIP != "" {
+			used[node.EgressTunnelIP] = struct{}{}
+		}
+	}
+	baseNum := binary.BigEndian.Uint32(base)
+	for offset := uint32(2); offset < 254; offset++ {
+		var raw [4]byte
+		binary.BigEndian.PutUint32(raw[:], baseNum+offset)
+		ip := net.IP(raw[:]).String()
+		if !subnet.Contains(net.IP(raw[:])) {
+			continue
+		}
+		if _, exists := used[ip]; !exists {
+			return ip, nil
+		}
+	}
+	return "", errors.New("no free static egress tunnel IPs")
 }
 
 func (a *masterApp) findNodeLocked(id string) *masterNode {
@@ -576,6 +745,9 @@ func (a *masterApp) importProviderNodes(ctx context.Context) error {
 			Status:    "created",
 			CreatedAt: now,
 			UpdatedAt: now,
+		}
+		if err := a.ensureNodeStaticEgressLocked(&node); err != nil {
+			return err
 		}
 		a.state.Nodes = append(a.state.Nodes, node)
 		knownOrders[order.OrderID] = struct{}{}
@@ -755,6 +927,13 @@ func (a *masterApp) deleteNodeOrder(ctx context.Context, node masterNode, reason
 	if saveErr := a.saveStateLocked(); saveErr != nil {
 		log.Printf("[FURO-MASTER] save delete state failed id=%s err=%v", node.ID, saveErr)
 	}
+	if err == nil && a.cfg.StaticEgress.Enabled {
+		go func() {
+			if refreshErr := a.configureMasterStaticEgress(context.Background()); refreshErr != nil {
+				log.Printf("[FURO-MASTER] static egress refresh after delete failed id=%s err=%v", node.ID, refreshErr)
+			}
+		}()
+	}
 }
 
 func (a *masterApp) ensureFleet(ctx context.Context) error {
@@ -764,6 +943,11 @@ func (a *masterApp) ensureFleet(ctx context.Context) error {
 	log.Printf("[FURO-MASTER] reconcile started namespace=%s backup_count=%d", a.cfg.Namespace, a.cfg.BackupCount)
 	if err := a.importProviderNodes(ctx); err != nil {
 		log.Printf("[FURO-MASTER] provider import failed err=%v", err)
+	}
+	if a.cfg.StaticEgress.Enabled {
+		if err := a.configureMasterStaticEgress(ctx); err != nil {
+			log.Printf("[FURO-MASTER] static egress reconcile refresh failed err=%v", err)
+		}
 	}
 	a.pruneVerifyFailedStandbys()
 	a.pruneSurplusNodes()
@@ -874,6 +1058,10 @@ func (a *masterApp) createAndBootstrapNode(ctx context.Context, role string) (ma
 		UpdatedAt: now,
 	}
 	a.mu.Lock()
+	if err := a.ensureNodeStaticEgressLocked(&node); err != nil {
+		a.mu.Unlock()
+		return masterNode{}, err
+	}
 	if role == "active" {
 		a.state.ActiveID = node.ID
 	}
@@ -884,6 +1072,11 @@ func (a *masterApp) createAndBootstrapNode(ctx context.Context, role string) (ma
 		return masterNode{}, err
 	}
 	log.Printf("[FURO-MASTER] node saved before provisioning id=%s role=%s order=%s status=%s", node.ID, node.Role, node.OrderID, node.Status)
+	if a.cfg.StaticEgress.Enabled {
+		if err := a.configureMasterStaticEgress(ctx); err != nil {
+			log.Printf("[FURO-MASTER] static egress refresh failed before node bootstrap id=%s err=%v", node.ID, err)
+		}
+	}
 	if err := a.provisionNode(ctx, node.ID); err != nil {
 		return node, err
 	}
@@ -1072,23 +1265,61 @@ func (a *masterApp) bootstrapNode(ctx context.Context, node masterNode) error {
 	if err != nil {
 		return err
 	}
-	rendered := string(data)
-	replacements := map[string]string{
-		"{{api_key}}":                a.cfg.APIKey,
-		"{{namespace}}":              a.cfg.Namespace,
-		"{{node_id}}":                node.ID,
-		"{{node_role}}":              node.Role,
-		"{{master_url}}":             a.cfg.PublicURL,
-		"{{relay_health_host}}":      a.cfg.RelayHealthHost,
-		"{{relay_health_port}}":      strconv.Itoa(a.cfg.RelayHealthPort),
-		"{{check_interval_seconds}}": strconv.Itoa(a.cfg.NodeCheckIntervalSeconds),
-		"{{failure_threshold}}":      strconv.Itoa(a.cfg.NodeFailureThreshold),
-		"{{server_agent_port}}":      strconv.Itoa(a.cfg.ServerAgentPort),
+	rendered, err := a.renderBootstrapScript(string(data), node)
+	if err != nil {
+		return err
 	}
+	return runSSHScript(ctx, node.IP, node.Password, rendered)
+}
+
+func (a *masterApp) renderBootstrapScript(template string, node masterNode) (string, error) {
+	staticEnabled := a.cfg.StaticEgress.Enabled && a.staticEgressAvailable && node.EgressEnabled && node.EgressTunnelIP != "" && node.WireGuardPrivateKey != ""
+	masterHost, err := a.staticEgressEndpointHost()
+	if staticEnabled && err != nil {
+		return "", err
+	}
+	prefix, err := cidrPrefix(a.cfg.StaticEgress.Subnet)
+	if err != nil {
+		prefix = 24
+	}
+	replacements := map[string]string{
+		"{{api_key}}":                 a.cfg.APIKey,
+		"{{namespace}}":               a.cfg.Namespace,
+		"{{node_id}}":                 node.ID,
+		"{{node_role}}":               node.Role,
+		"{{master_url}}":              a.cfg.PublicURL,
+		"{{relay_health_host}}":       a.cfg.RelayHealthHost,
+		"{{relay_health_port}}":       strconv.Itoa(a.cfg.RelayHealthPort),
+		"{{check_interval_seconds}}":  strconv.Itoa(a.cfg.NodeCheckIntervalSeconds),
+		"{{failure_threshold}}":       strconv.Itoa(a.cfg.NodeFailureThreshold),
+		"{{server_agent_port}}":       strconv.Itoa(a.cfg.ServerAgentPort),
+		"{{static_egress_enabled}}":   strconv.FormatBool(staticEnabled),
+		"{{wg_interface}}":            a.cfg.StaticEgress.Interface,
+		"{{wg_node_private_key}}":     node.WireGuardPrivateKey,
+		"{{wg_node_tunnel_ip}}":       node.EgressTunnelIP,
+		"{{wg_node_tunnel_prefix}}":   strconv.Itoa(prefix),
+		"{{wg_master_public_key}}":    a.state.StaticEgress.PublicKey,
+		"{{wg_master_endpoint_host}}": masterHost,
+		"{{wg_master_listen_port}}":   strconv.Itoa(a.cfg.StaticEgress.ListenPort),
+		"{{wg_node_route_table}}":     strconv.Itoa(a.cfg.StaticEgress.NodeRouteTable),
+	}
+	rendered := template
 	for old, newValue := range replacements {
 		rendered = strings.ReplaceAll(rendered, old, newValue)
 	}
-	return runSSHScript(ctx, node.IP, node.Password, rendered)
+	return rendered, nil
+}
+
+func (a *masterApp) staticEgressEndpointHost() (string, error) {
+	parsed, err := url.Parse(a.cfg.PublicURL)
+	if err != nil || parsed.Hostname() == "" {
+		return "", fmt.Errorf("static egress requires public_url with a hostname, got %q", a.cfg.PublicURL)
+	}
+	host := parsed.Hostname()
+	if host == "0.0.0.0" || host == "::" {
+		return "", fmt.Errorf("static egress public_url must not use wildcard host %q", host)
+	}
+	return host, nil
 }
 
 func (a *masterApp) verifyNodeRelayAccess(ctx context.Context, node masterNode) error {
@@ -1101,6 +1332,148 @@ func (a *masterApp) verifyNodeRelayAccess(ctx context.Context, node masterNode) 
 		return fmt.Errorf("relay health check failed on node %s: %w output=%s", node.ID, err, strings.TrimSpace(output))
 	}
 	return nil
+}
+
+func (a *masterApp) configureMasterStaticEgress(ctx context.Context) error {
+	if !a.cfg.StaticEgress.Enabled {
+		a.staticEgressAvailable = false
+		return nil
+	}
+	a.mu.Lock()
+	if err := a.ensureMasterStaticEgressStateLocked(); err != nil {
+		a.mu.Unlock()
+		return err
+	}
+	if err := a.saveStateLocked(); err != nil {
+		a.mu.Unlock()
+		return err
+	}
+	state := a.state
+	a.mu.Unlock()
+
+	if err := a.ensureStaticEgressPackages(ctx); err != nil {
+		a.staticEgressAvailable = false
+		return err
+	}
+	conf, err := a.renderMasterWireGuardConfig(state)
+	if err != nil {
+		a.staticEgressAvailable = false
+		return err
+	}
+	confDir := "/etc/wireguard"
+	if err := os.MkdirAll(confDir, 0700); err != nil {
+		a.staticEgressAvailable = false
+		return err
+	}
+	confPath := filepath.Join(confDir, a.cfg.StaticEgress.Interface+".conf")
+	if err := os.WriteFile(confPath, []byte(conf), 0600); err != nil {
+		a.staticEgressAvailable = false
+		return err
+	}
+	if err := runMasterCommand(ctx, "sysctl", "-w", "net.ipv4.ip_forward=1"); err != nil {
+		a.staticEgressAvailable = false
+		return err
+	}
+	unit := "wg-quick@" + a.cfg.StaticEgress.Interface
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		if err := runMasterCommand(ctx, "systemctl", "enable", unit); err != nil {
+			log.Printf("[FURO-MASTER] static egress systemctl enable failed iface=%s err=%v", a.cfg.StaticEgress.Interface, err)
+		}
+		if err := runMasterCommand(ctx, "systemctl", "restart", unit); err != nil {
+			a.staticEgressAvailable = false
+			return err
+		}
+	} else {
+		_ = runMasterCommand(ctx, "wg-quick", "down", a.cfg.StaticEgress.Interface)
+		if err := runMasterCommand(ctx, "wg-quick", "up", a.cfg.StaticEgress.Interface); err != nil {
+			a.staticEgressAvailable = false
+			return err
+		}
+	}
+	a.staticEgressAvailable = true
+	log.Printf("[FURO-MASTER] static egress configured iface=%s listen_port=%d peers=%d", a.cfg.StaticEgress.Interface, a.cfg.StaticEgress.ListenPort, wireGuardPeerCount(state))
+	return nil
+}
+
+func (a *masterApp) ensureStaticEgressPackages(ctx context.Context) error {
+	missing := missingCommands("wg", "wg-quick", "ip", "iptables")
+	if len(missing) == 0 {
+		return nil
+	}
+	if !a.cfg.StaticEgress.AutoInstallPackages {
+		return fmt.Errorf("static egress missing commands: %s", strings.Join(missing, ", "))
+	}
+	log.Printf("[FURO-MASTER] static egress installing packages reason=missing_commands commands=%s", strings.Join(missing, ","))
+	if err := runMasterCommand(ctx, "apt-get", "update"); err != nil {
+		return err
+	}
+	return runMasterCommand(ctx, "apt-get", "install", "-y", "wireguard-tools", "iproute2", "iptables")
+}
+
+func missingCommands(names ...string) []string {
+	var missing []string
+	for _, name := range names {
+		if _, err := exec.LookPath(name); err != nil {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+func runMasterCommand(ctx context.Context, name string, args ...string) error {
+	log.Printf("[FURO-MASTER] command started cmd=%s args=%s", name, strings.Join(args, " "))
+	cmd := exec.CommandContext(ctx, name, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w output=%s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	if trimmed := strings.TrimSpace(string(output)); trimmed != "" {
+		log.Printf("[FURO-MASTER] command output cmd=%s output=%s", name, trimmed)
+	}
+	return nil
+}
+
+func (a *masterApp) renderMasterWireGuardConfig(state masterState) (string, error) {
+	cfg := a.cfg.StaticEgress
+	prefix, err := cidrPrefix(cfg.Subnet)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Interface]\n")
+	fmt.Fprintf(&b, "Address = %s/%d\n", cfg.MasterTunnelIP, prefix)
+	fmt.Fprintf(&b, "ListenPort = %d\n", cfg.ListenPort)
+	fmt.Fprintf(&b, "PrivateKey = %s\n", state.StaticEgress.PrivateKey)
+	fmt.Fprintf(&b, "PostUp = iptables -t nat -A POSTROUTING -s %s -j MASQUERADE\n", cfg.Subnet)
+	fmt.Fprintf(&b, "PostDown = iptables -t nat -D POSTROUTING -s %s -j MASQUERADE\n", cfg.Subnet)
+	for _, node := range state.Nodes {
+		if !node.EgressEnabled || node.WireGuardPublicKey == "" || node.EgressTunnelIP == "" || nodeUnavailable(node.Status) {
+			continue
+		}
+		fmt.Fprintf(&b, "\n[Peer]\n")
+		fmt.Fprintf(&b, "PublicKey = %s\n", node.WireGuardPublicKey)
+		fmt.Fprintf(&b, "AllowedIPs = %s/32\n", node.EgressTunnelIP)
+	}
+	return b.String(), nil
+}
+
+func cidrPrefix(raw string) (int, error) {
+	_, ipNet, err := net.ParseCIDR(raw)
+	if err != nil {
+		return 0, err
+	}
+	ones, _ := ipNet.Mask.Size()
+	return ones, nil
+}
+
+func wireGuardPeerCount(state masterState) int {
+	count := 0
+	for _, node := range state.Nodes {
+		if node.EgressEnabled && node.WireGuardPublicKey != "" && node.EgressTunnelIP != "" && !nodeUnavailable(node.Status) {
+			count++
+		}
+	}
+	return count
 }
 
 func runSSHScript(ctx context.Context, host, password, script string) error {
@@ -1791,38 +2164,38 @@ func (c *caasifyClient) deleteOrder(ctx context.Context, orderID string) error {
 }
 
 type dopraxClient struct {
-	apiKey           string
-	username         string
-	password         string
-	baseURL          string
-	productVersionID string
-	locationOptionID string
-	osOptionID       string
-	accessMethod     string
-	client           *http.Client
-	mu               sync.Mutex
-	bearerToken      string
+	apiKey             string
+	username           string
+	password           string
+	baseURL            string
+	productVersionID   string
+	locationOptionID   string
+	osOptionID         string
+	accessMethod       string
+	loginRetryAttempts int
+	loginRetryDelay    time.Duration
+	client             *http.Client
+	mu                 sync.Mutex
+	bearerToken        string
 }
 
 func newDopraxClient(cfg masterConfigFile) *dopraxClient {
 	return &dopraxClient{
-		apiKey:           cfg.DopraxAPIKey,
-		username:         cfg.DopraxUsername,
-		password:         cfg.DopraxPassword,
-		baseURL:          strings.TrimRight(cfg.DopraxBaseURL, "/"),
-		productVersionID: cfg.DopraxProductVersionID,
-		locationOptionID: cfg.DopraxLocationOptionID,
-		osOptionID:       cfg.DopraxOSOptionID,
-		accessMethod:     cfg.DopraxAccessMethod,
-		client:           &http.Client{Timeout: 45 * time.Second},
+		apiKey:             cfg.DopraxAPIKey,
+		username:           cfg.DopraxUsername,
+		password:           cfg.DopraxPassword,
+		baseURL:            strings.TrimRight(cfg.DopraxBaseURL, "/"),
+		productVersionID:   cfg.DopraxProductVersionID,
+		locationOptionID:   cfg.DopraxLocationOptionID,
+		osOptionID:         cfg.DopraxOSOptionID,
+		accessMethod:       cfg.DopraxAccessMethod,
+		loginRetryAttempts: cfg.DopraxLoginRetryAttempts,
+		loginRetryDelay:    time.Duration(cfg.DopraxLoginRetryDelaySec) * time.Second,
+		client:             &http.Client{Timeout: 45 * time.Second},
 	}
 }
 
 func (c *dopraxClient) createVPS(ctx context.Context, input caasifyCreateRequest) (caasifyCreateResult, error) {
-	token, err := c.login(ctx)
-	if err != nil {
-		return caasifyCreateResult{}, err
-	}
 	body := map[string]any{
 		"product_version_id": c.productVersionID,
 		"idempotency_key":    randomUUID(),
@@ -1840,7 +2213,7 @@ func (c *dopraxClient) createVPS(ctx context.Context, input caasifyCreateRequest
 		},
 	}
 	var decoded map[string]any
-	if err := c.doV2JSON(ctx, http.MethodPost, "/api/v2/services/instances/", token, body, &decoded); err != nil {
+	if err := c.doV2JSON(ctx, http.MethodPost, "/api/v2/services/instances/", body, &decoded); err != nil {
 		return caasifyCreateResult{}, err
 	}
 	data, _ := decoded["data"].(map[string]any)
@@ -1849,18 +2222,18 @@ func (c *dopraxClient) createVPS(ctx context.Context, input caasifyCreateRequest
 		return caasifyCreateResult{}, fmt.Errorf("doprax create response missing service_id: %#v", decoded)
 	}
 	log.Printf("[FURO-MASTER] doprax create accepted service_id=%s name=%s", serviceID, input.Note)
-	info, err := c.waitForServiceReady(ctx, token, serviceID)
+	info, err := c.waitForServiceReady(ctx, serviceID)
 	if err != nil {
 		return caasifyCreateResult{}, err
 	}
 	return caasifyCreateResult{OrderID: info.OrderID, IP: info.IP, Password: info.Password}, nil
 }
 
-func (c *dopraxClient) waitForServiceReady(ctx context.Context, token, serviceID string) (caasifyOrderInfo, error) {
+func (c *dopraxClient) waitForServiceReady(ctx context.Context, serviceID string) (caasifyOrderInfo, error) {
 	var last caasifyOrderInfo
 	lastStatus := ""
 	for i := 0; i < 90; i++ {
-		info, status, err := c.showService(ctx, token, serviceID)
+		info, status, err := c.showService(ctx, serviceID)
 		if err == nil {
 			last = info
 			lastStatus = status
@@ -1880,9 +2253,9 @@ func (c *dopraxClient) waitForServiceReady(ctx context.Context, token, serviceID
 	return caasifyOrderInfo{}, fmt.Errorf("doprax service not ready service_id=%s status=%s vm_code=%q ip=%q password_set=%t", serviceID, lastStatus, last.OrderID, last.IP, last.Password != "")
 }
 
-func (c *dopraxClient) showService(ctx context.Context, token, serviceID string) (caasifyOrderInfo, string, error) {
+func (c *dopraxClient) showService(ctx context.Context, serviceID string) (caasifyOrderInfo, string, error) {
 	var decoded map[string]any
-	if err := c.doV2JSON(ctx, http.MethodGet, "/api/v2/services/instances/"+serviceID+"/", token, nil, &decoded); err != nil {
+	if err := c.doV2JSON(ctx, http.MethodGet, "/api/v2/services/instances/"+serviceID+"/", nil, &decoded); err != nil {
 		return caasifyOrderInfo{}, "", err
 	}
 	data, _ := decoded["data"].(map[string]any)
@@ -1903,7 +2276,7 @@ func (c *dopraxClient) showService(ctx context.Context, token, serviceID string)
 	)
 	password := ""
 	if vmCode != "" {
-		password = c.fetchV2Password(ctx, token, vmCode)
+		password = c.fetchV2Password(ctx, vmCode)
 		if password == "" {
 			if info, err := c.showOrder(ctx, vmCode); err == nil {
 				password = info.Password
@@ -2009,6 +2382,44 @@ func (c *dopraxClient) login(ctx context.Context) (string, error) {
 	}
 	c.mu.Unlock()
 
+	var lastErr error
+	attempts := c.loginRetryAttempts
+	if attempts <= 0 {
+		attempts = 3
+	}
+	delay := c.loginRetryDelay
+	if delay <= 0 {
+		delay = 5 * time.Second
+	}
+	for attempt := 1; attempt <= attempts; attempt++ {
+		token, err := c.loginOnce(ctx)
+		if err == nil {
+			c.mu.Lock()
+			c.bearerToken = token
+			c.mu.Unlock()
+			return token, nil
+		}
+		lastErr = err
+		log.Printf("[FURO-MASTER] doprax login failed attempt=%d/%d err=%v", attempt, attempts, err)
+		if attempt == attempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return "", lastErr
+}
+
+func (c *dopraxClient) clearBearerToken() {
+	c.mu.Lock()
+	c.bearerToken = ""
+	c.mu.Unlock()
+}
+
+func (c *dopraxClient) loginOnce(ctx context.Context) (string, error) {
 	body := map[string]string{"user_email": c.username, "user_pass": c.password}
 	data, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/account/login-doprax-123321/", bytes.NewReader(data))
@@ -2040,19 +2451,60 @@ func (c *dopraxClient) login(ctx context.Context) (string, error) {
 	if token == "" {
 		return "", fmt.Errorf("doprax login response missing cca: %s", strings.TrimSpace(string(respData)))
 	}
-	c.mu.Lock()
-	c.bearerToken = token
-	c.mu.Unlock()
 	return token, nil
 }
 
 const dopraxUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 
+type dopraxHTTPError struct {
+	method string
+	path   string
+	status int
+	body   string
+}
+
+func (e dopraxHTTPError) Error() string {
+	return fmt.Sprintf("%s %s status=%d body=%s", e.method, e.path, e.status, e.body)
+}
+
+func isDopraxAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr dopraxHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	if httpErr.status == http.StatusUnauthorized || httpErr.status == http.StatusForbidden {
+		return true
+	}
+	body := strings.ToLower(httpErr.body)
+	return strings.Contains(body, "unauthorized") ||
+		strings.Contains(body, "forbidden") ||
+		strings.Contains(body, "invalid token") ||
+		strings.Contains(body, "token") && strings.Contains(body, "expired") ||
+		strings.Contains(body, "authentication")
+}
+
 func (c *dopraxClient) doV1JSON(ctx context.Context, method, path string, body any, out any) error {
 	return c.doJSON(ctx, method, path, "", body, out)
 }
 
-func (c *dopraxClient) doV2JSON(ctx context.Context, method, path, token string, body any, out any) error {
+func (c *dopraxClient) doV2JSON(ctx context.Context, method, path string, body any, out any) error {
+	token, err := c.login(ctx)
+	if err != nil {
+		return err
+	}
+	err = c.doJSON(ctx, method, path, token, body, out)
+	if !isDopraxAuthError(err) {
+		return err
+	}
+	log.Printf("[FURO-MASTER] doprax auth failed for %s %s; refreshing token and retrying once", method, path)
+	c.clearBearerToken()
+	token, loginErr := c.login(ctx)
+	if loginErr != nil {
+		return loginErr
+	}
 	return c.doJSON(ctx, method, path, token, body, out)
 }
 
@@ -2087,7 +2539,7 @@ func (c *dopraxClient) doJSON(ctx context.Context, method, path, bearerToken str
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s %s status=%d body=%s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+		return dopraxHTTPError{method: method, path: path, status: resp.StatusCode, body: strings.TrimSpace(string(data))}
 	}
 	if out == nil {
 		return nil
@@ -2095,12 +2547,17 @@ func (c *dopraxClient) doJSON(ctx context.Context, method, path, bearerToken str
 	if err := json.Unmarshal(data, out); err != nil {
 		return err
 	}
+	if decoded, ok := out.(*map[string]any); ok {
+		if success, exists := (*decoded)["success"].(bool); exists && !success {
+			return dopraxHTTPError{method: method, path: path, status: resp.StatusCode, body: strings.TrimSpace(string(data))}
+		}
+	}
 	return nil
 }
 
-func (c *dopraxClient) fetchV2Password(ctx context.Context, token, vmCode string) string {
+func (c *dopraxClient) fetchV2Password(ctx context.Context, vmCode string) string {
 	var decoded map[string]any
-	if err := c.doV2JSON(ctx, http.MethodGet, "/api/v2/vms/"+vmCode+"/actions/access/", token, nil, &decoded); err != nil {
+	if err := c.doV2JSON(ctx, http.MethodGet, "/api/v2/vms/"+vmCode+"/actions/access/", nil, &decoded); err != nil {
 		log.Printf("[FURO-MASTER] doprax password fetch failed vm_code=%s err=%v", vmCode, err)
 		return ""
 	}
@@ -2116,6 +2573,19 @@ func randomUUID() string {
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+func generateWireGuardKeyPair() (string, string, error) {
+	var raw [32]byte
+	if _, err := crand.Read(raw[:]); err != nil {
+		return "", "", err
+	}
+	curve := ecdh.X25519()
+	private, err := curve.NewPrivateKey(raw[:])
+	if err != nil {
+		return "", "", err
+	}
+	return base64.StdEncoding.EncodeToString(raw[:]), base64.StdEncoding.EncodeToString(private.PublicKey().Bytes()), nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -2188,6 +2658,13 @@ func main() {
 	app := newMasterApp(cfg)
 	if err := app.loadState(); err != nil {
 		log.Fatalf("failed to load state: %v", err)
+	}
+	if cfg.StaticEgress.Enabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		if err := app.configureMasterStaticEgress(ctx); err != nil {
+			log.Printf("[FURO-MASTER] static egress unavailable; nodes will bootstrap without static egress: %v", err)
+		}
+		cancel()
 	}
 	log.Printf("[FURO-MASTER] starting namespace=%s fleet_id=%s provider_backend=%s listen=%s admin_listen=%s public_url=%s relay_url=%s backup_count=%d state_file=%s", cfg.Namespace, app.state.FleetID, cfg.ProviderBackend, cfg.Listen, cfg.AdminListen, cfg.PublicURL, cfg.RelayURL, cfg.BackupCount, app.statePath)
 	if cfg.AdminListen != "" {

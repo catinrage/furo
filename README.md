@@ -220,8 +220,12 @@ Key fields in `config.server-master.json`:
   Doprax account login. Used only for v2 VM creation.
 - `doprax_product_version_id` / `doprax_location_option_id` / `doprax_os_option_id`
   Doprax v2 create options. The example defaults target ProVM Germany with Ubuntu 24.04.
+- `doprax_login_retry_attempts` / `doprax_login_retry_delay_seconds`
+  Retry controls for Doprax username/password login. If a cached v2 bearer token expires, the master clears it, logs in again, and retries the failed v2 call once.
 - `caasify_token`
   Caasify API token, only required when `provider_backend` is `caasify`.
+- `static_egress`
+  Optional WireGuard NAT mode. When enabled, master-managed nodes install WireGuard automatically, bind target dials to their tunnel IP, and final destination sites see the master VPS public IP. The master configures `/etc/wireguard/<interface>.conf`, IP forwarding, and NAT; node relay health checks and master reports still use direct networking.
 - `state_file` / `log_file`
   Local durable fleet state and optional master log path.
 - `relay_url`

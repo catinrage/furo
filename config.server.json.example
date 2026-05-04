@@ -11,6 +11,10 @@
   "max_pending_bytes": 4194304,
   "max_sessions": 10,
   "log_file": "",
+  "egress": {
+    "enabled": false,
+    "bind_ip": ""
+  },
   "node": {
     "enabled": false,
     "namespace": "default",

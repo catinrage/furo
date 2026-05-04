@@ -64,6 +64,7 @@ var (
 	maxPendingBytes = int64(defaultMaxPendingBytes)
 	logFilePath     string
 	nodeSettings    serverNodeConfig
+	egressSettings  serverEgressConfig
 )
 
 var (
@@ -73,19 +74,20 @@ var (
 )
 
 type serverConfigFile struct {
-	APIKey          string           `json:"api_key"`
-	AgentListen     string           `json:"agent_listen"`
-	AdminListen     string           `json:"admin_listen"`
-	DialTimeout     string           `json:"dial_timeout"`
-	Keepalive       string           `json:"keepalive"`
-	WriteTimeout    string           `json:"write_timeout"`
-	FrameMinSize    int              `json:"frame_min_size"`
-	FrameMidSize    int              `json:"frame_mid_size"`
-	FrameMaxSize    int              `json:"frame_max_size"`
-	MaxPendingBytes int64            `json:"max_pending_bytes"`
-	MaxSessions     int              `json:"max_sessions"`
-	LogFile         string           `json:"log_file"`
-	Node            serverNodeConfig `json:"node"`
+	APIKey          string             `json:"api_key"`
+	AgentListen     string             `json:"agent_listen"`
+	AdminListen     string             `json:"admin_listen"`
+	DialTimeout     string             `json:"dial_timeout"`
+	Keepalive       string             `json:"keepalive"`
+	WriteTimeout    string             `json:"write_timeout"`
+	FrameMinSize    int                `json:"frame_min_size"`
+	FrameMidSize    int                `json:"frame_mid_size"`
+	FrameMaxSize    int                `json:"frame_max_size"`
+	MaxPendingBytes int64              `json:"max_pending_bytes"`
+	MaxSessions     int                `json:"max_sessions"`
+	LogFile         string             `json:"log_file"`
+	Node            serverNodeConfig   `json:"node"`
+	Egress          serverEgressConfig `json:"egress"`
 }
 
 type serverNodeConfig struct {
@@ -98,6 +100,11 @@ type serverNodeConfig struct {
 	RelayHealthPort      int    `json:"relay_health_port"`
 	CheckIntervalSeconds int    `json:"check_interval_seconds"`
 	FailureThreshold     int    `json:"failure_threshold"`
+}
+
+type serverEgressConfig struct {
+	Enabled bool   `json:"enabled"`
+	BindIP  string `json:"bind_ip"`
 }
 
 func defaultServerConfig() serverConfigFile {
@@ -167,7 +174,19 @@ func loadServerConfig(path string) error {
 	maxSessions = cfg.MaxSessions
 	logFilePath = cfg.LogFile
 	nodeSettings = normalizeServerNodeConfig(cfg.Node)
+	egressSettings = normalizeServerEgressConfig(cfg.Egress)
 	return nil
+}
+
+func normalizeServerEgressConfig(cfg serverEgressConfig) serverEgressConfig {
+	if !cfg.Enabled {
+		return serverEgressConfig{}
+	}
+	if net.ParseIP(cfg.BindIP) == nil {
+		log.Printf("[FURO-SERVER] egress disabled because bind_ip is invalid: %q", cfg.BindIP)
+		return serverEgressConfig{}
+	}
+	return cfg
 }
 
 func normalizeServerNodeConfig(cfg serverNodeConfig) serverNodeConfig {
@@ -218,6 +237,14 @@ func validateFrameConfig(minSize, midSize, maxSize int, pendingLimit int64) erro
 		return errors.New("max_pending_bytes must be >= frame_max_size")
 	}
 	return nil
+}
+
+func targetDialer() net.Dialer {
+	dialer := net.Dialer{Timeout: dialTimeout, KeepAlive: keepalivePeriod}
+	if egressSettings.Enabled && egressSettings.BindIP != "" {
+		dialer.LocalAddr = &net.TCPAddr{IP: net.ParseIP(egressSettings.BindIP)}
+	}
+	return dialer
 }
 
 var (
@@ -299,6 +326,12 @@ type serverStatusResponse struct {
 	ClosedSessions   uint64                  `json:"closed_sessions"`
 	Sessions         []serverSessionSnapshot `json:"sessions"`
 	Node             serverNodeStatus        `json:"node,omitempty"`
+	Egress           serverEgressStatus      `json:"egress,omitempty"`
+}
+
+type serverEgressStatus struct {
+	Enabled bool   `json:"enabled"`
+	BindIP  string `json:"bind_ip,omitempty"`
 }
 
 type serverNodeStatus struct {
@@ -1116,7 +1149,7 @@ func (s *Session) handleOpen(ctx context.Context, streamID uint32, payload []byt
 	}
 
 	targetAddr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	dialer := net.Dialer{Timeout: dialTimeout, KeepAlive: keepalivePeriod}
+	dialer := targetDialer()
 	start := time.Now()
 	targetConn, err := dialer.DialContext(ctx, "tcp", targetAddr)
 	if err != nil {
@@ -1289,6 +1322,9 @@ func buildServerStatus() serverStatusResponse {
 		RejectedSessions: atomic.LoadUint64(&rejectedSessions),
 		ClosedSessions:   atomic.LoadUint64(&closedSessions),
 		Sessions:         serverRegistry.snapshots(),
+	}
+	if egressSettings.Enabled {
+		status.Egress = serverEgressStatus{Enabled: true, BindIP: egressSettings.BindIP}
 	}
 	if nodeSettings.Enabled {
 		status.Node = serverNodeStatus{
@@ -1555,7 +1591,7 @@ func main() {
 		logger = log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
 		log.Printf("[FURO-SERVER] debug log file: %s", logFilePath)
 	}
-	logEvent("[SERVER] startup version=%s agent_listen=%s admin_listen=%s dial_timeout=%s write_timeout=%s frame_min=%d frame_mid=%d frame_max=%d max_pending_bytes=%d max_sessions=%d", appVersion, agentListen, adminListen, dialTimeout.String(), writeTimeout.String(), minFramePayload, midFramePayload, maxFramePayload, maxPendingBytes, maxSessions)
+	logEvent("[SERVER] startup version=%s agent_listen=%s admin_listen=%s dial_timeout=%s write_timeout=%s frame_min=%d frame_mid=%d frame_max=%d max_pending_bytes=%d max_sessions=%d egress_enabled=%t egress_bind_ip=%s", appVersion, agentListen, adminListen, dialTimeout.String(), writeTimeout.String(), minFramePayload, midFramePayload, maxFramePayload, maxPendingBytes, maxSessions, egressSettings.Enabled, egressSettings.BindIP)
 
 	ln, err := net.Listen("tcp", agentListen)
 	if err != nil {

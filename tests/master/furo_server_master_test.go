@@ -674,6 +674,113 @@ func TestDopraxClientCreateListDelete(t *testing.T) {
 	}
 }
 
+func TestDopraxClientRefreshesTokenAfterAuthFailure(t *testing.T) {
+	var loginCount int
+	var createCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/account/login-doprax-123321/":
+			loginCount++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"cca":     map[bool]string{true: "fresh-token", false: "expired-token"}[loginCount > 1],
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v2/services/instances/":
+			createCount++
+			if createCount == 1 {
+				http.Error(w, `{"success":false,"error":"token expired"}`, http.StatusUnauthorized)
+				return
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer fresh-token" {
+				t.Fatalf("Authorization after refresh = %q, want fresh token", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"service_id": "svc-1"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/services/instances/svc-1/":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"service": map[string]any{"status": "running"},
+					"access":  map[string]any{"public_ipv4": "203.0.113.50"},
+					"links":   map[string]any{"vm_code": "vm-1"},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/vms/vm-1/actions/access/":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"tempPass": "root-password"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := newDopraxClient(masterConfigFile{
+		DopraxAPIKey:             "v1-key",
+		DopraxUsername:           "user@example.com",
+		DopraxPassword:           "secret",
+		DopraxBaseURL:            server.URL,
+		DopraxProductVersionID:   "product-version",
+		DopraxLocationOptionID:   "location-option",
+		DopraxOSOptionID:         "os-option",
+		DopraxAccessMethod:       "password",
+		DopraxLoginRetryAttempts: 1,
+		DopraxLoginRetryDelaySec: 1,
+	})
+	client.client = server.Client()
+
+	if _, err := client.createVPS(context.Background(), caasifyCreateRequest{Note: "furo-node-a"}); err != nil {
+		t.Fatalf("createVPS() error = %v", err)
+	}
+	if loginCount != 2 {
+		t.Fatalf("login count = %d, want 2", loginCount)
+	}
+	if createCount != 2 {
+		t.Fatalf("create count = %d, want 2", createCount)
+	}
+}
+
+func TestMasterStaticEgressStatePersistsNodeKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.Namespace = "sky-01"
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.CaasifyToken = "token"
+	cfg.ProviderBackend = "caasify"
+	cfg.StaticEgress.Enabled = true
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	if err := app.loadState(); err != nil {
+		t.Fatalf("loadState() error = %v", err)
+	}
+
+	app.mu.Lock()
+	node := masterNode{Namespace: "sky-01", ID: "node-a", Role: "standby", Status: "created"}
+	if err := app.ensureNodeStaticEgressLocked(&node); err != nil {
+		app.mu.Unlock()
+		t.Fatalf("ensureNodeStaticEgressLocked() error = %v", err)
+	}
+	app.state.Nodes = append(app.state.Nodes, node)
+	if err := app.saveStateLocked(); err != nil {
+		app.mu.Unlock()
+		t.Fatalf("saveStateLocked() error = %v", err)
+	}
+	app.mu.Unlock()
+
+	data, err := os.ReadFile(cfg.StateFile)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	var saved masterState
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatalf("state json: %v", err)
+	}
+	if saved.StaticEgress.PrivateKey == "" || saved.StaticEgress.PublicKey == "" {
+		t.Fatalf("static egress master keys were not saved: %#v", saved.StaticEgress)
+	}
+	if len(saved.Nodes) != 1 || saved.Nodes[0].EgressTunnelIP == "" || saved.Nodes[0].WireGuardPrivateKey == "" || saved.Nodes[0].WireGuardPublicKey == "" {
+		t.Fatalf("node static egress fields not saved: %#v", saved.Nodes)
+	}
+}
+
 func TestRunSSHScriptHonorsContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"net"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -106,6 +108,53 @@ func TestServerEnqueueDataHonorsPendingByteLimit(t *testing.T) {
 	}
 	if pending := atomic.LoadInt64(&session.pendingBytes); pending != 0 {
 		t.Fatalf("pendingBytes after pop = %d, want 0", pending)
+	}
+}
+
+func TestServerEgressConfigDefaultsDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.server.json")
+	payload := `{
+  "api_key": "secret",
+  "agent_listen": "127.0.0.1:0",
+  "dial_timeout": "1s",
+  "keepalive": "1s",
+  "write_timeout": "1s",
+  "frame_min_size": 4096,
+  "frame_mid_size": 8192,
+  "frame_max_size": 16384,
+  "max_pending_bytes": 16384,
+  "max_sessions": 1,
+  "log_file": ""
+}`
+	if err := os.WriteFile(configPath, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := loadServerConfig(configPath); err != nil {
+		t.Fatalf("loadServerConfig() error = %v", err)
+	}
+	if egressSettings.Enabled {
+		t.Fatalf("egress enabled = true, want default disabled")
+	}
+}
+
+func TestServerTargetDialerUsesEgressBindIP(t *testing.T) {
+	originalEgress := egressSettings
+	originalDialTimeout := dialTimeout
+	originalKeepalive := keepalivePeriod
+	t.Cleanup(func() {
+		egressSettings = originalEgress
+		dialTimeout = originalDialTimeout
+		keepalivePeriod = originalKeepalive
+	})
+	dialTimeout = time.Second
+	keepalivePeriod = time.Second
+	egressSettings = serverEgressConfig{Enabled: true, BindIP: "10.66.0.2"}
+
+	dialer := targetDialer()
+	addr, ok := dialer.LocalAddr.(*net.TCPAddr)
+	if !ok || !addr.IP.Equal(net.ParseIP("10.66.0.2")) {
+		t.Fatalf("LocalAddr = %#v, want bind IP 10.66.0.2", dialer.LocalAddr)
 	}
 }
 

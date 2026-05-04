@@ -16,6 +16,23 @@ require curl
 require tar
 require python3
 
+STATIC_EGRESS_ENABLED="{{static_egress_enabled}}"
+WG_INTERFACE="{{wg_interface}}"
+WG_NODE_PRIVATE_KEY="{{wg_node_private_key}}"
+WG_NODE_TUNNEL_IP="{{wg_node_tunnel_ip}}"
+WG_NODE_TUNNEL_PREFIX="{{wg_node_tunnel_prefix}}"
+WG_MASTER_PUBLIC_KEY="{{wg_master_public_key}}"
+WG_MASTER_ENDPOINT_HOST="{{wg_master_endpoint_host}}"
+WG_MASTER_LISTEN_PORT="{{wg_master_listen_port}}"
+WG_NODE_ROUTE_TABLE="{{wg_node_route_table}}"
+
+if [ "$STATIC_EGRESS_ENABLED" = "true" ]; then
+  if ! command -v ip >/dev/null 2>&1 || ! command -v iptables >/dev/null 2>&1 || ! command -v wg >/dev/null 2>&1 || ! command -v wg-quick >/dev/null 2>&1; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools iproute2 iptables
+  fi
+fi
+
 echo "[bootstrap] preparing workdir: $WORKDIR"
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
@@ -67,6 +84,10 @@ cat > "$WORKDIR/config.server.json" <<EOF
   "max_pending_bytes": 4194304,
   "max_sessions": 33,
   "log_file": "",
+  "egress": {
+    "enabled": {{static_egress_enabled}},
+    "bind_ip": "{{wg_node_tunnel_ip}}"
+  },
   "node": {
     "enabled": true,
     "namespace": "{{namespace}}",
@@ -80,6 +101,29 @@ cat > "$WORKDIR/config.server.json" <<EOF
   }
 }
 EOF
+
+if [ "$STATIC_EGRESS_ENABLED" = "true" ]; then
+  echo "[bootstrap] configuring static egress WireGuard"
+  mkdir -p /etc/wireguard
+  chmod 700 /etc/wireguard
+  cat > "/etc/wireguard/${WG_INTERFACE}.conf" <<EOF
+[Interface]
+PrivateKey = ${WG_NODE_PRIVATE_KEY}
+Address = ${WG_NODE_TUNNEL_IP}/${WG_NODE_TUNNEL_PREFIX}
+Table = off
+PostUp = ip route replace default dev %i table ${WG_NODE_ROUTE_TABLE}; ip rule add from ${WG_NODE_TUNNEL_IP}/32 table ${WG_NODE_ROUTE_TABLE} priority ${WG_NODE_ROUTE_TABLE} 2>/dev/null || true
+PostDown = ip rule del from ${WG_NODE_TUNNEL_IP}/32 table ${WG_NODE_ROUTE_TABLE} priority ${WG_NODE_ROUTE_TABLE} 2>/dev/null || true; ip route del default dev %i table ${WG_NODE_ROUTE_TABLE} 2>/dev/null || true
+
+[Peer]
+PublicKey = ${WG_MASTER_PUBLIC_KEY}
+Endpoint = ${WG_MASTER_ENDPOINT_HOST}:${WG_MASTER_LISTEN_PORT}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+EOF
+  chmod 600 "/etc/wireguard/${WG_INTERFACE}.conf"
+  systemctl enable "wg-quick@${WG_INTERFACE}" || true
+  systemctl restart "wg-quick@${WG_INTERFACE}"
+fi
 
 echo "[bootstrap] installing furo-server service"
 chmod +x "$WORKDIR/service.sh" "$WORKDIR/furo-server"
