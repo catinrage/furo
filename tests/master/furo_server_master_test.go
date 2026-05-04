@@ -816,6 +816,29 @@ func TestRenderMasterWireGuardConfigAllowsForwarding(t *testing.T) {
 	}
 }
 
+func TestRenderBootstrapScriptUsesRoutePriorityBeforeMain(t *testing.T) {
+	cfg := defaultMasterConfig()
+	cfg.StaticEgress.Enabled = true
+	cfg.StaticEgress.NodeRouteTable = 51820
+	cfg.StaticEgress.NodeRoutePriority = 1000
+	cfg.PublicURL = "http://203.0.113.1:19082"
+	app := newMasterApp(cfg)
+	app.staticEgressAvailable = true
+	app.state.StaticEgress.PublicKey = "master-public"
+	node := masterNode{
+		EgressEnabled:       true,
+		EgressTunnelIP:      "10.66.0.2",
+		WireGuardPrivateKey: "node-private",
+	}
+	rendered, err := app.renderBootstrapScript("priority={{wg_node_route_priority}} table={{wg_node_route_table}} enabled={{static_egress_enabled}}", node)
+	if err != nil {
+		t.Fatalf("renderBootstrapScript() error = %v", err)
+	}
+	if rendered != "priority=1000 table=51820 enabled=true" {
+		t.Fatalf("rendered = %q, want route priority before main table", rendered)
+	}
+}
+
 func TestRunSSHScriptHonorsContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()

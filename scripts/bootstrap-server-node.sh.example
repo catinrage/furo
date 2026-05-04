@@ -25,6 +25,7 @@ WG_MASTER_PUBLIC_KEY="{{wg_master_public_key}}"
 WG_MASTER_ENDPOINT_HOST="{{wg_master_endpoint_host}}"
 WG_MASTER_LISTEN_PORT="{{wg_master_listen_port}}"
 WG_NODE_ROUTE_TABLE="{{wg_node_route_table}}"
+WG_NODE_ROUTE_PRIORITY="{{wg_node_route_priority}}"
 
 if [ "$STATIC_EGRESS_ENABLED" = "true" ]; then
   if ! command -v ip >/dev/null 2>&1 || ! command -v iptables >/dev/null 2>&1 || ! command -v wg >/dev/null 2>&1 || ! command -v wg-quick >/dev/null 2>&1; then
@@ -111,8 +112,8 @@ if [ "$STATIC_EGRESS_ENABLED" = "true" ]; then
 PrivateKey = ${WG_NODE_PRIVATE_KEY}
 Address = ${WG_NODE_TUNNEL_IP}/${WG_NODE_TUNNEL_PREFIX}
 Table = off
-PostUp = ip route replace default dev %i table ${WG_NODE_ROUTE_TABLE}; ip rule add from ${WG_NODE_TUNNEL_IP}/32 table ${WG_NODE_ROUTE_TABLE} priority ${WG_NODE_ROUTE_TABLE} 2>/dev/null || true
-PostDown = ip rule del from ${WG_NODE_TUNNEL_IP}/32 table ${WG_NODE_ROUTE_TABLE} priority ${WG_NODE_ROUTE_TABLE} 2>/dev/null || true; ip route del default dev %i table ${WG_NODE_ROUTE_TABLE} 2>/dev/null || true
+PostUp = ip route replace default dev %i table ${WG_NODE_ROUTE_TABLE}; ip rule add from ${WG_NODE_TUNNEL_IP}/32 table ${WG_NODE_ROUTE_TABLE} priority ${WG_NODE_ROUTE_PRIORITY} 2>/dev/null || true
+PostDown = ip rule del from ${WG_NODE_TUNNEL_IP}/32 table ${WG_NODE_ROUTE_TABLE} priority ${WG_NODE_ROUTE_PRIORITY} 2>/dev/null || true; ip route del default dev %i table ${WG_NODE_ROUTE_TABLE} 2>/dev/null || true
 
 [Peer]
 PublicKey = ${WG_MASTER_PUBLIC_KEY}

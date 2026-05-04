@@ -23,6 +23,7 @@
     "subnet": "10.66.0.0/24",
     "master_tunnel_ip": "10.66.0.1",
     "node_route_table": 51820,
+    "node_route_priority": 1000,
     "auto_install_packages": true
   },
   "state_file": "furo-server-master-default-state.json",

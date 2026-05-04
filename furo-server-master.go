@@ -97,6 +97,7 @@ type masterStaticEgressConfig struct {
 	Subnet              string `json:"subnet"`
 	MasterTunnelIP      string `json:"master_tunnel_ip"`
 	NodeRouteTable      int    `json:"node_route_table"`
+	NodeRoutePriority   int    `json:"node_route_priority"`
 	AutoInstallPackages bool   `json:"auto_install_packages"`
 }
 
@@ -119,6 +120,7 @@ func defaultMasterConfig() masterConfigFile {
 			Subnet:              "10.66.0.0/24",
 			MasterTunnelIP:      "10.66.0.1",
 			NodeRouteTable:      51820,
+			NodeRoutePriority:   1000,
 			AutoInstallPackages: true,
 		},
 		StateFile:                "furo-server-master-state.json",
@@ -273,6 +275,9 @@ func normalizeMasterStaticEgressConfig(cfg, alias masterStaticEgressConfig) mast
 	if cfg.NodeRouteTable == 0 {
 		cfg.NodeRouteTable = 51820
 	}
+	if cfg.NodeRoutePriority == 0 {
+		cfg.NodeRoutePriority = 1000
+	}
 	return cfg
 }
 
@@ -282,6 +287,9 @@ func validateMasterStaticEgressConfig(cfg masterStaticEgressConfig) error {
 	}
 	if cfg.NodeRouteTable <= 0 {
 		return errors.New("static_egress.node_route_table must be > 0")
+	}
+	if cfg.NodeRoutePriority <= 0 {
+		return errors.New("static_egress.node_route_priority must be > 0")
 	}
 	if sanitizeMasterID(cfg.Interface) != cfg.Interface {
 		return errors.New("static_egress.interface contains unsupported characters")
@@ -1302,6 +1310,7 @@ func (a *masterApp) renderBootstrapScript(template string, node masterNode) (str
 		"{{wg_master_endpoint_host}}": masterHost,
 		"{{wg_master_listen_port}}":   strconv.Itoa(a.cfg.StaticEgress.ListenPort),
 		"{{wg_node_route_table}}":     strconv.Itoa(a.cfg.StaticEgress.NodeRouteTable),
+		"{{wg_node_route_priority}}":  strconv.Itoa(a.cfg.StaticEgress.NodeRoutePriority),
 	}
 	rendered := template
 	for old, newValue := range replacements {
