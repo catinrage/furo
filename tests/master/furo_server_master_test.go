@@ -805,8 +805,8 @@ func TestRenderMasterWireGuardConfigAllowsForwarding(t *testing.T) {
 	}
 	for _, want := range []string{
 		"PostUp = iptables -t nat -A POSTROUTING -s 10.66.0.0/24 -j MASQUERADE",
-		"PostUp = iptables -A FORWARD -i %i -j ACCEPT",
-		"PostUp = iptables -A FORWARD -o %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+		"PostUp = iptables -I FORWARD 1 -i %i -j ACCEPT",
+		"PostUp = iptables -I FORWARD 1 -o %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
 		"PostDown = iptables -D FORWARD -i %i -j ACCEPT",
 		"AllowedIPs = 10.66.0.2/32",
 	} {
