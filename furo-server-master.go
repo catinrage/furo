@@ -67,6 +67,7 @@ type masterConfigFile struct {
 	RelayHealthHost          string                   `json:"relay_health_host"`
 	RelayHealthPort          int                      `json:"relay_health_port"`
 	ServerAgentPort          int                      `json:"server_agent_port"`
+	NodeMaxSessions          int                      `json:"node_max_sessions"`
 	RouteSessionCount        int                      `json:"route_session_count"`
 	BackupCount              int                      `json:"backup_count"`
 	NodeCheckIntervalSeconds int                      `json:"node_check_interval_seconds"`
@@ -127,6 +128,7 @@ func defaultMasterConfig() masterConfigFile {
 		RelayHealthHost:          "f2.ra1n.xyz",
 		RelayHealthPort:          443,
 		ServerAgentPort:          8443,
+		NodeMaxSessions:          33,
 		RouteSessionCount:        4,
 		BackupCount:              1,
 		NodeCheckIntervalSeconds: 10,
@@ -217,6 +219,9 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	}
 	if cfg.ServerAgentPort <= 0 {
 		cfg.ServerAgentPort = 8443
+	}
+	if cfg.NodeMaxSessions <= 0 {
+		cfg.NodeMaxSessions = 33
 	}
 	if cfg.RouteSessionCount <= 0 {
 		cfg.RouteSessionCount = 4
@@ -1301,6 +1306,7 @@ func (a *masterApp) renderBootstrapScript(template string, node masterNode) (str
 		"{{check_interval_seconds}}":  strconv.Itoa(a.cfg.NodeCheckIntervalSeconds),
 		"{{failure_threshold}}":       strconv.Itoa(a.cfg.NodeFailureThreshold),
 		"{{server_agent_port}}":       strconv.Itoa(a.cfg.ServerAgentPort),
+		"{{node_max_sessions}}":       strconv.Itoa(a.cfg.NodeMaxSessions),
 		"{{static_egress_enabled}}":   strconv.FormatBool(staticEnabled),
 		"{{wg_interface}}":            a.cfg.StaticEgress.Interface,
 		"{{wg_node_private_key}}":     node.WireGuardPrivateKey,

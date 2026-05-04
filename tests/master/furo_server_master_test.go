@@ -821,6 +821,7 @@ func TestRenderBootstrapScriptUsesRoutePriorityBeforeMain(t *testing.T) {
 	cfg.StaticEgress.Enabled = true
 	cfg.StaticEgress.NodeRouteTable = 51820
 	cfg.StaticEgress.NodeRoutePriority = 1000
+	cfg.NodeMaxSessions = 120
 	cfg.PublicURL = "http://203.0.113.1:19082"
 	app := newMasterApp(cfg)
 	app.staticEgressAvailable = true
@@ -830,11 +831,11 @@ func TestRenderBootstrapScriptUsesRoutePriorityBeforeMain(t *testing.T) {
 		EgressTunnelIP:      "10.66.0.2",
 		WireGuardPrivateKey: "node-private",
 	}
-	rendered, err := app.renderBootstrapScript("priority={{wg_node_route_priority}} table={{wg_node_route_table}} enabled={{static_egress_enabled}}", node)
+	rendered, err := app.renderBootstrapScript("priority={{wg_node_route_priority}} table={{wg_node_route_table}} max={{node_max_sessions}} enabled={{static_egress_enabled}}", node)
 	if err != nil {
 		t.Fatalf("renderBootstrapScript() error = %v", err)
 	}
-	if rendered != "priority=1000 table=51820 enabled=true" {
+	if rendered != "priority=1000 table=51820 max=120 enabled=true" {
 		t.Fatalf("rendered = %q, want route priority before main table", rendered)
 	}
 }

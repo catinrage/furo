@@ -83,7 +83,7 @@ cat > "$WORKDIR/config.server.json" <<EOF
   "frame_mid_size": 65536,
   "frame_max_size": 131072,
   "max_pending_bytes": 4194304,
-  "max_sessions": 33,
+  "max_sessions": {{node_max_sessions}},
   "log_file": "server.log",
   "egress": {
     "enabled": {{static_egress_enabled}},

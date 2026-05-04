@@ -32,6 +32,7 @@
   "relay_health_host": "f2.ra1n.xyz",
   "relay_health_port": 443,
   "server_agent_port": 8443,
+  "node_max_sessions": 33,
   "route_session_count": 4,
   "backup_count": 1,
   "node_check_interval_seconds": 10,
