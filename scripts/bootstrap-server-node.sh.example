@@ -83,7 +83,7 @@ cat > "$WORKDIR/config.server.json" <<EOF
   "frame_max_size": 131072,
   "max_pending_bytes": 4194304,
   "max_sessions": 33,
-  "log_file": "",
+  "log_file": "server.log",
   "egress": {
     "enabled": {{static_egress_enabled}},
     "bind_ip": "{{wg_node_tunnel_ip}}"
