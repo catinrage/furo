@@ -166,6 +166,7 @@ Key fields in `config.client.json` under `airs`:
   AIRS log path. Empty disables AIRS logs.
 - `switch_script`
   Script used to change the outbound source IP. Defaults to `./switch-outbound-ip.sh` and is called non-interactively.
+  If the requested IP is not visible in the guest OS yet, the bundled script refreshes DHCP using `dhcpcd`, `dhclient`, or `networkctl` before failing. Set `DHCP_REFRESH=0` in the service environment to disable that behavior; tune it with `DHCP_REFRESH_TIMEOUT`, `DHCP_REFRESH_ATTEMPTS`, and `DHCP_REFRESH_INTERVAL`.
 - `inspect_binary`
   Path to `inspect`. AIRS assumes this lives in the same directory unless configured otherwise.
 - `service_script` / `client_service_role`

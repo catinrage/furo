@@ -7,6 +7,10 @@ STATE_FILE="$STATE_DIR/selected-ip"
 RULE_PREF_BASE=1000
 TABLE_BASE=2000
 MAX_SLOTS=256
+DHCP_REFRESH="${DHCP_REFRESH:-auto}"
+DHCP_REFRESH_TIMEOUT="${DHCP_REFRESH_TIMEOUT:-20}"
+DHCP_REFRESH_ATTEMPTS="${DHCP_REFRESH_ATTEMPTS:-6}"
+DHCP_REFRESH_INTERVAL="${DHCP_REFRESH_INTERVAL:-2}"
 QUIET=0
 
 usage() {
@@ -63,33 +67,138 @@ get_connected_net() {
   ip -4 route show dev "$iface" scope link | awk 'NR==1 {print $1; exit}'
 }
 
-mapfile -t ADDRS < <(
-  ip -4 -o addr show scope global |
-  awk '{split($4,a,"/"); print $2, a[1]}' |
-  sort -u
-)
+collect_addrs() {
+  mapfile -t ADDRS < <(
+    ip -4 -o addr show scope global |
+    awk '{split($4,a,"/"); print $2, a[1]}' |
+    sort -u
+  )
+}
 
-[ "${#ADDRS[@]}" -gt 0 ] || { echo "No global IPv4 addresses found"; exit 1; }
+list_candidate_ifaces() {
+  {
+    for entry in "${ADDRS[@]:-}"; do
+      read -r IFACE _ <<< "$entry"
+      printf '%s\n' "$IFACE"
+    done
+
+    ip -4 route show default 2>/dev/null |
+      awk '{for (i=1; i<NF; i++) if ($i=="dev") {print $(i+1)}}'
+
+    ip -o link show up 2>/dev/null |
+      awk -F': ' '$2!="lo" {sub(/@.*/, "", $2); print $2}'
+  } | awk 'NF && !seen[$0]++'
+}
+
+run_with_timeout() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$DHCP_REFRESH_TIMEOUT" "$@"
+  else
+    "$@"
+  fi
+}
+
+refresh_dhcp_addresses() {
+  [[ "$DHCP_REFRESH" != "0" && "$DHCP_REFRESH" != "false" && "$DHCP_REFRESH" != "off" ]] || return 1
+
+  local attempted=0
+  local iface
+  for iface in "$@"; do
+    [[ -n "$iface" && "$iface" != "lo" ]] || continue
+
+    if command -v dhcpcd >/dev/null 2>&1; then
+      attempted=1
+      run_with_timeout dhcpcd -4 -n "$iface" >/dev/null 2>&1 ||
+        run_with_timeout dhcpcd -4 "$iface" >/dev/null 2>&1 ||
+        true
+      continue
+    fi
+
+    if command -v dhclient >/dev/null 2>&1; then
+      attempted=1
+      run_with_timeout dhclient -4 -1 "$iface" >/dev/null 2>&1 || true
+      continue
+    fi
+
+    if command -v networkctl >/dev/null 2>&1; then
+      attempted=1
+      networkctl renew "$iface" >/dev/null 2>&1 || true
+    fi
+  done
+
+  [[ "$attempted" -eq 1 ]]
+}
 
 declare -A GW_BY_IFACE
 declare -A NET_BY_IFACE
 declare -A FIRST_IP_BY_IFACE
 
-for entry in "${ADDRS[@]}"; do
-  read -r IFACE IP <<< "$entry"
+build_iface_state() {
+  GW_BY_IFACE=()
+  NET_BY_IFACE=()
+  FIRST_IP_BY_IFACE=()
 
-  if [[ -z "${GW_BY_IFACE[$IFACE]:-}" ]]; then
-    GW_BY_IFACE["$IFACE"]="$(get_router "$IFACE")"
-  fi
+  local entry IFACE IP
+  for entry in "${ADDRS[@]}"; do
+    read -r IFACE IP <<< "$entry"
 
-  if [[ -z "${NET_BY_IFACE[$IFACE]:-}" ]]; then
-    NET_BY_IFACE["$IFACE"]="$(get_connected_net "$IFACE")"
-  fi
+    if [[ -z "${GW_BY_IFACE[$IFACE]:-}" ]]; then
+      GW_BY_IFACE["$IFACE"]="$(get_router "$IFACE")"
+    fi
 
-  if [[ -z "${FIRST_IP_BY_IFACE[$IFACE]:-}" ]]; then
-    FIRST_IP_BY_IFACE["$IFACE"]="$IP"
-  fi
-done
+    if [[ -z "${NET_BY_IFACE[$IFACE]:-}" ]]; then
+      NET_BY_IFACE["$IFACE"]="$(get_connected_net "$IFACE")"
+    fi
+
+    if [[ -z "${FIRST_IP_BY_IFACE[$IFACE]:-}" ]]; then
+      FIRST_IP_BY_IFACE["$IFACE"]="$IP"
+    fi
+  done
+}
+
+find_selected_iface() {
+  SELECTED_IFACE=""
+  local entry IFACE IP
+  for entry in "${ADDRS[@]}"; do
+    read -r IFACE IP <<< "$entry"
+    if [[ "$IP" == "$SELECTED_IP" ]]; then
+      SELECTED_IFACE="$IFACE"
+      break
+    fi
+  done
+}
+
+reload_address_state() {
+  collect_addrs
+  build_iface_state
+}
+
+wait_for_selected_ip_after_dhcp() {
+  local ifaces=()
+  mapfile -t ifaces < <(list_candidate_ifaces)
+  refresh_dhcp_addresses "${ifaces[@]}" || return 1
+
+  local attempt
+  for ((attempt=1; attempt<=DHCP_REFRESH_ATTEMPTS; attempt++)); do
+    reload_address_state
+    find_selected_iface
+    [[ -n "${SELECTED_IFACE:-}" ]] && return 0
+    sleep "$DHCP_REFRESH_INTERVAL"
+  done
+
+  return 1
+}
+
+collect_addrs
+if [[ "${#ADDRS[@]}" -eq 0 ]]; then
+  mapfile -t DHCP_IFACES < <(list_candidate_ifaces)
+  refresh_dhcp_addresses "${DHCP_IFACES[@]}" || true
+  collect_addrs
+fi
+
+[ "${#ADDRS[@]}" -gt 0 ] || { echo "No global IPv4 addresses found"; exit 1; }
+
+build_iface_state
 
 SELECTED_IP="${SELECTED_IP:-}"
 SELECTED_IFACE=""
@@ -110,17 +219,14 @@ if [[ -z "$SELECTED_IP" ]]; then
   INDEX=$((CHOICE-1))
   read -r SELECTED_IFACE SELECTED_IP <<< "${ADDRS[$INDEX]:-}"
 else
-  for entry in "${ADDRS[@]}"; do
-    read -r IFACE IP <<< "$entry"
-    if [[ "$IP" == "$SELECTED_IP" ]]; then
-      SELECTED_IFACE="$IFACE"
-      break
-    fi
-  done
+  find_selected_iface
+  if [[ -z "${SELECTED_IFACE:-}" ]]; then
+    wait_for_selected_ip_after_dhcp || true
+  fi
 fi
 
 [ -n "${SELECTED_IP:-}" ] || { echo "Invalid selection"; exit 1; }
-[ -n "${SELECTED_IFACE:-}" ] || { echo "Selected IP not found"; exit 1; }
+[ -n "${SELECTED_IFACE:-}" ] || { echo "Selected IP not found after DHCP refresh"; exit 1; }
 
 SELECTED_GW="${GW_BY_IFACE[$SELECTED_IFACE]:-}"
 [ -n "$SELECTED_GW" ] || { echo "No gateway found for $SELECTED_IFACE"; exit 1; }
