@@ -43,7 +43,16 @@ type masterConfigFile struct {
 	Listen                   string                  `json:"listen"`
 	PublicURL                string                  `json:"public_url"`
 	AdminListen              string                  `json:"admin_listen"`
+	ProviderBackend          string                  `json:"provider_backend"`
 	CaasifyToken             string                  `json:"caasify_token"`
+	DopraxAPIKey             string                  `json:"doprax_api_key"`
+	DopraxUsername           string                  `json:"doprax_username"`
+	DopraxPassword           string                  `json:"doprax_password"`
+	DopraxBaseURL            string                  `json:"doprax_base_url"`
+	DopraxProductVersionID   string                  `json:"doprax_product_version_id"`
+	DopraxLocationOptionID   string                  `json:"doprax_location_option_id"`
+	DopraxOSOptionID         string                  `json:"doprax_os_option_id"`
+	DopraxAccessMethod       string                  `json:"doprax_access_method"`
 	StateFile                string                  `json:"state_file"`
 	LogFile                  string                  `json:"log_file"`
 	RelayURL                 string                  `json:"relay_url"`
@@ -79,6 +88,11 @@ func defaultMasterConfig() masterConfigFile {
 		APIKey:                   "my_super_secret_123456789",
 		Listen:                   "0.0.0.0:19082",
 		AdminListen:              "127.0.0.1:19083",
+		DopraxBaseURL:            "https://www.doprax.com",
+		DopraxProductVersionID:   "4034ee51-9731-4663-95ee-a162dc47b119",
+		DopraxLocationOptionID:   "ec5bc1aa-db5f-48a8-8d88-ef654a2a6dc8",
+		DopraxOSOptionID:         "ec9473a2-caa6-4197-95a4-7ee7e2b59dba",
+		DopraxAccessMethod:       "password",
 		StateFile:                "furo-server-master-state.json",
 		RelayHealthHost:          "f2.ra1n.xyz",
 		RelayHealthPort:          443,
@@ -125,11 +139,27 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	if cfg.Namespace == "" {
 		cfg.Namespace = "default"
 	}
-	if cfg.CaasifyToken == "" {
-		return cfg, errors.New("caasify_token is required")
-	}
 	if cfg.RelayURL == "" {
 		return cfg, errors.New("relay_url is required")
+	}
+	cfg.ProviderBackend = resolvedMasterProviderBackend(cfg)
+	switch cfg.ProviderBackend {
+	case "doprax":
+		if cfg.DopraxAPIKey == "" {
+			return cfg, errors.New("doprax_api_key is required when provider_backend=doprax")
+		}
+		if cfg.DopraxUsername == "" {
+			return cfg, errors.New("doprax_username is required when provider_backend=doprax")
+		}
+		if cfg.DopraxPassword == "" {
+			return cfg, errors.New("doprax_password is required when provider_backend=doprax")
+		}
+	case "caasify":
+		if cfg.CaasifyToken == "" {
+			return cfg, errors.New("caasify_token is required when provider_backend=caasify")
+		}
+	default:
+		return cfg, fmt.Errorf("provider_backend must be doprax or caasify, got %q", cfg.ProviderBackend)
 	}
 	if cfg.Listen == "" {
 		return cfg, errors.New("listen is required")
@@ -163,6 +193,22 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	}
 	if cfg.RelayHealthPort <= 0 {
 		cfg.RelayHealthPort = 443
+	}
+	if cfg.DopraxBaseURL == "" {
+		cfg.DopraxBaseURL = "https://www.doprax.com"
+	}
+	cfg.DopraxBaseURL = strings.TrimRight(cfg.DopraxBaseURL, "/")
+	if cfg.DopraxProductVersionID == "" {
+		cfg.DopraxProductVersionID = "4034ee51-9731-4663-95ee-a162dc47b119"
+	}
+	if cfg.DopraxLocationOptionID == "" {
+		cfg.DopraxLocationOptionID = "ec5bc1aa-db5f-48a8-8d88-ef654a2a6dc8"
+	}
+	if cfg.DopraxOSOptionID == "" {
+		cfg.DopraxOSOptionID = "ec9473a2-caa6-4197-95a4-7ee7e2b59dba"
+	}
+	if cfg.DopraxAccessMethod == "" {
+		cfg.DopraxAccessMethod = "password"
 	}
 	cfg.ProviderPool = normalizeCaasifyProviderPool(cfg)
 	return cfg, nil
@@ -203,6 +249,20 @@ func normalizeCaasifyProviderPool(cfg masterConfigFile) []caasifyProviderOption 
 		}
 	}
 	return pool
+}
+
+func resolvedMasterProviderBackend(cfg masterConfigFile) string {
+	backend := strings.ToLower(strings.TrimSpace(cfg.ProviderBackend))
+	if backend != "" {
+		return backend
+	}
+	if cfg.DopraxAPIKey != "" || cfg.DopraxUsername != "" || cfg.DopraxPassword != "" {
+		return "doprax"
+	}
+	if cfg.CaasifyToken != "" {
+		return "caasify"
+	}
+	return "doprax"
 }
 
 func randomIndex(max int) int {
@@ -277,10 +337,15 @@ type masterApp struct {
 }
 
 func newMasterApp(cfg masterConfigFile) *masterApp {
+	cfg.ProviderBackend = resolvedMasterProviderBackend(cfg)
+	provider := caasifyAPI(newDopraxClient(cfg))
+	if cfg.ProviderBackend == "caasify" {
+		provider = newCaasifyClient(cfg.CaasifyToken)
+	}
 	app := &masterApp{
 		cfg:       cfg,
 		statePath: resolvePath(filepath.Dir(*masterConfigPath), cfg.StateFile),
-		caasify:   newCaasifyClient(cfg.CaasifyToken),
+		caasify:   provider,
 		startedAt: time.Now(),
 	}
 	app.bootstrapNodeFunc = app.bootstrapNode
@@ -770,27 +835,41 @@ func (a *masterApp) ensureFleet(ctx context.Context) error {
 
 func (a *masterApp) createAndBootstrapNode(ctx context.Context, role string) (masterNode, error) {
 	nodeID := a.nextNodeID(role)
-	provider := a.selectCaasifyProvider()
-	log.Printf("[FURO-MASTER] caasify provider selected id=%s role=%s provider=%s note=%s product=%d template=%s ipv4=%d ipv6=%d pool_size=%d", nodeID, role, provider.Name, provider.Note, provider.ProductID, provider.Template, provider.IPv4, provider.IPv6, len(a.cfg.ProviderPool))
-	log.Printf("[FURO-MASTER] caasify create requested id=%s role=%s provider=%s product=%d template=%s ipv4=%d ipv6=%d", nodeID, role, provider.Name, provider.ProductID, provider.Template, provider.IPv4, provider.IPv6)
-	order, err := a.caasify.createVPS(ctx, caasifyCreateRequest{
-		ProductID: provider.ProductID,
-		Note:      nodeID,
-		Template:  provider.Template,
-		IPv4:      provider.IPv4,
-		IPv6:      provider.IPv6,
-	})
+	input := caasifyCreateRequest{Note: nodeID}
+	providerName := a.cfg.ProviderBackend
+	if a.cfg.ProviderBackend == "caasify" {
+		provider := a.selectCaasifyProvider()
+		providerName = provider.Name
+		input.ProductID = provider.ProductID
+		input.Template = provider.Template
+		input.IPv4 = provider.IPv4
+		input.IPv6 = provider.IPv6
+		log.Printf("[FURO-MASTER] caasify provider selected id=%s role=%s provider=%s note=%s product=%d template=%s ipv4=%d ipv6=%d pool_size=%d", nodeID, role, provider.Name, provider.Note, provider.ProductID, provider.Template, provider.IPv4, provider.IPv6, len(a.cfg.ProviderPool))
+		log.Printf("[FURO-MASTER] caasify create requested id=%s role=%s provider=%s product=%d template=%s ipv4=%d ipv6=%d", nodeID, role, provider.Name, provider.ProductID, provider.Template, provider.IPv4, provider.IPv6)
+	} else {
+		log.Printf("[FURO-MASTER] doprax create requested id=%s role=%s product_version=%s location_option=%s os_option=%s access_method=%s", nodeID, role, a.cfg.DopraxProductVersionID, a.cfg.DopraxLocationOptionID, a.cfg.DopraxOSOptionID, a.cfg.DopraxAccessMethod)
+	}
+	order, err := a.caasify.createVPS(ctx, input)
 	if err != nil {
 		return masterNode{}, err
 	}
-	log.Printf("[FURO-MASTER] caasify create accepted id=%s role=%s order=%s provider=%s product=%d template=%s", nodeID, role, order.OrderID, provider.Name, provider.ProductID, provider.Template)
+	if order.OrderID == "" {
+		return masterNode{}, fmt.Errorf("provider create accepted but returned empty order id")
+	}
+	log.Printf("[FURO-MASTER] provider create accepted backend=%s id=%s role=%s order=%s provider=%s ip=%s password_set=%t", a.cfg.ProviderBackend, nodeID, role, order.OrderID, providerName, order.IP, order.Password != "")
 	now := time.Now().UTC().Format(time.RFC3339)
+	status := "creating"
+	if order.IP != "" && order.Password != "" {
+		status = "created"
+	}
 	node := masterNode{
 		ID:        nodeID,
 		Namespace: a.cfg.Namespace,
 		OrderID:   order.OrderID,
+		IP:        order.IP,
 		Role:      role,
-		Status:    "creating",
+		Status:    status,
+		Password:  order.Password,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -841,7 +920,7 @@ func (a *masterApp) provisionNode(ctx context.Context, nodeID string) error {
 
 	log.Printf("[FURO-MASTER] provision started id=%s role=%s order=%s status=%s attempt=%d ip=%s", local.ID, local.Role, local.OrderID, local.Status, local.ProvisionAttempts, local.IP)
 	if local.IP == "" || local.Password == "" {
-		log.Printf("[FURO-MASTER] waiting for caasify order id=%s order=%s reason=missing_ip_or_password ip_set=%t password_set=%t", local.ID, local.OrderID, local.IP != "", local.Password != "")
+		log.Printf("[FURO-MASTER] waiting for provider node id=%s order=%s backend=%s reason=missing_ip_or_password ip_set=%t password_set=%t", local.ID, local.OrderID, a.cfg.ProviderBackend, local.IP != "", local.Password != "")
 		info, err := a.caasify.waitForOrderReady(ctx, local.OrderID)
 		if err != nil {
 			a.markNodeProvisionError(local.ID, "create_wait_failed", err)
@@ -863,7 +942,7 @@ func (a *masterApp) provisionNode(ctx context.Context, nodeID string) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("[FURO-MASTER] caasify order ready id=%s order=%s ip=%s password_set=%t", local.ID, local.OrderID, local.IP, local.Password != "")
+		log.Printf("[FURO-MASTER] provider node ready id=%s order=%s backend=%s ip=%s password_set=%t", local.ID, local.OrderID, a.cfg.ProviderBackend, local.IP, local.Password != "")
 	}
 
 	a.mu.Lock()
@@ -1542,10 +1621,13 @@ type caasifyCreateRequest struct {
 }
 
 type caasifyCreateResult struct {
-	OrderID string
+	OrderID  string
+	IP       string
+	Password string
 }
 
 type caasifyOrderInfo struct {
+	OrderID  string
 	IP       string
 	Password string
 }
@@ -1708,6 +1790,343 @@ func (c *caasifyClient) deleteOrder(ctx context.Context, orderID string) error {
 	return nil
 }
 
+type dopraxClient struct {
+	apiKey           string
+	username         string
+	password         string
+	baseURL          string
+	productVersionID string
+	locationOptionID string
+	osOptionID       string
+	accessMethod     string
+	client           *http.Client
+	mu               sync.Mutex
+	bearerToken      string
+}
+
+func newDopraxClient(cfg masterConfigFile) *dopraxClient {
+	return &dopraxClient{
+		apiKey:           cfg.DopraxAPIKey,
+		username:         cfg.DopraxUsername,
+		password:         cfg.DopraxPassword,
+		baseURL:          strings.TrimRight(cfg.DopraxBaseURL, "/"),
+		productVersionID: cfg.DopraxProductVersionID,
+		locationOptionID: cfg.DopraxLocationOptionID,
+		osOptionID:       cfg.DopraxOSOptionID,
+		accessMethod:     cfg.DopraxAccessMethod,
+		client:           &http.Client{Timeout: 45 * time.Second},
+	}
+}
+
+func (c *dopraxClient) createVPS(ctx context.Context, input caasifyCreateRequest) (caasifyCreateResult, error) {
+	token, err := c.login(ctx)
+	if err != nil {
+		return caasifyCreateResult{}, err
+	}
+	body := map[string]any{
+		"product_version_id": c.productVersionID,
+		"idempotency_key":    randomUUID(),
+		"name":               input.Note,
+		"metadata": map[string]any{
+			"access_method": c.accessMethod,
+		},
+		"selections": map[string]any{
+			"location": map[string]any{
+				"optionId": c.locationOptionID,
+			},
+			"operating_system": map[string]any{
+				"optionId": c.osOptionID,
+			},
+		},
+	}
+	var decoded map[string]any
+	if err := c.doV2JSON(ctx, http.MethodPost, "/api/v2/services/instances/", token, body, &decoded); err != nil {
+		return caasifyCreateResult{}, err
+	}
+	data, _ := decoded["data"].(map[string]any)
+	serviceID := jsonString(data, "service_id")
+	if serviceID == "" {
+		return caasifyCreateResult{}, fmt.Errorf("doprax create response missing service_id: %#v", decoded)
+	}
+	log.Printf("[FURO-MASTER] doprax create accepted service_id=%s name=%s", serviceID, input.Note)
+	info, err := c.waitForServiceReady(ctx, token, serviceID)
+	if err != nil {
+		return caasifyCreateResult{}, err
+	}
+	return caasifyCreateResult{OrderID: info.OrderID, IP: info.IP, Password: info.Password}, nil
+}
+
+func (c *dopraxClient) waitForServiceReady(ctx context.Context, token, serviceID string) (caasifyOrderInfo, error) {
+	var last caasifyOrderInfo
+	lastStatus := ""
+	for i := 0; i < 90; i++ {
+		info, status, err := c.showService(ctx, token, serviceID)
+		if err == nil {
+			last = info
+			lastStatus = status
+			if info.OrderID != "" && info.IP != "" && info.Password != "" && strings.EqualFold(status, "running") {
+				return info, nil
+			}
+		} else {
+			log.Printf("[FURO-MASTER] doprax service poll failed service_id=%s err=%v", serviceID, err)
+		}
+		log.Printf("[FURO-MASTER] doprax service waiting service_id=%s status=%s vm_code=%s ip=%s password_set=%t", serviceID, lastStatus, last.OrderID, last.IP, last.Password != "")
+		select {
+		case <-ctx.Done():
+			return caasifyOrderInfo{}, ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
+	return caasifyOrderInfo{}, fmt.Errorf("doprax service not ready service_id=%s status=%s vm_code=%q ip=%q password_set=%t", serviceID, lastStatus, last.OrderID, last.IP, last.Password != "")
+}
+
+func (c *dopraxClient) showService(ctx context.Context, token, serviceID string) (caasifyOrderInfo, string, error) {
+	var decoded map[string]any
+	if err := c.doV2JSON(ctx, http.MethodGet, "/api/v2/services/instances/"+serviceID+"/", token, nil, &decoded); err != nil {
+		return caasifyOrderInfo{}, "", err
+	}
+	data, _ := decoded["data"].(map[string]any)
+	service, _ := data["service"].(map[string]any)
+	access, _ := data["access"].(map[string]any)
+	links, _ := data["links"].(map[string]any)
+	vm, _ := data["vm"].(map[string]any)
+	metadata, _ := service["metadata"].(map[string]any)
+	status := jsonString(service, "status")
+	vmCode := firstNonEmpty(
+		jsonString(links, "vm_code"),
+		jsonString(metadata, "vm_code"),
+		jsonString(vm, "vm_code"),
+	)
+	ip := firstNonEmpty(
+		jsonString(access, "public_ipv4"),
+		jsonString(vm, "ipv4"),
+	)
+	password := ""
+	if vmCode != "" {
+		password = c.fetchV2Password(ctx, token, vmCode)
+		if password == "" {
+			if info, err := c.showOrder(ctx, vmCode); err == nil {
+				password = info.Password
+				if ip == "" {
+					ip = info.IP
+				}
+			}
+		}
+	}
+	return caasifyOrderInfo{OrderID: vmCode, IP: ip, Password: password}, status, nil
+}
+
+func (c *dopraxClient) waitForOrderReady(ctx context.Context, orderID string) (caasifyOrderInfo, error) {
+	var last caasifyOrderInfo
+	for i := 0; i < 90; i++ {
+		info, err := c.showOrder(ctx, orderID)
+		if err == nil {
+			last = info
+			if info.IP != "" && info.Password != "" {
+				return info, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return caasifyOrderInfo{}, ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
+	}
+	return caasifyOrderInfo{}, fmt.Errorf("doprax vm not ready vm_code=%s ip=%q password_set=%t", orderID, last.IP, last.Password != "")
+}
+
+func (c *dopraxClient) showOrder(ctx context.Context, vmCode string) (caasifyOrderInfo, error) {
+	var detail map[string]any
+	if err := c.doV1JSON(ctx, http.MethodGet, "/api/v1/vms/"+vmCode+"/", nil, &detail); err != nil {
+		return caasifyOrderInfo{}, err
+	}
+	data, _ := detail["data"].(map[string]any)
+	vm, _ := data["vm"].(map[string]any)
+	access, _ := data["access"].(map[string]any)
+	ip := firstNonEmpty(
+		jsonString(data, "ipv4"),
+		jsonString(data, "public_ipv4"),
+		jsonString(vm, "ipv4"),
+		jsonString(access, "public_ipv4"),
+	)
+
+	var pass map[string]any
+	if err := c.doV1JSON(ctx, http.MethodGet, "/api/v1/vms/"+vmCode+"/password/", nil, &pass); err != nil {
+		return caasifyOrderInfo{OrderID: vmCode, IP: ip}, err
+	}
+	passData, _ := pass["data"].(map[string]any)
+	password := firstNonEmpty(
+		jsonString(passData, "tempPass"),
+		jsonString(passData, "password"),
+		jsonString(passData, "root_password"),
+		jsonString(passData, "temp_pass"),
+	)
+	return caasifyOrderInfo{OrderID: vmCode, IP: ip, Password: password}, nil
+}
+
+func (c *dopraxClient) deleteOrder(ctx context.Context, orderID string) error {
+	var decoded map[string]any
+	if err := c.doV1JSON(ctx, http.MethodDelete, "/api/v1/vms/"+orderID+"/", nil, &decoded); err != nil {
+		return err
+	}
+	if ok, _ := decoded["success"].(bool); !ok {
+		return fmt.Errorf("doprax delete not accepted: %#v", decoded)
+	}
+	return nil
+}
+
+func (c *dopraxClient) listOrders(ctx context.Context) ([]caasifyListedOrder, error) {
+	var decoded map[string]any
+	if err := c.doV1JSON(ctx, http.MethodGet, "/api/v1/vms/", nil, &decoded); err != nil {
+		return nil, err
+	}
+	rawOrders, _ := decoded["data"].([]any)
+	orders := make([]caasifyListedOrder, 0, len(rawOrders))
+	for _, raw := range rawOrders {
+		item, _ := raw.(map[string]any)
+		if item == nil {
+			continue
+		}
+		order := caasifyListedOrder{
+			OrderID: firstNonEmpty(jsonString(item, "vmCode"), jsonString(item, "vm_code")),
+			Note:    firstNonEmpty(jsonString(item, "name"), jsonString(item, "sysName"), jsonString(item, "sys_name")),
+			IP:      firstNonEmpty(jsonString(item, "ipv4"), jsonString(item, "public_ipv4")),
+			Status:  jsonString(item, "status"),
+		}
+		if order.OrderID != "" {
+			orders = append(orders, order)
+		}
+	}
+	return orders, nil
+}
+
+func (c *dopraxClient) login(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	if c.bearerToken != "" {
+		token := c.bearerToken
+		c.mu.Unlock()
+		return token, nil
+	}
+	c.mu.Unlock()
+
+	body := map[string]string{"user_email": c.username, "user_pass": c.password}
+	data, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/account/login-doprax-123321/", bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("accept", "application/json, text/plain, */*")
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("origin", c.baseURL)
+	req.Header.Set("referer", c.baseURL+"/v/signin/")
+	req.Header.Set("user-agent", dopraxUserAgent)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respData, _ := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("doprax login status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respData)))
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(respData, &decoded); err != nil {
+		return "", err
+	}
+	token := jsonString(decoded, "cca")
+	if data, _ := decoded["data"].(map[string]any); token == "" {
+		token = jsonString(data, "cca")
+	}
+	if token == "" {
+		return "", fmt.Errorf("doprax login response missing cca: %s", strings.TrimSpace(string(respData)))
+	}
+	c.mu.Lock()
+	c.bearerToken = token
+	c.mu.Unlock()
+	return token, nil
+}
+
+const dopraxUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
+
+func (c *dopraxClient) doV1JSON(ctx context.Context, method, path string, body any, out any) error {
+	return c.doJSON(ctx, method, path, "", body, out)
+}
+
+func (c *dopraxClient) doV2JSON(ctx context.Context, method, path, token string, body any, out any) error {
+	return c.doJSON(ctx, method, path, token, body, out)
+}
+
+func (c *dopraxClient) doJSON(ctx context.Context, method, path, bearerToken string, body any, out any) error {
+	var reader io.Reader
+	if body != nil {
+		data, _ := json.Marshal(body)
+		reader = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("accept", "application/json, text/plain, */*")
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("user-agent", dopraxUserAgent)
+	if bearerToken != "" {
+		req.Header.Set("authorization", "Bearer "+bearerToken)
+		req.Header.Set("cookie", "cca="+bearerToken)
+		req.Header.Set("origin", c.baseURL)
+		req.Header.Set("referer", c.baseURL+"/v/virtual-machines/new")
+		req.Header.Set("sec-fetch-dest", "empty")
+		req.Header.Set("sec-fetch-mode", "cors")
+		req.Header.Set("sec-fetch-site", "same-origin")
+	} else {
+		req.Header.Set("X-API-Key", c.apiKey)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("%s %s status=%d body=%s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *dopraxClient) fetchV2Password(ctx context.Context, token, vmCode string) string {
+	var decoded map[string]any
+	if err := c.doV2JSON(ctx, http.MethodGet, "/api/v2/vms/"+vmCode+"/actions/access/", token, nil, &decoded); err != nil {
+		log.Printf("[FURO-MASTER] doprax password fetch failed vm_code=%s err=%v", vmCode, err)
+		return ""
+	}
+	data, _ := decoded["data"].(map[string]any)
+	return firstNonEmpty(jsonString(data, "tempPass"), jsonString(data, "password"), jsonString(data, "temp_pass"))
+}
+
+func randomUUID() string {
+	var b [16]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func jsonString(raw map[string]any, key string) string {
 	if raw == nil {
 		return ""
@@ -1770,7 +2189,7 @@ func main() {
 	if err := app.loadState(); err != nil {
 		log.Fatalf("failed to load state: %v", err)
 	}
-	log.Printf("[FURO-MASTER] starting namespace=%s fleet_id=%s listen=%s admin_listen=%s public_url=%s relay_url=%s backup_count=%d state_file=%s", cfg.Namespace, app.state.FleetID, cfg.Listen, cfg.AdminListen, cfg.PublicURL, cfg.RelayURL, cfg.BackupCount, app.statePath)
+	log.Printf("[FURO-MASTER] starting namespace=%s fleet_id=%s provider_backend=%s listen=%s admin_listen=%s public_url=%s relay_url=%s backup_count=%d state_file=%s", cfg.Namespace, app.state.FleetID, cfg.ProviderBackend, cfg.Listen, cfg.AdminListen, cfg.PublicURL, cfg.RelayURL, cfg.BackupCount, app.statePath)
 	if cfg.AdminListen != "" {
 		go func() {
 			if err := app.runAdminServer(); err != nil {

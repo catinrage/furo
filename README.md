@@ -200,20 +200,28 @@ Key fields in `config.server.json`:
 
 ### Server master config
 
-`furo-server-master` manages one active server node plus configured clean standby nodes through the Caasify API.
+`furo-server-master` manages one active server node plus configured clean standby nodes through a VPS provider API. Doprax is the default backend; Caasify remains available by setting `provider_backend` to `caasify`.
 
 Key fields in `config.server-master.json`:
 
 - `api_key`
   Shared control and tunnel secret. Must match client, server, and relay.
 - `namespace`
-  Fleet namespace. Use a different namespace for each independent master/client group sharing the same Caasify account or relay PHP.
+  Fleet namespace. Use a different namespace for each independent master/client group sharing the same provider account or relay PHP.
 - `listen` / `public_url`
   Control listener for node reports and the public URL rendered into new node configs.
 - `admin_listen`
   Local admin status listener.
+- `provider_backend`
+  Provider backend, `doprax` or `caasify`.
+- `doprax_api_key`
+  Doprax v1 API key. Used for listing, password lookup, and deletion.
+- `doprax_username` / `doprax_password`
+  Doprax account login. Used only for v2 VM creation.
+- `doprax_product_version_id` / `doprax_location_option_id` / `doprax_os_option_id`
+  Doprax v2 create options. The example defaults target ProVM Germany with Ubuntu 24.04.
 - `caasify_token`
-  Caasify API token.
+  Caasify API token, only required when `provider_backend` is `caasify`.
 - `state_file` / `log_file`
   Local durable fleet state and optional master log path.
 - `relay_url`

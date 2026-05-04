@@ -564,6 +564,116 @@ func TestCaasifyShowOrderParsesScriptShape(t *testing.T) {
 	}
 }
 
+func TestDopraxClientCreateListDelete(t *testing.T) {
+	var sawCreate bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/account/login-doprax-123321/":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"cca":     "bearer-token",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v2/services/instances/":
+			if got := r.Header.Get("Authorization"); got != "Bearer bearer-token" {
+				t.Fatalf("Authorization = %q, want bearer", got)
+			}
+			if !strings.Contains(r.Header.Get("Cookie"), "cca=bearer-token") {
+				t.Fatalf("Cookie = %q, want cca token", r.Header.Get("Cookie"))
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("create body decode: %v", err)
+			}
+			if body["name"] != "furo-node-a" {
+				t.Fatalf("create name = %#v, want furo-node-a", body["name"])
+			}
+			sawCreate = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"service_id": "svc-1",
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/services/instances/svc-1/":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"service": map[string]any{
+						"status": "running",
+					},
+					"access": map[string]any{
+						"public_ipv4": "203.0.113.50",
+					},
+					"links": map[string]any{
+						"vm_code": "vm-1",
+					},
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v2/vms/vm-1/actions/access/":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"vmUsername": "root",
+					"tempPass":   "root-password",
+				},
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/vms/":
+			if got := r.Header.Get("X-API-Key"); got != "v1-key" {
+				t.Fatalf("X-API-Key = %q, want v1-key", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"success": true,
+				"data": []map[string]any{
+					{"vmCode": "vm-1", "name": "furo-node-a", "status": "running", "ipv4": "203.0.113.50"},
+				},
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/vms/vm-1/":
+			if got := r.Header.Get("X-API-Key"); got != "v1-key" {
+				t.Fatalf("X-API-Key = %q, want v1-key", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := newDopraxClient(masterConfigFile{
+		DopraxAPIKey:           "v1-key",
+		DopraxUsername:         "user@example.com",
+		DopraxPassword:         "secret",
+		DopraxBaseURL:          server.URL,
+		DopraxProductVersionID: "product-version",
+		DopraxLocationOptionID: "location-option",
+		DopraxOSOptionID:       "os-option",
+		DopraxAccessMethod:     "password",
+	})
+	client.client = server.Client()
+
+	created, err := client.createVPS(context.Background(), caasifyCreateRequest{Note: "furo-node-a"})
+	if err != nil {
+		t.Fatalf("createVPS() error = %v", err)
+	}
+	if !sawCreate {
+		t.Fatal("create endpoint was not called")
+	}
+	if created.OrderID != "vm-1" || created.IP != "203.0.113.50" || created.Password != "root-password" {
+		t.Fatalf("created = %#v, want vm/ip/password", created)
+	}
+
+	orders, err := client.listOrders(context.Background())
+	if err != nil {
+		t.Fatalf("listOrders() error = %v", err)
+	}
+	if len(orders) != 1 || orders[0].OrderID != "vm-1" || orders[0].Note != "furo-node-a" {
+		t.Fatalf("orders = %#v, want listed VM", orders)
+	}
+	if err := client.deleteOrder(context.Background(), "vm-1"); err != nil {
+		t.Fatalf("deleteOrder() error = %v", err)
+	}
+}
+
 func TestRunSSHScriptHonorsContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
