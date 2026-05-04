@@ -781,6 +781,41 @@ func TestMasterStaticEgressStatePersistsNodeKeys(t *testing.T) {
 	}
 }
 
+func TestRenderMasterWireGuardConfigAllowsForwarding(t *testing.T) {
+	cfg := defaultMasterConfig()
+	cfg.StaticEgress.Enabled = true
+	cfg.StaticEgress.Interface = "wg-furo"
+	cfg.StaticEgress.Subnet = "10.66.0.0/24"
+	cfg.StaticEgress.MasterTunnelIP = "10.66.0.1"
+	app := newMasterApp(cfg)
+	state := masterState{
+		StaticEgress: masterStaticEgressState{
+			PrivateKey: "master-private",
+		},
+		Nodes: []masterNode{{
+			EgressEnabled:      true,
+			EgressTunnelIP:     "10.66.0.2",
+			WireGuardPublicKey: "node-public",
+			Status:             "ready",
+		}},
+	}
+	rendered, err := app.renderMasterWireGuardConfig(state)
+	if err != nil {
+		t.Fatalf("renderMasterWireGuardConfig() error = %v", err)
+	}
+	for _, want := range []string{
+		"PostUp = iptables -t nat -A POSTROUTING -s 10.66.0.0/24 -j MASQUERADE",
+		"PostUp = iptables -A FORWARD -i %i -j ACCEPT",
+		"PostUp = iptables -A FORWARD -o %i -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT",
+		"PostDown = iptables -D FORWARD -i %i -j ACCEPT",
+		"AllowedIPs = 10.66.0.2/32",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered WireGuard config missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestRunSSHScriptHonorsContext(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
