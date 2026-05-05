@@ -822,6 +822,62 @@ func TestManagedRouteMapPersistReplacesExistingRoutesWithSameID(t *testing.T) {
 	}
 }
 
+func TestManagedRouteMapPersistUsesExpandedRelayRoutes(t *testing.T) {
+	originalConfigPath := *configPath
+	t.Cleanup(func() { *configPath = originalConfigPath })
+
+	configFile := filepath.Join(t.TempDir(), "config.client.json")
+	*configPath = configFile
+	if err := os.WriteFile(configFile, []byte(`{
+  "api_key": "secret",
+  "socks_listen": "127.0.0.1:0",
+  "agent_listen": "127.0.0.1:0",
+  "public_host": "198.51.100.10",
+  "public_port": 28080,
+  "routes": []
+}`), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	err := persistRelayRouteMap(relayRouteMap{
+		Namespace:  "sky-01",
+		FleetID:    "furo-sky-01",
+		Generation: 4,
+		Active:     &relayRouteSpec{ID: "active-a", RelayURL: "https://relay-a.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 2},
+		Standby:    []relayRouteSpec{{ID: "standby-a", RelayURL: "https://relay-a.example/furo.php", ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 2}},
+		ActiveRoutes: []relayRouteSpec{
+			{ID: "active-a", NodeID: "active-a", RelayID: "primary", RelayURL: "https://relay-a.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 2},
+			{ID: "active-a__relay-b", NodeID: "active-a", RelayID: "relay-b", RelayURL: "https://relay-b.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 3},
+		},
+		StandbyRoutes: []relayRouteSpec{
+			{ID: "standby-a", NodeID: "standby-a", RelayID: "primary", RelayURL: "https://relay-a.example/furo.php", ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 2},
+			{ID: "standby-a__relay-b", NodeID: "standby-a", RelayID: "relay-b", RelayURL: "https://relay-b.example/furo.php", ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("persistRelayRouteMap() error = %v", err)
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var got struct {
+		Routes []clientRouteConfigFile `json:"routes"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("config json: %v", err)
+	}
+	if len(got.Routes) != 4 {
+		t.Fatalf("routes count = %d, want two active and two standby relay routes", len(got.Routes))
+	}
+	if got.Routes[1].ID != "active-a__relay-b" || got.Routes[1].NodeID != "active-a" || got.Routes[1].SessionCount != 3 || got.Routes[1].Role != "active" {
+		t.Fatalf("secondary active route = %#v", got.Routes[1])
+	}
+	if got.Routes[3].ID != "standby-a__relay-b" || got.Routes[3].NodeID != "standby-a" || got.Routes[3].Enabled == nil || *got.Routes[3].Enabled {
+		t.Fatalf("secondary standby route = %#v", got.Routes[3])
+	}
+}
+
 func TestPromoteManagedStandbyDisablesOldActive(t *testing.T) {
 	trueValue := true
 	falseValue := false
@@ -842,11 +898,48 @@ func TestPromoteManagedStandbyDisablesOldActive(t *testing.T) {
 	if !ok {
 		t.Fatal("promoteManagedStandby() ok = false")
 	}
-	if promoted.ID != "standby-a" || promoted.Role != "active" || !promoted.Enabled {
+	if len(promoted) != 1 || promoted[0].ID != "standby-a" || promoted[0].Role != "active" || !promoted[0].Enabled {
 		t.Fatalf("promoted = %#v", promoted)
 	}
 	if pool.routes[0].cfg.Role != "retired" || pool.routes[0].cfg.Enabled {
 		t.Fatalf("old active route = %#v", pool.routes[0].cfg)
+	}
+}
+
+func TestPromoteManagedStandbyPromotesAllRelayRoutesForNode(t *testing.T) {
+	trueValue := true
+	falseValue := false
+	routes, _, err := buildClientRoutes(clientConfigFile{
+		APIKey:     "secret",
+		PublicHost: "198.51.100.10",
+		PublicPort: 28080,
+		Routes: []clientRouteConfigFile{
+			{ID: "active-a", NodeID: "active-a", RelayURL: "https://relay-a.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 1, Enabled: &trueValue, ManagedBy: "fleet-a", Role: "active", Generation: 3},
+			{ID: "active-a__relay-b", NodeID: "active-a", RelayURL: "https://relay-b.example/furo.php", ServerHost: "203.0.113.10", ServerPort: 8443, SessionCount: 1, Enabled: &trueValue, ManagedBy: "fleet-a", Role: "active", Generation: 3},
+			{ID: "standby-a", NodeID: "standby-a", RelayURL: "https://relay-a.example/furo.php", ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 1, Enabled: &falseValue, ManagedBy: "fleet-a", Role: "standby", Generation: 3},
+			{ID: "standby-a__relay-b", NodeID: "standby-a", RelayURL: "https://relay-b.example/furo.php", ServerHost: "203.0.113.11", ServerPort: 8443, SessionCount: 1, Enabled: &falseValue, ManagedBy: "fleet-a", Role: "standby", Generation: 3},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildClientRoutes() error = %v", err)
+	}
+	pool := newSessionPoolForRoutes(routes, routeSelectionLeastLoad)
+	promoted, ok := pool.promoteManagedStandby()
+	if !ok {
+		t.Fatal("promoteManagedStandby() ok = false")
+	}
+	if len(promoted) != 2 {
+		t.Fatalf("promoted count = %d, want both relay routes", len(promoted))
+	}
+	for _, cfg := range promoted {
+		if cfg.NodeID != "standby-a" || cfg.Role != "active" || !cfg.Enabled {
+			t.Fatalf("promoted route = %#v, want active standby-a route", cfg)
+		}
+	}
+	for _, route := range pool.routes[:2] {
+		if route.cfg.Role != "retired" || route.cfg.Enabled {
+			t.Fatalf("old active route = %#v, want retired", route.cfg)
+		}
 	}
 }
 

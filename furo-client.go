@@ -134,6 +134,7 @@ type clientAIRSConfig struct {
 
 type clientRouteConfigFile struct {
 	ID           string `json:"id"`
+	NodeID       string `json:"node_id,omitempty"`
 	RelayURL     string `json:"relay_url"`
 	PublicHost   string `json:"public_host"`
 	PublicPort   int    `json:"public_port"`
@@ -166,6 +167,7 @@ const (
 
 type clientRouteConfig struct {
 	ID           string
+	NodeID       string
 	RelayURL     string
 	PublicHost   string
 	PublicPort   int
@@ -368,6 +370,7 @@ func buildClientRoutes(cfg clientConfigFile) ([]clientRouteConfig, int, error) {
 
 		routeCfg := clientRouteConfig{
 			ID:           routeID,
+			NodeID:       sanitizeSessionComponent(route.NodeID),
 			RelayURL:     route.RelayURL,
 			PublicHost:   publicHostValue,
 			PublicPort:   publicPortValue,
@@ -1816,6 +1819,7 @@ type clientStatusResponse struct {
 
 type clientRouteStatus struct {
 	RouteID            string `json:"route_id"`
+	NodeID             string `json:"node_id,omitempty"`
 	RelayURL           string `json:"relay_url"`
 	ServerHost         string `json:"server_host"`
 	ServerPort         int    `json:"server_port"`
@@ -1833,17 +1837,21 @@ type clientRouteStatus struct {
 }
 
 type relayRouteMap struct {
-	Namespace  string           `json:"namespace"`
-	FleetID    string           `json:"fleet_id"`
-	Generation int64            `json:"generation"`
-	Active     *relayRouteSpec  `json:"active"`
-	Standby    []relayRouteSpec `json:"standby"`
-	Retired    []string         `json:"retired"`
-	UpdatedAt  string           `json:"updated_at"`
+	Namespace     string           `json:"namespace"`
+	FleetID       string           `json:"fleet_id"`
+	Generation    int64            `json:"generation"`
+	Active        *relayRouteSpec  `json:"active"`
+	Standby       []relayRouteSpec `json:"standby"`
+	ActiveRoutes  []relayRouteSpec `json:"active_routes,omitempty"`
+	StandbyRoutes []relayRouteSpec `json:"standby_routes,omitempty"`
+	Retired       []string         `json:"retired"`
+	UpdatedAt     string           `json:"updated_at"`
 }
 
 type relayRouteSpec struct {
 	ID           string `json:"id"`
+	NodeID       string `json:"node_id,omitempty"`
+	RelayID      string `json:"relay_id,omitempty"`
 	RelayURL     string `json:"relay_url"`
 	PublicHost   string `json:"public_host,omitempty"`
 	PublicPort   int    `json:"public_port,omitempty"`
@@ -1859,7 +1867,44 @@ func managedByForRouteMap(routeMap relayRouteMap) string {
 	return "server-master"
 }
 
+func routeMapActiveSpecs(routeMap relayRouteMap) []relayRouteSpec {
+	if len(routeMap.ActiveRoutes) > 0 {
+		return routeMap.ActiveRoutes
+	}
+	if routeMap.Active != nil {
+		return []relayRouteSpec{*routeMap.Active}
+	}
+	return nil
+}
+
+func routeMapStandbySpecs(routeMap relayRouteMap) []relayRouteSpec {
+	if len(routeMap.StandbyRoutes) > 0 {
+		return routeMap.StandbyRoutes
+	}
+	return routeMap.Standby
+}
+
+func nodeIDFromRouteID(routeID string) string {
+	routeID = sanitizeSessionComponent(routeID)
+	if before, _, ok := strings.Cut(routeID, "__"); ok {
+		return before
+	}
+	return routeID
+}
+
+func managedNodeID(cfg clientRouteConfig) string {
+	if cfg.NodeID != "" {
+		return cfg.NodeID
+	}
+	return nodeIDFromRouteID(cfg.ID)
+}
+
 func routeConfigFromRelaySpec(spec relayRouteSpec, managedBy, role string, generation int64, enabled bool, fallbackPublicHost string, fallbackPublicPort int) clientRouteConfig {
+	routeID := sanitizeSessionComponent(spec.ID)
+	nodeID := sanitizeSessionComponent(spec.NodeID)
+	if nodeID == "" {
+		nodeID = nodeIDFromRouteID(routeID)
+	}
 	sessionCountValue := spec.SessionCount
 	if sessionCountValue <= 0 {
 		sessionCountValue = 1
@@ -1877,7 +1922,8 @@ func routeConfigFromRelaySpec(spec relayRouteSpec, managedBy, role string, gener
 		publicPortValue = fallbackPublicPort
 	}
 	return clientRouteConfig{
-		ID:           sanitizeSessionComponent(spec.ID),
+		ID:           routeID,
+		NodeID:       nodeID,
 		RelayURL:     relayURLValue,
 		PublicHost:   publicHostValue,
 		PublicPort:   publicPortValue,
@@ -1940,6 +1986,9 @@ func routeConfigMap(cfg clientRouteConfig) map[string]any {
 		"session_count": cfg.SessionCount,
 		"enabled":       cfg.Enabled,
 	}
+	if cfg.NodeID != "" {
+		route["node_id"] = cfg.NodeID
+	}
 	if cfg.PublicHost != "" {
 		route["public_host"] = cfg.PublicHost
 	}
@@ -1958,6 +2007,28 @@ func routeConfigMap(cfg clientRouteConfig) map[string]any {
 	return route
 }
 
+func routeMapRetiredIDs(ids []string) (map[string]struct{}, map[string]struct{}) {
+	retiredRoutes := make(map[string]struct{})
+	retiredNodes := make(map[string]struct{})
+	for _, id := range ids {
+		sanitized := sanitizeSessionComponent(id)
+		if sanitized == "" {
+			continue
+		}
+		retiredRoutes[sanitized] = struct{}{}
+		retiredNodes[nodeIDFromRouteID(sanitized)] = struct{}{}
+	}
+	return retiredRoutes, retiredNodes
+}
+
+func rawRouteNodeID(route map[string]any, routeID string) string {
+	nodeID := sanitizeSessionComponent(stringFromMap(route, "node_id"))
+	if nodeID != "" {
+		return nodeID
+	}
+	return nodeIDFromRouteID(routeID)
+}
+
 func persistRelayRouteMap(routeMap relayRouteMap) error {
 	data, err := os.ReadFile(*configPath)
 	if err != nil {
@@ -1971,22 +2042,17 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 	fallbackPublicHost := stringFromMap(raw, "public_host")
 	fallbackPublicPort := intFromAny(raw["public_port"])
 	managedIDs := make(map[string]struct{})
-	if routeMap.Active != nil {
-		if id := sanitizeSessionComponent(routeMap.Active.ID); id != "" {
+	for _, active := range routeMapActiveSpecs(routeMap) {
+		if id := sanitizeSessionComponent(active.ID); id != "" {
 			managedIDs[id] = struct{}{}
 		}
 	}
-	for _, standby := range routeMap.Standby {
+	for _, standby := range routeMapStandbySpecs(routeMap) {
 		if id := sanitizeSessionComponent(standby.ID); id != "" {
 			managedIDs[id] = struct{}{}
 		}
 	}
-	retired := make(map[string]struct{})
-	for _, id := range routeMap.Retired {
-		if sanitized := sanitizeSessionComponent(id); sanitized != "" {
-			retired[sanitized] = struct{}{}
-		}
-	}
+	retiredRoutes, retiredNodes := routeMapRetiredIDs(routeMap.Retired)
 	routes := make([]any, 0)
 	if existing, ok := raw["routes"].([]any); ok {
 		for _, value := range existing {
@@ -1995,8 +2061,12 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 				continue
 			}
 			routeID := sanitizeSessionComponent(stringFromMap(route, "id"))
+			routeNodeID := rawRouteNodeID(route, routeID)
 			routeManagedBy := stringFromMap(route, "managed_by")
-			if _, isRetired := retired[routeID]; isRetired {
+			if _, isRetired := retiredRoutes[routeID]; isRetired {
+				continue
+			}
+			if _, isRetired := retiredNodes[routeNodeID]; isRetired {
 				continue
 			}
 			if routeManagedBy == managedBy {
@@ -2008,11 +2078,11 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 			routes = append(routes, route)
 		}
 	}
-	if routeMap.Active != nil {
-		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true, fallbackPublicHost, fallbackPublicPort)
+	for _, active := range routeMapActiveSpecs(routeMap) {
+		cfg := routeConfigFromRelaySpec(active, managedBy, "active", routeMap.Generation, true, fallbackPublicHost, fallbackPublicPort)
 		routes = append(routes, routeConfigMap(cfg))
 	}
-	for _, standby := range routeMap.Standby {
+	for _, standby := range routeMapStandbySpecs(routeMap) {
 		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false, fallbackPublicHost, fallbackPublicPort)
 		routes = append(routes, routeConfigMap(cfg))
 	}
@@ -2029,7 +2099,10 @@ func persistRelayRouteMap(routeMap relayRouteMap) error {
 	return os.WriteFile(*configPath, out, 0644)
 }
 
-func persistPromotedManagedRoute(promoted clientRouteConfig) error {
+func persistPromotedManagedRoutes(promoted []clientRouteConfig) error {
+	if len(promoted) == 0 {
+		return nil
+	}
 	data, err := os.ReadFile(*configPath)
 	if err != nil {
 		return err
@@ -2040,16 +2113,22 @@ func persistPromotedManagedRoute(promoted clientRouteConfig) error {
 	}
 	existing, _ := raw["routes"].([]any)
 	routes := make([]any, 0, len(existing))
-	found := false
+	promotedByID := make(map[string]clientRouteConfig, len(promoted))
+	found := make(map[string]bool, len(promoted))
+	managedBy := promoted[0].ManagedBy
+	for _, cfg := range promoted {
+		promotedByID[cfg.ID] = cfg
+	}
 	for _, value := range existing {
 		route, ok := value.(map[string]any)
 		if !ok {
 			continue
 		}
-		if stringFromMap(route, "managed_by") == promoted.ManagedBy {
-			if sanitizeSessionComponent(stringFromMap(route, "id")) == promoted.ID {
-				routes = append(routes, routeConfigMap(promoted))
-				found = true
+		if stringFromMap(route, "managed_by") == managedBy {
+			routeID := sanitizeSessionComponent(stringFromMap(route, "id"))
+			if cfg, ok := promotedByID[routeID]; ok {
+				routes = append(routes, routeConfigMap(cfg))
+				found[routeID] = true
 				continue
 			}
 			if stringFromMap(route, "role") == "active" {
@@ -2059,8 +2138,10 @@ func persistPromotedManagedRoute(promoted clientRouteConfig) error {
 		}
 		routes = append(routes, route)
 	}
-	if !found {
-		routes = append(routes, routeConfigMap(promoted))
+	for _, cfg := range promoted {
+		if !found[cfg.ID] {
+			routes = append(routes, routeConfigMap(cfg))
+		}
 	}
 	raw["routes"] = routes
 	out, err := json.MarshalIndent(raw, "", "  ")
@@ -2069,6 +2150,10 @@ func persistPromotedManagedRoute(promoted clientRouteConfig) error {
 	}
 	out = append(out, '\n')
 	return os.WriteFile(*configPath, out, 0644)
+}
+
+func persistPromotedManagedRoute(promoted clientRouteConfig) error {
+	return persistPromotedManagedRoutes([]clientRouteConfig{promoted})
 }
 
 func newSessionPool(count int) *SessionPool {
@@ -2168,7 +2253,7 @@ func (p *SessionPool) upsertManagedRoute(cfg clientRouteConfig) {
 	p.notifyStateChange()
 }
 
-func (p *SessionPool) disableRetiredManagedRoutes(managedBy string, generation int64, keep map[string]struct{}, retired map[string]struct{}) {
+func (p *SessionPool) disableRetiredManagedRoutes(managedBy string, keep map[string]struct{}, retiredRoutes map[string]struct{}, retiredNodes map[string]struct{}) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, route := range p.routes {
@@ -2176,8 +2261,9 @@ func (p *SessionPool) disableRetiredManagedRoutes(managedBy string, generation i
 			continue
 		}
 		_, isKeep := keep[route.cfg.ID]
-		_, isRetired := retired[route.cfg.ID]
-		if isRetired || (!isKeep && route.cfg.Generation < generation) {
+		_, isRetiredRoute := retiredRoutes[route.cfg.ID]
+		_, isRetiredNode := retiredNodes[managedNodeID(route.cfg)]
+		if isRetiredRoute || isRetiredNode || !isKeep {
 			route.cfg.Enabled = false
 			route.cfg.Role = "retired"
 		}
@@ -2194,27 +2280,22 @@ func (p *SessionPool) applyRelayRouteMap(routeMap relayRouteMap) {
 	}
 	managedBy := managedByForRouteMap(routeMap)
 	keep := make(map[string]struct{})
-	retired := make(map[string]struct{})
-	for _, id := range routeMap.Retired {
-		if sanitized := sanitizeSessionComponent(id); sanitized != "" {
-			retired[sanitized] = struct{}{}
-		}
-	}
-	if routeMap.Active != nil {
-		cfg := routeConfigFromRelaySpec(*routeMap.Active, managedBy, "active", routeMap.Generation, true, publicHost, publicPort)
+	retiredRoutes, retiredNodes := routeMapRetiredIDs(routeMap.Retired)
+	for _, active := range routeMapActiveSpecs(routeMap) {
+		cfg := routeConfigFromRelaySpec(active, managedBy, "active", routeMap.Generation, true, publicHost, publicPort)
 		if cfg.ID != "" {
 			keep[cfg.ID] = struct{}{}
 			p.upsertManagedRoute(cfg)
 		}
 	}
-	for _, standby := range routeMap.Standby {
+	for _, standby := range routeMapStandbySpecs(routeMap) {
 		cfg := routeConfigFromRelaySpec(standby, managedBy, "standby", routeMap.Generation, false, publicHost, publicPort)
 		if cfg.ID != "" {
 			keep[cfg.ID] = struct{}{}
 			p.upsertManagedRoute(cfg)
 		}
 	}
-	p.disableRetiredManagedRoutes(managedBy, routeMap.Generation, keep, retired)
+	p.disableRetiredManagedRoutes(managedBy, keep, retiredRoutes, retiredNodes)
 }
 
 func (p *SessionPool) managedActiveReady() int {
@@ -2232,7 +2313,7 @@ func (p *SessionPool) managedActiveReady() int {
 	return ready
 }
 
-func (p *SessionPool) promoteManagedStandby() (clientRouteConfig, bool) {
+func (p *SessionPool) promoteManagedStandby() ([]clientRouteConfig, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var chosen *clientRouteState
@@ -2245,20 +2326,31 @@ func (p *SessionPool) promoteManagedStandby() (clientRouteConfig, bool) {
 		}
 	}
 	if chosen == nil {
-		return clientRouteConfig{}, false
+		return nil, false
 	}
+	chosenNodeID := managedNodeID(chosen.cfg)
+	promoted := make([]clientRouteConfig, 0, 1)
 	for _, route := range p.routes {
 		if route.cfg.ManagedBy == chosen.cfg.ManagedBy && route.cfg.Role == "active" {
 			route.cfg.Enabled = false
 			route.cfg.Role = "retired"
 		}
 	}
-	chosen.cfg.Role = "active"
-	chosen.cfg.Enabled = true
+	for _, route := range p.routes {
+		if route.cfg.ManagedBy != chosen.cfg.ManagedBy || route.cfg.Role != "standby" {
+			continue
+		}
+		if managedNodeID(route.cfg) != chosenNodeID {
+			continue
+		}
+		route.cfg.Role = "active"
+		route.cfg.Enabled = true
+		promoted = append(promoted, route.cfg)
+		p.ensureRouteSessionsLocked(route)
+	}
 	atomic.StoreInt64(&p.localFailoverGeneration, chosen.cfg.Generation)
-	p.ensureRouteSessionsLocked(chosen)
 	p.notifyStateChange()
-	return chosen.cfg, true
+	return promoted, true
 }
 
 func reserveSessionCount(count int) int {
@@ -2374,6 +2466,7 @@ func buildClientStatus(pool *SessionPool) clientStatusResponse {
 	for idx, route := range pool.routes {
 		status.Routes[idx] = clientRouteStatus{
 			RouteID:            route.cfg.ID,
+			NodeID:             route.cfg.NodeID,
 			RelayURL:           route.cfg.RelayURL,
 			ServerHost:         route.cfg.ServerHost,
 			ServerPort:         route.cfg.ServerPort,
@@ -3500,8 +3593,14 @@ func runManagedRouteMapLoop(pool *SessionPool) {
 			if !ok {
 				continue
 			}
-			logEvent("[CLIENT] managed_failover_promoted route=%s generation=%d", promoted.ID, promoted.Generation)
-			if err := persistPromotedManagedRoute(promoted); err != nil {
+			promotedIDs := make([]string, 0, len(promoted))
+			generation := int64(0)
+			for _, route := range promoted {
+				promotedIDs = append(promotedIDs, route.ID)
+				generation = route.Generation
+			}
+			logEvent("[CLIENT] managed_failover_promoted routes=%s generation=%d", strings.Join(promotedIDs, ","), generation)
+			if err := persistPromotedManagedRoutes(promoted); err != nil {
 				logEvent("[CLIENT] managed_failover_persist_failed err=%v", err)
 			}
 			activeEmptySince = time.Time{}

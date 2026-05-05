@@ -18,6 +18,9 @@ type fakeCaasifyAPI struct {
 	mu           sync.Mutex
 	createCount  int
 	deleteCount  int
+	renameCount  int
+	renameNames  []string
+	renameCh     chan string
 	createInputs []caasifyCreateRequest
 	orders       []caasifyListedOrder
 	ready        map[string]caasifyOrderInfo
@@ -56,6 +59,18 @@ func (f *fakeCaasifyAPI) listOrders(ctx context.Context) ([]caasifyListedOrder, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]caasifyListedOrder(nil), f.orders...), nil
+}
+
+func (f *fakeCaasifyAPI) renameOrder(ctx context.Context, node masterNode, newName string) (string, error) {
+	f.mu.Lock()
+	f.renameCount++
+	f.renameNames = append(f.renameNames, newName)
+	ch := f.renameCh
+	f.mu.Unlock()
+	if ch != nil {
+		ch <- newName
+	}
+	return node.ServiceID, nil
 }
 
 func containsString(values []string, needle string) bool {
@@ -111,6 +126,56 @@ func TestMasterPromotesStandbyOnDeadActive(t *testing.T) {
 	}
 	if app.state.Generation != 8 {
 		t.Fatalf("generation = %d, want 8", app.state.Generation)
+	}
+}
+
+func TestMasterRenamesPromotedStandbyProviderVM(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := defaultMasterConfig()
+	cfg.Namespace = "sky-01"
+	cfg.StateFile = filepath.Join(tmpDir, "state.json")
+	cfg.RelayURL = "http://127.0.0.1/relay.php"
+	cfg.CaasifyToken = "token"
+	cfg.BackupCount = 0
+	app := newMasterApp(cfg)
+	app.statePath = cfg.StateFile
+	app.state = masterState{
+		Namespace:  "sky-01",
+		FleetID:    "furo-sky-01",
+		Generation: 7,
+		ActiveID:   "furo-server-sky-01-active-100",
+		Nodes: []masterNode{
+			{Namespace: "sky-01", ID: "furo-server-sky-01-active-100", OrderID: "active-order", IP: "192.0.2.1", Role: "active", Status: "ready"},
+			{Namespace: "sky-01", ID: "furo-server-sky-01-standby-200", OrderID: "standby-order", ServiceID: "svc-standby", IP: "192.0.2.2", Role: "standby", Status: "ready"},
+		},
+	}
+	if err := app.saveStateLocked(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer relay.Close()
+	app.cfg.RelayURL = relay.URL + "/relay.php"
+	app.cfg.Relays = normalizeMasterRelays(app.cfg.RelayURL, nil)
+	renameCh := make(chan string, 1)
+	app.caasify = &fakeCaasifyAPI{
+		orders:   []caasifyListedOrder{{OrderID: "standby-order", Status: "running"}},
+		renameCh: renameCh,
+	}
+
+	if err := app.handleDeadNode(context.Background(), "furo-server-sky-01-active-100", "test failure"); err != nil {
+		t.Fatalf("handleDeadNode() error = %v", err)
+	}
+	select {
+	case got := <-renameCh:
+		if got != "furo-server-sky-01-active-200" {
+			t.Fatalf("rename name = %q, want active provider name", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for provider rename")
 	}
 }
 
@@ -324,6 +389,44 @@ func TestMasterRouteMapUsesConfiguredSessionCount(t *testing.T) {
 	}
 	if len(routeMap.Standby) != 1 || routeMap.Standby[0].SessionCount != 9 {
 		t.Fatalf("standby routes = %#v, want session_count=9", routeMap.Standby)
+	}
+}
+
+func TestMasterRouteMapIncludesAllRelaysWithLegacyPrimary(t *testing.T) {
+	cfg := defaultMasterConfig()
+	cfg.CaasifyToken = "token"
+	cfg.RelayURL = "http://relay-a.test/furo.php"
+	cfg.Relays = normalizeMasterRelays(cfg.RelayURL, []masterRelayConfig{
+		{ID: "relay-b", URL: "http://relay-b.test/furo.php"},
+	})
+	cfg.RouteSessionCount = 6
+	app := newMasterApp(cfg)
+	app.state = masterState{
+		Namespace:  "default",
+		FleetID:    "furo-default",
+		Generation: 2,
+		ActiveID:   "active-a",
+		Nodes: []masterNode{
+			{Namespace: "default", ID: "active-a", Role: "active", Status: "ready", IP: "192.0.2.10"},
+			{Namespace: "default", ID: "standby-a", Role: "standby", Status: "ready", IP: "192.0.2.11"},
+		},
+	}
+
+	routeMap := app.routeMapLocked()
+	if routeMap.Active == nil || routeMap.Active.ID != "active-a" || routeMap.Active.RelayID != "primary" {
+		t.Fatalf("legacy active = %#v, want primary route", routeMap.Active)
+	}
+	if len(routeMap.ActiveRoutes) != 2 {
+		t.Fatalf("active routes = %#v, want one per relay", routeMap.ActiveRoutes)
+	}
+	if routeMap.ActiveRoutes[1].ID != "active-a__relay-b" || routeMap.ActiveRoutes[1].NodeID != "active-a" || routeMap.ActiveRoutes[1].SessionCount != 6 {
+		t.Fatalf("secondary active route = %#v, want relay-specific active", routeMap.ActiveRoutes[1])
+	}
+	if len(routeMap.Standby) != 1 || routeMap.Standby[0].ID != "standby-a" {
+		t.Fatalf("legacy standby = %#v, want primary standby", routeMap.Standby)
+	}
+	if len(routeMap.StandbyRoutes) != 2 || routeMap.StandbyRoutes[1].ID != "standby-a__relay-b" {
+		t.Fatalf("standby routes = %#v, want one per relay", routeMap.StandbyRoutes)
 	}
 }
 
@@ -734,7 +837,7 @@ func TestDopraxClientCreateListDelete(t *testing.T) {
 	if !sawCreate {
 		t.Fatal("create endpoint was not called")
 	}
-	if created.OrderID != "vm-1" || created.IP != "203.0.113.50" || created.Password != "root-password" {
+	if created.OrderID != "vm-1" || created.ServiceID != "svc-1" || created.IP != "203.0.113.50" || created.Password != "root-password" {
 		t.Fatalf("created = %#v, want vm/ip/password", created)
 	}
 
@@ -747,6 +850,51 @@ func TestDopraxClientCreateListDelete(t *testing.T) {
 	}
 	if err := client.deleteOrder(context.Background(), "vm-1"); err != nil {
 		t.Fatalf("deleteOrder() error = %v", err)
+	}
+}
+
+func TestDopraxClientRenameOrderUsesServiceID(t *testing.T) {
+	var sawRename bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/account/login-doprax-123321/":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "cca": "bearer-token"})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v2/services/instances/svc-1/":
+			if got := r.Header.Get("Authorization"); got != "Bearer bearer-token" {
+				t.Fatalf("Authorization = %q, want bearer", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("rename body decode: %v", err)
+			}
+			if body["name"] != "furo-server-sky-01-active-200" {
+				t.Fatalf("rename name = %#v, want active name", body["name"])
+			}
+			sawRename = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"service_id": "svc-1"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := newDopraxClient(masterConfigFile{
+		DopraxAPIKey:             "v1-key",
+		DopraxUsername:           "user@example.com",
+		DopraxPassword:           "secret",
+		DopraxBaseURL:            server.URL,
+		DopraxLoginRetryAttempts: 1,
+		DopraxLoginRetryDelaySec: 1,
+	})
+	client.client = server.Client()
+
+	serviceID, err := client.renameOrder(context.Background(), masterNode{OrderID: "vm-1", ServiceID: "svc-1"}, "furo-server-sky-01-active-200")
+	if err != nil {
+		t.Fatalf("renameOrder() error = %v", err)
+	}
+	if serviceID != "svc-1" || !sawRename {
+		t.Fatalf("rename serviceID=%q saw=%t, want svc-1 and called", serviceID, sawRename)
 	}
 }
 

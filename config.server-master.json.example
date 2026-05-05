@@ -29,6 +29,9 @@
   "state_file": "furo-server-master-default-state.json",
   "log_file": "./furo-server-master-default.log",
   "relay_url": "https://example.com/furo-relay.php",
+  "relays": [
+    {"id":"primary","url":"https://example.com/furo-relay.php"}
+  ],
   "relay_health_host": "f2.ra1n.xyz",
   "relay_health_port": 443,
   "server_agent_port": 8443,

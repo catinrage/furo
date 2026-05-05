@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"math/big"
@@ -33,6 +34,10 @@ var (
 	masterConfigPath = flag.String("c", "config.server-master.json", "Path to server master config JSON")
 	masterVersion    = flag.Bool("version", false, "Print version and exit")
 	pingClientURL    = flag.String("ping-client", "", "Ping a furo-client admin URL, for example http://CLIENT_IP:19080")
+	syncNodesFlag    = flag.Bool("sync-nodes", false, "Sync current master-rendered node config to all active and standby nodes, then restart them")
+	publishFlag      = flag.Bool("publish", false, "Publish the current route-map to configured relay caches and exit")
+	listNodesFlag    = flag.Bool("list-nodes", false, "List known master nodes and exit")
+	resetFlag        = flag.Bool("reset", false, "Delete current nodes, reset local state, create a fresh fleet, publish, and exit")
 )
 
 var (
@@ -64,6 +69,7 @@ type masterConfigFile struct {
 	StateFile                string                   `json:"state_file"`
 	LogFile                  string                   `json:"log_file"`
 	RelayURL                 string                   `json:"relay_url"`
+	Relays                   []masterRelayConfig      `json:"relays"`
 	RelayHealthHost          string                   `json:"relay_health_host"`
 	RelayHealthPort          int                      `json:"relay_health_port"`
 	ServerAgentPort          int                      `json:"server_agent_port"`
@@ -89,6 +95,11 @@ type caasifyProviderOption struct {
 	Template  string `json:"template"`
 	IPv4      int    `json:"ipv4"`
 	IPv6      int    `json:"ipv6"`
+}
+
+type masterRelayConfig struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
 }
 
 type masterStaticEgressConfig struct {
@@ -171,8 +182,12 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	if cfg.Namespace == "" {
 		cfg.Namespace = "default"
 	}
+	cfg.Relays = normalizeMasterRelays(cfg.RelayURL, cfg.Relays)
+	if cfg.RelayURL == "" && len(cfg.Relays) > 0 {
+		cfg.RelayURL = cfg.Relays[0].URL
+	}
 	if cfg.RelayURL == "" {
-		return cfg, errors.New("relay_url is required")
+		return cfg, errors.New("relay_url or relays is required")
 	}
 	cfg.ProviderBackend = resolvedMasterProviderBackend(cfg)
 	switch cfg.ProviderBackend {
@@ -259,6 +274,40 @@ func loadMasterConfig(path string) (masterConfigFile, error) {
 	}
 	cfg.ProviderPool = normalizeCaasifyProviderPool(cfg)
 	return cfg, nil
+}
+
+func normalizeMasterRelays(primaryURL string, relays []masterRelayConfig) []masterRelayConfig {
+	normalized := make([]masterRelayConfig, 0, len(relays)+1)
+	seenIDs := make(map[string]struct{})
+	seenURLs := make(map[string]struct{})
+	addRelay := func(relay masterRelayConfig, fallbackID string) {
+		relay.URL = strings.TrimSpace(relay.URL)
+		if relay.URL == "" {
+			return
+		}
+		relay.ID = sanitizeMasterID(strings.TrimSpace(relay.ID))
+		if relay.ID == "" || relay.ID == "fleet" {
+			relay.ID = fallbackID
+		}
+		baseID := relay.ID
+		for i := 2; ; i++ {
+			if _, exists := seenIDs[relay.ID]; !exists {
+				break
+			}
+			relay.ID = fmt.Sprintf("%s-%d", baseID, i)
+		}
+		if _, exists := seenURLs[relay.URL]; exists {
+			return
+		}
+		seenIDs[relay.ID] = struct{}{}
+		seenURLs[relay.URL] = struct{}{}
+		normalized = append(normalized, relay)
+	}
+	addRelay(masterRelayConfig{ID: "primary", URL: primaryURL}, "primary")
+	for idx, relay := range relays {
+		addRelay(relay, fmt.Sprintf("relay-%d", idx+1))
+	}
+	return normalized
 }
 
 func normalizeMasterStaticEgressConfig(cfg, alias masterStaticEgressConfig) masterStaticEgressConfig {
@@ -379,6 +428,7 @@ type masterNode struct {
 	ID                  string `json:"id"`
 	Namespace           string `json:"namespace"`
 	OrderID             string `json:"order_id"`
+	ServiceID           string `json:"service_id,omitempty"`
 	IP                  string `json:"ip"`
 	Role                string `json:"role"`
 	Status              string `json:"status"`
@@ -448,19 +498,22 @@ type masterApp struct {
 
 func newMasterApp(cfg masterConfigFile) *masterApp {
 	cfg.ProviderBackend = resolvedMasterProviderBackend(cfg)
-	provider := caasifyAPI(newDopraxClient(cfg))
-	if cfg.ProviderBackend == "caasify" {
-		provider = newCaasifyClient(cfg.CaasifyToken)
-	}
 	app := &masterApp{
 		cfg:       cfg,
 		statePath: resolvePath(filepath.Dir(*masterConfigPath), cfg.StateFile),
-		caasify:   provider,
+		caasify:   masterProviderFromConfig(cfg),
 		startedAt: time.Now(),
 	}
 	app.bootstrapNodeFunc = app.bootstrapNode
 	app.verifyNodeRelayAccessFunc = app.verifyNodeRelayAccess
 	return app
+}
+
+func masterProviderFromConfig(cfg masterConfigFile) caasifyAPI {
+	if resolvedMasterProviderBackend(cfg) == "caasify" {
+		return newCaasifyClient(cfg.CaasifyToken)
+	}
+	return newDopraxClient(cfg)
 }
 
 func resolvePath(base, value string) string {
@@ -760,6 +813,7 @@ func (a *masterApp) importProviderNodes(ctx context.Context) error {
 			ID:        id,
 			Namespace: a.cfg.Namespace,
 			OrderID:   order.OrderID,
+			ServiceID: order.ServiceID,
 			IP:        order.IP,
 			Role:      role,
 			Status:    "created",
@@ -1090,6 +1144,7 @@ func (a *masterApp) createAndBootstrapNode(ctx context.Context, role string) (ma
 		ID:        nodeID,
 		Namespace: a.cfg.Namespace,
 		OrderID:   order.OrderID,
+		ServiceID: order.ServiceID,
 		IP:        order.IP,
 		Role:      role,
 		Status:    status,
@@ -1167,6 +1222,9 @@ func (a *masterApp) provisionNode(ctx context.Context, nodeID string) error {
 		}
 		node.IP = info.IP
 		node.Password = info.Password
+		if info.ServiceID != "" {
+			node.ServiceID = info.ServiceID
+		}
 		node.Status = "created"
 		node.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		local = *node
@@ -1354,6 +1412,175 @@ func (a *masterApp) renderBootstrapScript(template string, node masterNode) (str
 		rendered = strings.ReplaceAll(rendered, old, newValue)
 	}
 	return rendered, nil
+}
+
+func (a *masterApp) renderServerConfigJSON(node masterNode) (string, error) {
+	staticEnabled := a.cfg.StaticEgress.Enabled && a.staticEgressAvailable && node.EgressEnabled && node.EgressTunnelIP != "" && node.WireGuardPrivateKey != ""
+	cfg := map[string]any{
+		"api_key":           a.cfg.APIKey,
+		"agent_listen":      fmt.Sprintf("0.0.0.0:%d", a.cfg.ServerAgentPort),
+		"admin_listen":      "127.0.0.1:19081",
+		"dial_timeout":      "10s",
+		"keepalive":         "30s",
+		"write_timeout":     "30s",
+		"frame_min_size":    32768,
+		"frame_mid_size":    65536,
+		"frame_max_size":    131072,
+		"max_pending_bytes": 4194304,
+		"max_sessions":      a.cfg.NodeMaxSessions,
+		"log_file":          "server.log",
+		"egress": map[string]any{
+			"enabled": staticEnabled,
+			"bind_ip": node.EgressTunnelIP,
+		},
+		"node": map[string]any{
+			"enabled":                true,
+			"namespace":              a.cfg.Namespace,
+			"id":                     node.ID,
+			"master_url":             a.cfg.PublicURL,
+			"role":                   node.Role,
+			"relay_health_host":      a.cfg.RelayHealthHost,
+			"relay_health_port":      a.cfg.RelayHealthPort,
+			"check_interval_seconds": a.cfg.NodeCheckIntervalSeconds,
+			"failure_threshold":      a.cfg.NodeFailureThreshold,
+		},
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(append(data, '\n')), nil
+}
+
+func (a *masterApp) renderNodeSyncScript(node masterNode) (string, error) {
+	serverConfig, err := a.renderServerConfigJSON(node)
+	if err != nil {
+		return "", err
+	}
+	staticEnabled := a.cfg.StaticEgress.Enabled && a.staticEgressAvailable && node.EgressEnabled && node.EgressTunnelIP != "" && node.WireGuardPrivateKey != ""
+	masterHost, err := a.staticEgressEndpointHost()
+	if staticEnabled && err != nil {
+		return "", err
+	}
+	prefix, err := cidrPrefix(a.cfg.StaticEgress.Subnet)
+	if err != nil {
+		prefix = 24
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "set -euo pipefail\n")
+	fmt.Fprintf(&b, "mkdir -p /root/furo\n")
+	fmt.Fprintf(&b, "cat > /root/furo/config.server.json <<'FURO_CONFIG'\n%sFURO_CONFIG\n", serverConfig)
+	if staticEnabled {
+		fmt.Fprintf(&b, "if ! command -v ip >/dev/null 2>&1 || ! command -v iptables >/dev/null 2>&1 || ! command -v wg >/dev/null 2>&1 || ! command -v wg-quick >/dev/null 2>&1; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools iproute2 iptables; fi\n")
+		fmt.Fprintf(&b, "mkdir -p /etc/wireguard && chmod 700 /etc/wireguard\n")
+		fmt.Fprintf(&b, "cat > /etc/wireguard/%s.conf <<'FURO_WG'\n", a.cfg.StaticEgress.Interface)
+		fmt.Fprintf(&b, "[Interface]\n")
+		fmt.Fprintf(&b, "PrivateKey = %s\n", node.WireGuardPrivateKey)
+		fmt.Fprintf(&b, "Address = %s/%d\n", node.EgressTunnelIP, prefix)
+		fmt.Fprintf(&b, "Table = off\n")
+		fmt.Fprintf(&b, "PostUp = ip route replace default dev %%i table %d; ip rule add from %s/32 table %d priority %d 2>/dev/null || true\n", a.cfg.StaticEgress.NodeRouteTable, node.EgressTunnelIP, a.cfg.StaticEgress.NodeRouteTable, a.cfg.StaticEgress.NodeRoutePriority)
+		fmt.Fprintf(&b, "PostDown = ip rule del from %s/32 table %d priority %d 2>/dev/null || true; ip route del default dev %%i table %d 2>/dev/null || true\n\n", node.EgressTunnelIP, a.cfg.StaticEgress.NodeRouteTable, a.cfg.StaticEgress.NodeRoutePriority, a.cfg.StaticEgress.NodeRouteTable)
+		fmt.Fprintf(&b, "[Peer]\n")
+		fmt.Fprintf(&b, "PublicKey = %s\n", a.state.StaticEgress.PublicKey)
+		fmt.Fprintf(&b, "Endpoint = %s:%d\n", masterHost, a.cfg.StaticEgress.ListenPort)
+		fmt.Fprintf(&b, "AllowedIPs = 0.0.0.0/0\n")
+		fmt.Fprintf(&b, "PersistentKeepalive = 25\n")
+		fmt.Fprintf(&b, "FURO_WG\n")
+		fmt.Fprintf(&b, "chmod 600 /etc/wireguard/%s.conf\n", a.cfg.StaticEgress.Interface)
+		fmt.Fprintf(&b, "systemctl enable wg-quick@%s || true\n", a.cfg.StaticEgress.Interface)
+		fmt.Fprintf(&b, "systemctl restart wg-quick@%s\n", a.cfg.StaticEgress.Interface)
+	} else if a.cfg.StaticEgress.Interface != "" {
+		fmt.Fprintf(&b, "systemctl disable --now wg-quick@%s >/dev/null 2>&1 || true\n", a.cfg.StaticEgress.Interface)
+	}
+	fmt.Fprintf(&b, "cd /root/furo\n")
+	fmt.Fprintf(&b, "if [ -x ./service.sh ]; then FURO_SERVICE_NONINTERACTIVE=1 ./service.sh server restart || FURO_SERVICE_NONINTERACTIVE=1 ./service.sh restart; else systemctl restart furo-server; fi\n")
+	return b.String(), nil
+}
+
+func (a *masterApp) ensureExistingNodeStaticEgress(ctx context.Context) error {
+	if !a.cfg.StaticEgress.Enabled {
+		a.staticEgressAvailable = false
+		return nil
+	}
+	a.mu.Lock()
+	changed := false
+	for idx := range a.state.Nodes {
+		node := &a.state.Nodes[idx]
+		if node.Namespace != a.cfg.Namespace || nodeUnavailable(node.Status) {
+			continue
+		}
+		before := *node
+		if err := a.ensureNodeStaticEgressLocked(node); err != nil {
+			a.mu.Unlock()
+			return err
+		}
+		if before.EgressTunnelIP != node.EgressTunnelIP || before.WireGuardPrivateKey != node.WireGuardPrivateKey || before.WireGuardPublicKey != node.WireGuardPublicKey || before.EgressEnabled != node.EgressEnabled {
+			changed = true
+		}
+	}
+	if changed {
+		if err := a.saveStateLocked(); err != nil {
+			a.mu.Unlock()
+			return err
+		}
+	}
+	a.mu.Unlock()
+	return a.configureMasterStaticEgress(ctx)
+}
+
+func (a *masterApp) syncNodesReport(ctx context.Context) masterActionReport {
+	report := newMasterActionReport("sync-nodes")
+	if a.cfg.StaticEgress.Enabled {
+		if err := a.ensureExistingNodeStaticEgress(ctx); err != nil {
+			report.OK = false
+			report.Message = "static egress setup failed before syncing nodes: " + err.Error()
+			report.add("%s", report.Message)
+			return report
+		}
+	}
+	a.mu.Lock()
+	nodes := make([]masterNode, 0, len(a.state.Nodes))
+	for _, node := range a.state.Nodes {
+		if node.Namespace != a.cfg.Namespace || nodeUnavailable(node.Status) || node.IP == "" || node.Password == "" {
+			continue
+		}
+		if node.Role != "active" && node.Role != "standby" {
+			continue
+		}
+		nodes = append(nodes, node)
+	}
+	a.mu.Unlock()
+	report.Data["nodes"] = len(nodes)
+	successes := 0
+	for _, node := range nodes {
+		script, err := a.renderNodeSyncScript(node)
+		if err != nil {
+			report.OK = false
+			report.add("node=%s render failed: %v", node.ID, err)
+			continue
+		}
+		nodeCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		output, err := runSSHCommand(nodeCtx, node.IP, node.Password, "bash -s", strings.NewReader(script))
+		cancel()
+		if err != nil {
+			report.OK = false
+			report.add("node=%s ip=%s sync failed: %v output=%s", node.ID, node.IP, err, strings.TrimSpace(output))
+			continue
+		}
+		successes++
+		report.add("node=%s role=%s ip=%s synced and restarted", node.ID, node.Role, node.IP)
+	}
+	report.Data["successes"] = successes
+	if len(nodes) == 0 {
+		report.Message = "no active/standby nodes with ssh credentials to sync"
+		return report
+	}
+	if report.OK {
+		report.Message = fmt.Sprintf("synced %d node(s)", successes)
+	} else {
+		report.Message = fmt.Sprintf("synced %d/%d node(s); see details", successes, len(nodes))
+	}
+	return report
 }
 
 func (a *masterApp) staticEgressEndpointHost() (string, error) {
@@ -1653,6 +1880,8 @@ func shellQuote(value string) string {
 
 func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) error {
 	var oldNode masterNode
+	var promotedForRename masterNode
+	renamePromoted := false
 	a.mu.Lock()
 	dead := a.findNodeLocked(nodeID)
 	if dead == nil {
@@ -1679,6 +1908,8 @@ func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) e
 			promoted.Status = "ready"
 			promoted.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 			a.state.ActiveID = promoted.ID
+			promotedForRename = *promoted
+			renamePromoted = true
 			a.retireNodeIDLocked(nodeID)
 			a.state.Generation++
 			log.Printf("[FURO-MASTER] promoted standby id=%s old_active=%s generation=%d", promoted.ID, nodeID, a.state.Generation)
@@ -1701,28 +1932,79 @@ func (a *masterApp) handleDeadNode(ctx context.Context, nodeID, reason string) e
 	if err := a.publishRouteMap(ctx); err != nil {
 		log.Printf("[FURO-MASTER] publish after dead failed: %v", err)
 	}
+	if renamePromoted {
+		go a.renamePromotedProviderNode(context.Background(), promotedForRename)
+	}
 	if oldNode.OrderID != "" {
 		go a.deleteNodeOrder(context.Background(), oldNode, "dead")
 	}
 	return a.ensureFleet(ctx)
 }
 
+func providerActiveNameForNode(nodeID string) string {
+	if strings.Contains(nodeID, "-standby-") {
+		return strings.Replace(nodeID, "-standby-", "-active-", 1)
+	}
+	if strings.Contains(nodeID, "-active-") {
+		return nodeID
+	}
+	return nodeID + "-active"
+}
+
+func (a *masterApp) renamePromotedProviderNode(ctx context.Context, node masterNode) {
+	newName := providerActiveNameForNode(node.ID)
+	if newName == "" || newName == node.ID {
+		return
+	}
+	renameCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	log.Printf("[FURO-MASTER] provider rename started id=%s order=%s service_id=%s new_name=%s reason=promoted_to_active", node.ID, node.OrderID, node.ServiceID, newName)
+	serviceID, err := a.caasify.renameOrder(renameCtx, node, newName)
+	if err != nil {
+		log.Printf("[FURO-MASTER] provider rename failed id=%s order=%s service_id=%s new_name=%s err=%v", node.ID, node.OrderID, node.ServiceID, newName, err)
+		return
+	}
+	if serviceID != "" {
+		a.mu.Lock()
+		if current := a.findNodeLocked(node.ID); current != nil && current.ServiceID == "" {
+			current.ServiceID = serviceID
+			current.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			if saveErr := a.saveStateLocked(); saveErr != nil {
+				log.Printf("[FURO-MASTER] save provider rename service id failed id=%s err=%v", node.ID, saveErr)
+			}
+		}
+		a.mu.Unlock()
+	}
+	log.Printf("[FURO-MASTER] provider rename ok id=%s order=%s service_id=%s new_name=%s", node.ID, node.OrderID, firstNonEmpty(serviceID, node.ServiceID), newName)
+}
+
 type relayRouteMap struct {
-	Namespace  string           `json:"namespace"`
-	FleetID    string           `json:"fleet_id"`
-	Generation int64            `json:"generation"`
-	Active     *relayRouteSpec  `json:"active"`
-	Standby    []relayRouteSpec `json:"standby"`
-	Retired    []string         `json:"retired"`
-	UpdatedAt  string           `json:"updated_at"`
+	Namespace     string           `json:"namespace"`
+	FleetID       string           `json:"fleet_id"`
+	Generation    int64            `json:"generation"`
+	Active        *relayRouteSpec  `json:"active"`
+	Standby       []relayRouteSpec `json:"standby"`
+	ActiveRoutes  []relayRouteSpec `json:"active_routes,omitempty"`
+	StandbyRoutes []relayRouteSpec `json:"standby_routes,omitempty"`
+	Retired       []string         `json:"retired"`
+	UpdatedAt     string           `json:"updated_at"`
 }
 
 type relayRouteSpec struct {
 	ID           string `json:"id"`
+	NodeID       string `json:"node_id,omitempty"`
+	RelayID      string `json:"relay_id,omitempty"`
 	RelayURL     string `json:"relay_url"`
 	ServerHost   string `json:"server_host"`
 	ServerPort   int    `json:"server_port"`
 	SessionCount int    `json:"session_count"`
+}
+
+func relayRouteID(nodeID, relayID string) string {
+	if relayID == "" || relayID == "primary" {
+		return nodeID
+	}
+	return sanitizeMasterID(nodeID + "__" + relayID)
 }
 
 func (a *masterApp) routeMapLocked() relayRouteMap {
@@ -1734,6 +2016,10 @@ func (a *masterApp) routeMapLocked() relayRouteMap {
 		Retired:    append([]string(nil), a.state.Retired...),
 		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
 	}
+	relays := a.cfg.Relays
+	if len(relays) == 0 {
+		relays = normalizeMasterRelays(a.cfg.RelayURL, nil)
+	}
 	for _, node := range a.state.Nodes {
 		if node.Namespace != a.cfg.Namespace {
 			continue
@@ -1741,41 +2027,121 @@ func (a *masterApp) routeMapLocked() relayRouteMap {
 		if node.Status != "ready" || node.IP == "" {
 			continue
 		}
-		spec := relayRouteSpec{
-			ID:           node.ID,
-			RelayURL:     a.cfg.RelayURL,
-			ServerHost:   node.IP,
-			ServerPort:   a.cfg.ServerAgentPort,
-			SessionCount: a.cfg.RouteSessionCount,
-		}
-		if node.ID == a.state.ActiveID && node.Role == "active" {
-			routeMap.Active = &spec
-			continue
-		}
-		if node.Role == "standby" {
-			routeMap.Standby = append(routeMap.Standby, spec)
+		for idx, relay := range relays {
+			spec := relayRouteSpec{
+				ID:           relayRouteID(node.ID, relay.ID),
+				NodeID:       node.ID,
+				RelayID:      relay.ID,
+				RelayURL:     relay.URL,
+				ServerHost:   node.IP,
+				ServerPort:   a.cfg.ServerAgentPort,
+				SessionCount: a.cfg.RouteSessionCount,
+			}
+			if node.ID == a.state.ActiveID && node.Role == "active" {
+				routeMap.ActiveRoutes = append(routeMap.ActiveRoutes, spec)
+				if idx == 0 {
+					routeMap.Active = &spec
+				}
+				continue
+			}
+			if node.Role == "standby" {
+				routeMap.StandbyRoutes = append(routeMap.StandbyRoutes, spec)
+				if idx == 0 {
+					routeMap.Standby = append(routeMap.Standby, spec)
+				}
+			}
 		}
 	}
 	return routeMap
 }
 
 func (a *masterApp) publishRouteMap(ctx context.Context) error {
+	report := a.publishRouteMapReport(ctx)
+	if !report.OK {
+		return errors.New(report.Message)
+	}
+	return nil
+}
+
+type masterActionReport struct {
+	OK      bool           `json:"ok"`
+	Action  string         `json:"action"`
+	Message string         `json:"message"`
+	Details []string       `json:"details,omitempty"`
+	Data    map[string]any `json:"data,omitempty"`
+	When    string         `json:"when"`
+}
+
+func newMasterActionReport(action string) masterActionReport {
+	return masterActionReport{OK: true, Action: action, Data: map[string]any{}, When: time.Now().UTC().Format(time.RFC3339)}
+}
+
+func (r *masterActionReport) add(format string, args ...any) {
+	r.Details = append(r.Details, fmt.Sprintf(format, args...))
+}
+
+func (a *masterApp) publishRouteMapReport(ctx context.Context) masterActionReport {
+	report := newMasterActionReport("publish")
 	a.mu.Lock()
 	routeMap := a.routeMapLocked()
+	relays := append([]masterRelayConfig(nil), a.cfg.Relays...)
 	a.mu.Unlock()
-	endpoint, err := relayRouteMapURL(a.cfg.RelayURL, a.cfg.Namespace)
-	if err != nil {
-		return err
-	}
 	data, err := json.Marshal(routeMap)
 	if err != nil {
-		return err
+		report.OK = false
+		report.Message = err.Error()
+		return report
 	}
 	activeID := ""
 	if routeMap.Active != nil {
 		activeID = routeMap.Active.ID
 	}
-	log.Printf("[FURO-MASTER] publishing route-map namespace=%s fleet_id=%s generation=%d active=%s standby=%d retired=%d endpoint=%s", routeMap.Namespace, routeMap.FleetID, routeMap.Generation, activeID, len(routeMap.Standby), len(routeMap.Retired), endpoint)
+	if len(relays) == 0 {
+		relays = normalizeMasterRelays(a.cfg.RelayURL, nil)
+	}
+	var failures []string
+	successes := 0
+	for _, relay := range relays {
+		endpoint, err := relayRouteMapURL(relay.URL, a.cfg.Namespace)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", relay.ID, err))
+			report.add("relay=%s invalid url: %v", relay.ID, err)
+			continue
+		}
+		log.Printf("[FURO-MASTER] publishing route-map namespace=%s fleet_id=%s generation=%d active=%s active_routes=%d standby=%d standby_routes=%d retired=%d relay=%s endpoint=%s", routeMap.Namespace, routeMap.FleetID, routeMap.Generation, activeID, len(routeMap.ActiveRoutes), len(routeMap.Standby), len(routeMap.StandbyRoutes), len(routeMap.Retired), relay.ID, endpoint)
+		if err := a.publishRouteMapToRelay(ctx, endpoint, data); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", relay.ID, err))
+			log.Printf("[FURO-MASTER] route-map publish failed relay=%s err=%v", relay.ID, err)
+			report.add("relay=%s failed: %v", relay.ID, err)
+			continue
+		}
+		successes++
+		log.Printf("[FURO-MASTER] route-map publish ok namespace=%s generation=%d relay=%s", routeMap.Namespace, routeMap.Generation, relay.ID)
+		report.add("relay=%s ok endpoint=%s", relay.ID, endpoint)
+	}
+	report.Data["namespace"] = routeMap.Namespace
+	report.Data["fleet_id"] = routeMap.FleetID
+	report.Data["generation"] = routeMap.Generation
+	report.Data["active"] = activeID
+	report.Data["active_routes"] = len(routeMap.ActiveRoutes)
+	report.Data["standby_routes"] = len(routeMap.StandbyRoutes)
+	report.Data["successes"] = successes
+	report.Data["failures"] = len(failures)
+	if successes == 0 {
+		report.OK = false
+		report.Message = fmt.Sprintf("route-map publish failed for all relays: %s", strings.Join(failures, "; "))
+		return report
+	}
+	if len(failures) > 0 {
+		log.Printf("[FURO-MASTER] route-map publish partial failures=%s", strings.Join(failures, "; "))
+		report.Message = fmt.Sprintf("published to %d relay(s), %d failed", successes, len(failures))
+		return report
+	}
+	report.Message = fmt.Sprintf("published generation %d to %d relay(s)", routeMap.Generation, successes)
+	return report
+}
+
+func (a *masterApp) publishRouteMapToRelay(ctx context.Context, endpoint string, data []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(data))
 	if err != nil {
 		return err
@@ -1791,7 +2157,6 @@ func (a *masterApp) publishRouteMap(ctx context.Context) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("relay route-map publish status=%d body=%q", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	log.Printf("[FURO-MASTER] route-map publish ok namespace=%s generation=%d status=%d", routeMap.Namespace, routeMap.Generation, resp.StatusCode)
 	return nil
 }
 
@@ -1870,6 +2235,410 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func (a *masterApp) listNodesReport() masterActionReport {
+	report := newMasterActionReport("list-nodes")
+	a.mu.Lock()
+	nodes := append([]masterNode(nil), a.state.Nodes...)
+	state := a.state
+	a.mu.Unlock()
+	report.Data["namespace"] = state.Namespace
+	report.Data["fleet_id"] = state.FleetID
+	report.Data["generation"] = state.Generation
+	report.Data["nodes"] = len(nodes)
+	report.Message = fmt.Sprintf("%d node(s)", len(nodes))
+	for idx, node := range nodes {
+		report.add("%d\t%s\t%s\t%s\t%s\t%s", idx+1, node.ID, node.Role, node.Status, node.IP, node.Password)
+	}
+	return report
+}
+
+func (a *masterApp) printNodesTable(w io.Writer) {
+	a.mu.Lock()
+	nodes := append([]masterNode(nil), a.state.Nodes...)
+	a.mu.Unlock()
+	fmt.Fprintf(w, "%-5s %-48s %-8s %-16s %-15s %-24s\n", "INDEX", "HOSTNAME", "ROLE", "STATUS", "IP", "SSH_PASSWORD")
+	for idx, node := range nodes {
+		password := node.Password
+		if password == "" {
+			password = "-"
+		}
+		ip := node.IP
+		if ip == "" {
+			ip = "-"
+		}
+		fmt.Fprintf(w, "%-5d %-48s %-8s %-16s %-15s %-24s\n", idx+1, node.ID, node.Role, node.Status, ip, password)
+	}
+}
+
+func (a *masterApp) resetFleetReport(ctx context.Context) masterActionReport {
+	report := newMasterActionReport("reset")
+	a.mu.Lock()
+	nodes := append([]masterNode(nil), a.state.Nodes...)
+	a.state.Nodes = []masterNode{}
+	a.state.ActiveID = ""
+	a.state.Retired = []string{}
+	a.state.Generation++
+	if err := a.saveStateLocked(); err != nil {
+		a.mu.Unlock()
+		report.OK = false
+		report.Message = "failed to save cleared state: " + err.Error()
+		return report
+	}
+	a.mu.Unlock()
+
+	deleted := 0
+	for _, node := range nodes {
+		if node.OrderID == "" || nodeUnavailable(node.Status) {
+			continue
+		}
+		deleteCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		err := a.caasify.deleteOrder(deleteCtx, node.OrderID)
+		cancel()
+		if err != nil {
+			report.OK = false
+			report.add("delete node=%s order=%s failed: %v", node.ID, node.OrderID, err)
+			continue
+		}
+		deleted++
+		report.add("delete node=%s order=%s accepted", node.ID, node.OrderID)
+	}
+	if err := os.Remove(a.statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		report.OK = false
+		report.add("state file remove failed path=%s err=%v", a.statePath, err)
+	}
+	a.mu.Lock()
+	a.state = defaultMasterState(a.cfg.Namespace)
+	if err := a.saveStateLocked(); err != nil {
+		a.mu.Unlock()
+		report.OK = false
+		report.Message = "failed to save fresh state: " + err.Error()
+		return report
+	}
+	a.mu.Unlock()
+	active, err := a.createAndBootstrapNode(ctx, "active")
+	if err != nil {
+		report.OK = false
+		report.add("fresh active create failed: %v", err)
+	} else {
+		report.add("fresh active created id=%s ip=%s status=%s", active.ID, active.IP, active.Status)
+		for i := 0; i < a.cfg.BackupCount; i++ {
+			standby, err := a.createAndBootstrapNode(ctx, "standby")
+			if err != nil {
+				report.OK = false
+				report.add("fresh standby create failed index=%d: %v", i+1, err)
+				break
+			}
+			report.add("fresh standby created id=%s ip=%s status=%s", standby.ID, standby.IP, standby.Status)
+		}
+	}
+	publish := a.publishRouteMapReport(ctx)
+	report.Data["deleted"] = deleted
+	report.Data["publish"] = publish.Data
+	report.Details = append(report.Details, publish.Details...)
+	if !publish.OK {
+		report.OK = false
+		report.add("publish failed: %s", publish.Message)
+	}
+	if report.OK {
+		report.Message = fmt.Sprintf("reset complete; deleted %d old node(s) and started fresh reconcile", deleted)
+	} else if report.Message == "" {
+		report.Message = fmt.Sprintf("reset finished with errors; deleted %d old node(s)", deleted)
+	}
+	return report
+}
+
+type masterAdminView struct {
+	Config           masterConfigFile
+	State            masterState
+	RelaysJSON       string
+	ProviderPoolJSON string
+	StaticEgressJSON string
+	Action           masterActionReport
+	HasAction        bool
+	Uptime           string
+	Version          string
+	Commit           string
+}
+
+func prettyJSON(value any) string {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return "null"
+	}
+	return string(data)
+}
+
+func (a *masterApp) adminView(action *masterActionReport) masterAdminView {
+	a.mu.Lock()
+	state := a.state
+	a.mu.Unlock()
+	cfg := a.cfg
+	view := masterAdminView{
+		Config:           cfg,
+		State:            state,
+		RelaysJSON:       prettyJSON(cfg.Relays),
+		ProviderPoolJSON: prettyJSON(cfg.ProviderPool),
+		StaticEgressJSON: prettyJSON(cfg.StaticEgress),
+		Uptime:           time.Since(a.startedAt).Round(time.Second).String(),
+		Version:          appVersion,
+		Commit:           appCommit,
+	}
+	if action != nil {
+		view.Action = *action
+		view.HasAction = true
+	}
+	return view
+}
+
+func boolFormValue(r *http.Request, key string) bool {
+	return r.FormValue(key) == "on" || r.FormValue(key) == "true" || r.FormValue(key) == "1"
+}
+
+func intFormValue(r *http.Request, key string, current int) (int, error) {
+	value := strings.TrimSpace(r.FormValue(key))
+	if value == "" {
+		return current, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return current, fmt.Errorf("%s must be a number", key)
+	}
+	return parsed, nil
+}
+
+func stringFormValue(r *http.Request, key, current string) string {
+	value := strings.TrimSpace(r.FormValue(key))
+	return value
+}
+
+func masterNodeConfigChanged(oldCfg, newCfg masterConfigFile) bool {
+	oldStatic, _ := json.Marshal(oldCfg.StaticEgress)
+	newStatic, _ := json.Marshal(newCfg.StaticEgress)
+	return oldCfg.APIKey != newCfg.APIKey ||
+		oldCfg.Namespace != newCfg.Namespace ||
+		oldCfg.PublicURL != newCfg.PublicURL ||
+		oldCfg.RelayHealthHost != newCfg.RelayHealthHost ||
+		oldCfg.RelayHealthPort != newCfg.RelayHealthPort ||
+		oldCfg.ServerAgentPort != newCfg.ServerAgentPort ||
+		oldCfg.NodeMaxSessions != newCfg.NodeMaxSessions ||
+		oldCfg.NodeCheckIntervalSeconds != newCfg.NodeCheckIntervalSeconds ||
+		oldCfg.NodeFailureThreshold != newCfg.NodeFailureThreshold ||
+		string(oldStatic) != string(newStatic)
+}
+
+func masterRoutePublishConfigChanged(oldCfg, newCfg masterConfigFile) bool {
+	oldRelays, _ := json.Marshal(oldCfg.Relays)
+	newRelays, _ := json.Marshal(newCfg.Relays)
+	return oldCfg.RelayURL != newCfg.RelayURL ||
+		oldCfg.RouteSessionCount != newCfg.RouteSessionCount ||
+		oldCfg.ServerAgentPort != newCfg.ServerAgentPort ||
+		string(oldRelays) != string(newRelays)
+}
+
+func masterFleetConfigChanged(oldCfg, newCfg masterConfigFile) bool {
+	oldPool, _ := json.Marshal(oldCfg.ProviderPool)
+	newPool, _ := json.Marshal(newCfg.ProviderPool)
+	return oldCfg.ProviderBackend != newCfg.ProviderBackend ||
+		oldCfg.CaasifyToken != newCfg.CaasifyToken ||
+		oldCfg.DopraxAPIKey != newCfg.DopraxAPIKey ||
+		oldCfg.DopraxUsername != newCfg.DopraxUsername ||
+		oldCfg.DopraxPassword != newCfg.DopraxPassword ||
+		oldCfg.DopraxBaseURL != newCfg.DopraxBaseURL ||
+		oldCfg.DopraxProductVersionID != newCfg.DopraxProductVersionID ||
+		oldCfg.DopraxLocationOptionID != newCfg.DopraxLocationOptionID ||
+		oldCfg.DopraxOSOptionID != newCfg.DopraxOSOptionID ||
+		oldCfg.DopraxAccessMethod != newCfg.DopraxAccessMethod ||
+		oldCfg.BackupCount != newCfg.BackupCount ||
+		oldCfg.ProductID != newCfg.ProductID ||
+		oldCfg.Template != newCfg.Template ||
+		oldCfg.NotePrefix != newCfg.NotePrefix ||
+		oldCfg.IPv4 != newCfg.IPv4 ||
+		oldCfg.IPv6 != newCfg.IPv6 ||
+		oldCfg.BootstrapScriptPath != newCfg.BootstrapScriptPath ||
+		string(oldPool) != string(newPool)
+}
+
+func (a *masterApp) parseConfigForm(r *http.Request) (masterConfigFile, bool, bool, bool, error) {
+	if err := r.ParseForm(); err != nil {
+		return a.cfg, false, false, false, err
+	}
+	oldCfg := a.cfg
+	cfg := oldCfg
+	cfg.Namespace = sanitizeMasterID(stringFormValue(r, "namespace", cfg.Namespace))
+	cfg.APIKey = stringFormValue(r, "api_key", cfg.APIKey)
+	cfg.Listen = stringFormValue(r, "listen", cfg.Listen)
+	cfg.PublicURL = stringFormValue(r, "public_url", cfg.PublicURL)
+	cfg.AdminListen = stringFormValue(r, "admin_listen", cfg.AdminListen)
+	cfg.ProviderBackend = strings.TrimSpace(r.FormValue("provider_backend"))
+	cfg.CaasifyToken = stringFormValue(r, "caasify_token", cfg.CaasifyToken)
+	cfg.DopraxAPIKey = stringFormValue(r, "doprax_api_key", cfg.DopraxAPIKey)
+	cfg.DopraxUsername = stringFormValue(r, "doprax_username", cfg.DopraxUsername)
+	cfg.DopraxPassword = stringFormValue(r, "doprax_password", cfg.DopraxPassword)
+	cfg.DopraxBaseURL = stringFormValue(r, "doprax_base_url", cfg.DopraxBaseURL)
+	cfg.DopraxProductVersionID = stringFormValue(r, "doprax_product_version_id", cfg.DopraxProductVersionID)
+	cfg.DopraxLocationOptionID = stringFormValue(r, "doprax_location_option_id", cfg.DopraxLocationOptionID)
+	cfg.DopraxOSOptionID = stringFormValue(r, "doprax_os_option_id", cfg.DopraxOSOptionID)
+	cfg.DopraxAccessMethod = stringFormValue(r, "doprax_access_method", cfg.DopraxAccessMethod)
+	cfg.StateFile = stringFormValue(r, "state_file", cfg.StateFile)
+	cfg.LogFile = stringFormValue(r, "log_file", cfg.LogFile)
+	cfg.RelayURL = stringFormValue(r, "relay_url", cfg.RelayURL)
+	cfg.RelayHealthHost = stringFormValue(r, "relay_health_host", cfg.RelayHealthHost)
+	cfg.Template = stringFormValue(r, "template", cfg.Template)
+	cfg.NotePrefix = sanitizeMasterID(stringFormValue(r, "note_prefix", cfg.NotePrefix))
+	cfg.BootstrapScriptPath = stringFormValue(r, "bootstrap_script_path", cfg.BootstrapScriptPath)
+
+	var err error
+	intFields := []struct {
+		key string
+		dst *int
+	}{
+		{"doprax_login_retry_attempts", &cfg.DopraxLoginRetryAttempts},
+		{"doprax_login_retry_delay_seconds", &cfg.DopraxLoginRetryDelaySec},
+		{"relay_health_port", &cfg.RelayHealthPort},
+		{"server_agent_port", &cfg.ServerAgentPort},
+		{"node_max_sessions", &cfg.NodeMaxSessions},
+		{"route_session_count", &cfg.RouteSessionCount},
+		{"backup_count", &cfg.BackupCount},
+		{"node_check_interval_seconds", &cfg.NodeCheckIntervalSeconds},
+		{"node_failure_threshold", &cfg.NodeFailureThreshold},
+		{"publish_interval_seconds", &cfg.PublishIntervalSeconds},
+		{"product_id", &cfg.ProductID},
+		{"ipv4", &cfg.IPv4},
+		{"ipv6", &cfg.IPv6},
+	}
+	for _, field := range intFields {
+		*field.dst, err = intFormValue(r, field.key, *field.dst)
+		if err != nil {
+			return oldCfg, false, false, false, err
+		}
+	}
+	if raw := strings.TrimSpace(r.FormValue("relays_json")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.Relays); err != nil {
+			return oldCfg, false, false, false, fmt.Errorf("relays JSON: %w", err)
+		}
+	} else {
+		cfg.Relays = nil
+	}
+	if raw := strings.TrimSpace(r.FormValue("provider_pool_json")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.ProviderPool); err != nil {
+			return oldCfg, false, false, false, fmt.Errorf("provider_pool JSON: %w", err)
+		}
+	} else {
+		cfg.ProviderPool = nil
+	}
+	if raw := strings.TrimSpace(r.FormValue("static_egress_json")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.StaticEgress); err != nil {
+			return oldCfg, false, false, false, fmt.Errorf("static_egress JSON: %w", err)
+		}
+	}
+	cfg.StaticEgress.Enabled = boolFormValue(r, "static_egress_enabled")
+	cfg.StaticEgress.AutoInstallPackages = boolFormValue(r, "static_egress_auto_install_packages")
+	cfg.StaticEgress.Interface = stringFormValue(r, "static_egress_interface", cfg.StaticEgress.Interface)
+	cfg.StaticEgress.Subnet = stringFormValue(r, "static_egress_subnet", cfg.StaticEgress.Subnet)
+	cfg.StaticEgress.MasterTunnelIP = stringFormValue(r, "static_egress_master_tunnel_ip", cfg.StaticEgress.MasterTunnelIP)
+	cfg.StaticEgress.ListenPort, err = intFormValue(r, "static_egress_listen_port", cfg.StaticEgress.ListenPort)
+	if err != nil {
+		return oldCfg, false, false, false, err
+	}
+	cfg.StaticEgress.NodeRouteTable, err = intFormValue(r, "static_egress_node_route_table", cfg.StaticEgress.NodeRouteTable)
+	if err != nil {
+		return oldCfg, false, false, false, err
+	}
+	cfg.StaticEgress.NodeRoutePriority, err = intFormValue(r, "static_egress_node_route_priority", cfg.StaticEgress.NodeRoutePriority)
+	if err != nil {
+		return oldCfg, false, false, false, err
+	}
+	cfg.Relays = normalizeMasterRelays(cfg.RelayURL, cfg.Relays)
+	if cfg.RelayURL == "" && len(cfg.Relays) > 0 {
+		cfg.RelayURL = cfg.Relays[0].URL
+	}
+	if cfg.APIKey == "" || cfg.Listen == "" || cfg.PublicURL == "" || cfg.RelayURL == "" {
+		return oldCfg, false, false, false, errors.New("api_key, listen, public_url, and relay_url/relays are required")
+	}
+	if cfg.ProviderBackend == "" {
+		cfg.ProviderBackend = resolvedMasterProviderBackend(cfg)
+	}
+	if cfg.ProviderBackend != "doprax" && cfg.ProviderBackend != "caasify" {
+		return oldCfg, false, false, false, errors.New("provider_backend must be doprax or caasify")
+	}
+	if cfg.BackupCount < 0 || cfg.NodeMaxSessions < 1 || cfg.RouteSessionCount < 1 {
+		return oldCfg, false, false, false, errors.New("backup_count must be >= 0 and session counts must be >= 1")
+	}
+	cfg.StaticEgress = normalizeMasterStaticEgressConfig(cfg.StaticEgress, masterStaticEgressConfig{})
+	if cfg.StaticEgress.Enabled {
+		if err := validateMasterStaticEgressConfig(cfg.StaticEgress); err != nil {
+			return oldCfg, false, false, false, err
+		}
+	}
+	return cfg, masterNodeConfigChanged(oldCfg, cfg), masterRoutePublishConfigChanged(oldCfg, cfg), masterFleetConfigChanged(oldCfg, cfg), nil
+}
+
+func (a *masterApp) saveConfigFromRequest(ctx context.Context, r *http.Request) masterActionReport {
+	report := newMasterActionReport("save-config")
+	cfg, nodeChanged, publishChanged, fleetChanged, err := a.parseConfigForm(r)
+	if err != nil {
+		report.OK = false
+		report.Message = err.Error()
+		return report
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		report.OK = false
+		report.Message = err.Error()
+		return report
+	}
+	data = append(data, '\n')
+	cfgPath := resolvePath(".", *masterConfigPath)
+	tmp := cfgPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		report.OK = false
+		report.Message = err.Error()
+		return report
+	}
+	if err := os.Rename(tmp, cfgPath); err != nil {
+		report.OK = false
+		report.Message = err.Error()
+		return report
+	}
+	a.cfg = cfg
+	a.caasify = masterProviderFromConfig(cfg)
+	a.statePath = resolvePath(filepath.Dir(*masterConfigPath), cfg.StateFile)
+	report.Message = "configuration saved"
+	report.add("wrote %s", cfgPath)
+	if fleetChanged {
+		if err := a.ensureFleet(ctx); err != nil {
+			report.OK = false
+			report.add("reconcile after save failed: %v", err)
+		} else {
+			report.add("reconcile after save completed")
+		}
+	}
+	if nodeChanged {
+		syncReport := a.syncNodesReport(ctx)
+		report.Details = append(report.Details, syncReport.Details...)
+		if !syncReport.OK {
+			report.OK = false
+			report.add("node sync after save failed: %s", syncReport.Message)
+		} else {
+			report.add("node sync after save: %s", syncReport.Message)
+		}
+	}
+	if publishChanged || fleetChanged {
+		pub := a.publishRouteMapReport(ctx)
+		report.Details = append(report.Details, pub.Details...)
+		if !pub.OK {
+			report.OK = false
+			report.add("publish after save failed: %s", pub.Message)
+		} else {
+			report.add("publish after save: %s", pub.Message)
+		}
+	}
+	if !report.OK {
+		report.Message = "configuration saved, but follow-up action failed"
+	}
+	return report
+}
+
 func (a *masterApp) runControlServer() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -1916,11 +2685,170 @@ func (a *masterApp) runControlServer() error {
 	return http.ListenAndServe(a.cfg.Listen, mux)
 }
 
+var masterAdminTemplate = template.Must(template.New("master-admin").Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FURO Master</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--panel:#fff;--text:#18202a;--muted:#687385;--line:#d9dee7;--ok:#0f7b45;--bad:#b42318;--warn:#b86400;--active:#0b61a4;--standby:#6f4bb8}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1216;--panel:#171b21;--text:#e8edf5;--muted:#9aa6b8;--line:#303844}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}header{position:sticky;top:0;z-index:2;background:var(--panel);border-bottom:1px solid var(--line);padding:14px 22px;display:flex;justify-content:space-between;gap:16px;align-items:center}h1{font-size:20px;margin:0}main{padding:20px;max-width:1480px;margin:auto}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card,.section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}.section{margin-top:16px}h2{font-size:15px;margin:0 0 12px}.metric{font-size:24px;font-weight:650}.muted{color:var(--muted)}.actions{display:flex;flex-wrap:wrap;gap:8px}button,.btn{border:1px solid var(--line);background:var(--text);color:var(--panel);border-radius:6px;padding:8px 11px;font-weight:600;cursor:pointer}.secondary{background:transparent;color:var(--text)}.danger{background:var(--bad);color:#fff}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}form.config{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}label{font-size:12px;color:var(--muted);font-weight:650}input,select,textarea{width:100%;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--text);padding:8px;font:13px ui-monospace,SFMono-Regular,Menlo,monospace}textarea{min-height:120px;resize:vertical}.check{flex-direction:row;align-items:center}.check input{width:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px;vertical-align:top}th{font-size:12px;color:var(--muted)}.badge{display:inline-block;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:700}.active{background:#dff0ff;color:var(--active)}.standby{background:#eee6ff;color:var(--standby)}.ready{background:#ddf7e8;color:var(--ok)}.dead,.deleted,.deleting,.verify_failed{background:#ffe3df;color:var(--bad)}pre{white-space:pre-wrap;background:rgba(127,127,127,.08);border:1px solid var(--line);border-radius:6px;padding:10px;overflow:auto}.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:900px){.grid,form.config,.two{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>FURO Server Master</h1><div class="muted">{{.Config.Namespace}} · {{.State.FleetID}} · {{.Version}} {{.Commit}} · uptime {{.Uptime}}</div></div>
+  <div class="actions">
+    <form method="post" action="/action"><button name="action" value="publish">Publish</button></form>
+    <form method="post" action="/action"><button name="action" value="sync-nodes">Sync Nodes</button></form>
+    <form method="post" action="/action"><button name="action" value="reconcile" class="secondary">Reconcile</button></form>
+  </div>
+</header>
+<main>
+{{if .HasAction}}<section class="section"><h2>Last Action</h2><div class="{{if .Action.OK}}ok{{else}}bad{{end}}"><strong>{{.Action.Action}}</strong>: {{.Action.Message}}</div>{{if .Action.Details}}<pre>{{range .Action.Details}}{{.}}
+{{end}}</pre>{{end}}</section>{{end}}
+<section class="grid">
+  <div class="card"><div class="muted">Generation</div><div class="metric">{{.State.Generation}}</div></div>
+  <div class="card"><div class="muted">Active</div><div class="metric">{{.State.ActiveID}}</div></div>
+  <div class="card"><div class="muted">Nodes</div><div class="metric">{{len .State.Nodes}}</div></div>
+  <div class="card"><div class="muted">Backups Wanted</div><div class="metric">{{.Config.BackupCount}}</div></div>
+</section>
+<section class="section">
+<h2>Nodes</h2>
+<table><thead><tr><th>#</th><th>Hostname</th><th>Role</th><th>Status</th><th>IP</th><th>SSH Password</th><th>Last Report</th><th>Error</th></tr></thead><tbody>
+{{range $i,$n := .State.Nodes}}<tr><td>{{$i}}</td><td>{{$n.ID}}</td><td><span class="badge {{$n.Role}}">{{$n.Role}}</span></td><td><span class="badge {{$n.Status}}">{{$n.Status}}</span></td><td>{{$n.IP}}</td><td>{{$n.Password}}</td><td>{{$n.LastReportAt}} {{$n.LastReportState}}</td><td>{{$n.LastError}}</td></tr>{{else}}<tr><td colspan="8" class="muted">No nodes in state.</td></tr>{{end}}
+</tbody></table>
+</section>
+<section class="section">
+<h2>Configuration</h2>
+<form class="config" method="post" action="/config">
+<div class="field"><label>namespace</label><input name="namespace" value="{{.Config.Namespace}}"></div>
+<div class="field"><label>api_key</label><input name="api_key" value="{{.Config.APIKey}}"></div>
+<div class="field"><label>provider_backend</label><select name="provider_backend"><option value="doprax" {{if eq .Config.ProviderBackend "doprax"}}selected{{end}}>doprax</option><option value="caasify" {{if eq .Config.ProviderBackend "caasify"}}selected{{end}}>caasify</option></select></div>
+<div class="field"><label>listen</label><input name="listen" value="{{.Config.Listen}}"></div>
+<div class="field"><label>public_url</label><input name="public_url" value="{{.Config.PublicURL}}"></div>
+<div class="field"><label>admin_listen</label><input name="admin_listen" value="{{.Config.AdminListen}}"></div>
+<div class="field"><label>state_file</label><input name="state_file" value="{{.Config.StateFile}}"></div>
+<div class="field"><label>log_file</label><input name="log_file" value="{{.Config.LogFile}}"></div>
+<div class="field"><label>bootstrap_script_path</label><input name="bootstrap_script_path" value="{{.Config.BootstrapScriptPath}}"></div>
+<div class="field"><label>relay_url</label><input name="relay_url" value="{{.Config.RelayURL}}"></div>
+<div class="field"><label>relay_health_host</label><input name="relay_health_host" value="{{.Config.RelayHealthHost}}"></div>
+<div class="field"><label>relay_health_port</label><input name="relay_health_port" value="{{.Config.RelayHealthPort}}"></div>
+<div class="field"><label>server_agent_port</label><input name="server_agent_port" value="{{.Config.ServerAgentPort}}"></div>
+<div class="field"><label>node_max_sessions</label><input name="node_max_sessions" value="{{.Config.NodeMaxSessions}}"></div>
+<div class="field"><label>route_session_count per relay</label><input name="route_session_count" value="{{.Config.RouteSessionCount}}"></div>
+<div class="field"><label>backup_count</label><input name="backup_count" value="{{.Config.BackupCount}}"></div>
+<div class="field"><label>node_check_interval_seconds</label><input name="node_check_interval_seconds" value="{{.Config.NodeCheckIntervalSeconds}}"></div>
+<div class="field"><label>node_failure_threshold</label><input name="node_failure_threshold" value="{{.Config.NodeFailureThreshold}}"></div>
+<div class="field"><label>publish_interval_seconds</label><input name="publish_interval_seconds" value="{{.Config.PublishIntervalSeconds}}"></div>
+<div class="field"><label>doprax_api_key</label><input name="doprax_api_key" value="{{.Config.DopraxAPIKey}}"></div>
+<div class="field"><label>doprax_username</label><input name="doprax_username" value="{{.Config.DopraxUsername}}"></div>
+<div class="field"><label>doprax_password</label><input type="password" name="doprax_password" value="{{.Config.DopraxPassword}}"></div>
+<div class="field"><label>doprax_base_url</label><input name="doprax_base_url" value="{{.Config.DopraxBaseURL}}"></div>
+<div class="field"><label>doprax_product_version_id</label><input name="doprax_product_version_id" value="{{.Config.DopraxProductVersionID}}"></div>
+<div class="field"><label>doprax_location_option_id</label><input name="doprax_location_option_id" value="{{.Config.DopraxLocationOptionID}}"></div>
+<div class="field"><label>doprax_os_option_id</label><input name="doprax_os_option_id" value="{{.Config.DopraxOSOptionID}}"></div>
+<div class="field"><label>doprax_access_method</label><input name="doprax_access_method" value="{{.Config.DopraxAccessMethod}}"></div>
+<div class="field"><label>doprax_login_retry_attempts</label><input name="doprax_login_retry_attempts" value="{{.Config.DopraxLoginRetryAttempts}}"></div>
+<div class="field"><label>doprax_login_retry_delay_seconds</label><input name="doprax_login_retry_delay_seconds" value="{{.Config.DopraxLoginRetryDelaySec}}"></div>
+<div class="field"><label>caasify_token</label><input name="caasify_token" value="{{.Config.CaasifyToken}}"></div>
+<div class="field"><label>product_id</label><input name="product_id" value="{{.Config.ProductID}}"></div>
+<div class="field"><label>template</label><input name="template" value="{{.Config.Template}}"></div>
+<div class="field"><label>note_prefix</label><input name="note_prefix" value="{{.Config.NotePrefix}}"></div>
+<div class="field"><label>ipv4</label><input name="ipv4" value="{{.Config.IPv4}}"></div>
+<div class="field"><label>ipv6</label><input name="ipv6" value="{{.Config.IPv6}}"></div>
+<div class="field check"><input type="checkbox" name="static_egress_enabled" {{if .Config.StaticEgress.Enabled}}checked{{end}}><label>static egress enabled</label></div>
+<div class="field"><label>wg interface</label><input name="static_egress_interface" value="{{.Config.StaticEgress.Interface}}"></div>
+<div class="field"><label>wg listen_port</label><input name="static_egress_listen_port" value="{{.Config.StaticEgress.ListenPort}}"></div>
+<div class="field"><label>wg subnet</label><input name="static_egress_subnet" value="{{.Config.StaticEgress.Subnet}}"></div>
+<div class="field"><label>wg master_tunnel_ip</label><input name="static_egress_master_tunnel_ip" value="{{.Config.StaticEgress.MasterTunnelIP}}"></div>
+<div class="field"><label>wg node_route_table</label><input name="static_egress_node_route_table" value="{{.Config.StaticEgress.NodeRouteTable}}"></div>
+<div class="field"><label>wg node_route_priority</label><input name="static_egress_node_route_priority" value="{{.Config.StaticEgress.NodeRoutePriority}}"></div>
+<div class="field check"><input type="checkbox" name="static_egress_auto_install_packages" {{if .Config.StaticEgress.AutoInstallPackages}}checked{{end}}><label>auto install WireGuard packages</label></div>
+<div class="field full"><label>relays JSON</label><textarea name="relays_json">{{.RelaysJSON}}</textarea></div>
+<div class="field full"><label>provider_pool JSON</label><textarea name="provider_pool_json">{{.ProviderPoolJSON}}</textarea></div>
+<div class="field full"><label>static_egress raw JSON</label><textarea name="static_egress_json">{{.StaticEgressJSON}}</textarea></div>
+<div class="field full actions"><button name="save" value="1">Save Config</button><span class="muted">Node-related changes automatically sync and restart all active/standby nodes.</span></div>
+</form>
+</section>
+<section class="section">
+<h2>Danger Zone</h2>
+<div class="two"><div><form method="post" action="/action"><input type="hidden" name="action" value="reset"><label><input type="checkbox" name="confirm" value="yes"> I understand reset deletes current nodes and state</label><br><br><button class="danger">Reset Fleet</button></form></div><pre>Manual CLI:
+./furo-server-master --publish
+./furo-server-master --sync-nodes
+./furo-server-master --list-nodes
+./furo-server-master --reset</pre></div>
+</section>
+</main>
+</body></html>`))
+
+func (a *masterApp) renderAdmin(w http.ResponseWriter, action *masterActionReport) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := masterAdminTemplate.Execute(w, a.adminView(action)); err != nil {
+		log.Printf("[FURO-MASTER] admin render failed err=%v", err)
+	}
+}
+
 func (a *masterApp) runAdminServer() error {
 	if a.cfg.AdminListen == "" {
 		return nil
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		a.renderAdmin(w, nil)
+	})
+	mux.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+		defer cancel()
+		report := a.saveConfigFromRequest(ctx, r)
+		a.renderAdmin(w, &report)
+	})
+	mux.HandleFunc("/action", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		var report masterActionReport
+		switch r.FormValue("action") {
+		case "publish":
+			report = a.publishRouteMapReport(ctx)
+		case "sync-nodes":
+			report = a.syncNodesReport(ctx)
+		case "reconcile":
+			report = newMasterActionReport("reconcile")
+			if err := a.ensureFleet(ctx); err != nil {
+				report.OK = false
+				report.Message = err.Error()
+			} else {
+				report.Message = "reconcile completed"
+			}
+		case "reset":
+			if r.FormValue("confirm") != "yes" {
+				report = newMasterActionReport("reset")
+				report.OK = false
+				report.Message = "reset requires confirmation checkbox"
+				break
+			}
+			report = a.resetFleetReport(ctx)
+		default:
+			report = newMasterActionReport("unknown")
+			report.OK = false
+			report.Message = "unknown action"
+		}
+		a.renderAdmin(w, &report)
+	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		state := a.state
@@ -1930,6 +2858,7 @@ func (a *masterApp) runAdminServer() error {
 			"version":    appVersion,
 			"commit":     appCommit,
 			"uptime_sec": int64(time.Since(a.startedAt).Seconds()),
+			"config":     a.cfg,
 			"state":      state,
 		})
 	})
@@ -2029,6 +2958,7 @@ type caasifyAPI interface {
 	waitForOrderReady(context.Context, string) (caasifyOrderInfo, error)
 	deleteOrder(context.Context, string) error
 	listOrders(context.Context) ([]caasifyListedOrder, error)
+	renameOrder(context.Context, masterNode, string) (string, error)
 }
 
 func newCaasifyClient(token string) *caasifyClient {
@@ -2044,22 +2974,25 @@ type caasifyCreateRequest struct {
 }
 
 type caasifyCreateResult struct {
-	OrderID  string
-	IP       string
-	Password string
+	OrderID   string
+	ServiceID string
+	IP        string
+	Password  string
 }
 
 type caasifyOrderInfo struct {
-	OrderID  string
-	IP       string
-	Password string
+	OrderID   string
+	ServiceID string
+	IP        string
+	Password  string
 }
 
 type caasifyListedOrder struct {
-	OrderID string
-	Note    string
-	IP      string
-	Status  string
+	OrderID   string
+	ServiceID string
+	Note      string
+	IP        string
+	Status    string
 }
 
 func (c *caasifyClient) createVPS(ctx context.Context, input caasifyCreateRequest) (caasifyCreateResult, error) {
@@ -2213,6 +3146,11 @@ func (c *caasifyClient) deleteOrder(ctx context.Context, orderID string) error {
 	return nil
 }
 
+func (c *caasifyClient) renameOrder(ctx context.Context, node masterNode, newName string) (string, error) {
+	log.Printf("[FURO-MASTER] provider rename skipped backend=caasify id=%s order=%s new_name=%s reason=unsupported", node.ID, node.OrderID, newName)
+	return "", nil
+}
+
 type dopraxClient struct {
 	apiKey             string
 	username           string
@@ -2276,7 +3214,7 @@ func (c *dopraxClient) createVPS(ctx context.Context, input caasifyCreateRequest
 	if err != nil {
 		return caasifyCreateResult{}, err
 	}
-	return caasifyCreateResult{OrderID: info.OrderID, IP: info.IP, Password: info.Password}, nil
+	return caasifyCreateResult{OrderID: info.OrderID, ServiceID: serviceID, IP: info.IP, Password: info.Password}, nil
 }
 
 func (c *dopraxClient) waitForServiceReady(ctx context.Context, serviceID string) (caasifyOrderInfo, error) {
@@ -2288,6 +3226,7 @@ func (c *dopraxClient) waitForServiceReady(ctx context.Context, serviceID string
 			last = info
 			lastStatus = status
 			if info.OrderID != "" && info.IP != "" && info.Password != "" && strings.EqualFold(status, "running") {
+				info.ServiceID = serviceID
 				return info, nil
 			}
 		} else {
@@ -2336,7 +3275,7 @@ func (c *dopraxClient) showService(ctx context.Context, serviceID string) (caasi
 			}
 		}
 	}
-	return caasifyOrderInfo{OrderID: vmCode, IP: ip, Password: password}, status, nil
+	return caasifyOrderInfo{OrderID: vmCode, ServiceID: serviceID, IP: ip, Password: password}, status, nil
 }
 
 func (c *dopraxClient) waitForOrderReady(ctx context.Context, orderID string) (caasifyOrderInfo, error) {
@@ -2411,16 +3350,83 @@ func (c *dopraxClient) listOrders(ctx context.Context) ([]caasifyListedOrder, er
 			continue
 		}
 		order := caasifyListedOrder{
-			OrderID: firstNonEmpty(jsonString(item, "vmCode"), jsonString(item, "vm_code")),
-			Note:    firstNonEmpty(jsonString(item, "name"), jsonString(item, "sysName"), jsonString(item, "sys_name")),
-			IP:      firstNonEmpty(jsonString(item, "ipv4"), jsonString(item, "public_ipv4")),
-			Status:  jsonString(item, "status"),
+			OrderID:   firstNonEmpty(jsonString(item, "vmCode"), jsonString(item, "vm_code")),
+			ServiceID: firstNonEmpty(jsonString(item, "service_id"), jsonString(item, "serviceId")),
+			Note:      firstNonEmpty(jsonString(item, "name"), jsonString(item, "sysName"), jsonString(item, "sys_name")),
+			IP:        firstNonEmpty(jsonString(item, "ipv4"), jsonString(item, "public_ipv4")),
+			Status:    jsonString(item, "status"),
 		}
 		if order.OrderID != "" {
 			orders = append(orders, order)
 		}
 	}
 	return orders, nil
+}
+
+func (c *dopraxClient) renameOrder(ctx context.Context, node masterNode, newName string) (string, error) {
+	serviceID := strings.TrimSpace(node.ServiceID)
+	if serviceID == "" {
+		var err error
+		serviceID, err = c.findServiceIDByVMCode(ctx, node.OrderID)
+		if err != nil {
+			return "", err
+		}
+	}
+	if serviceID == "" {
+		return "", fmt.Errorf("doprax service_id not found for vm_code=%s", node.OrderID)
+	}
+	body := map[string]any{
+		"name":        newName,
+		"description": nil,
+	}
+	var decoded map[string]any
+	if err := c.doV2JSON(ctx, http.MethodPut, "/api/v2/services/instances/"+url.PathEscape(serviceID)+"/", body, &decoded); err != nil {
+		return serviceID, err
+	}
+	return serviceID, nil
+}
+
+func (c *dopraxClient) findServiceIDByVMCode(ctx context.Context, vmCode string) (string, error) {
+	if strings.TrimSpace(vmCode) == "" {
+		return "", fmt.Errorf("empty vm_code")
+	}
+	for page := 1; page <= 10; page++ {
+		var decoded map[string]any
+		path := fmt.Sprintf("/api/v2/services/instances/?service_type=vm&page=%d&page_size=100", page)
+		if err := c.doV2JSON(ctx, http.MethodGet, path, nil, &decoded); err != nil {
+			return "", err
+		}
+		rawItems, _ := decoded["data"].([]any)
+		for _, raw := range rawItems {
+			item, _ := raw.(map[string]any)
+			if item == nil {
+				continue
+			}
+			metadata, _ := item["metadata"].(map[string]any)
+			links, _ := item["links"].(map[string]any)
+			vm, _ := item["vm"].(map[string]any)
+			candidateVMCode := firstNonEmpty(
+				jsonString(item, "vmCode"),
+				jsonString(item, "vm_code"),
+				jsonString(metadata, "vm_code"),
+				jsonString(links, "vm_code"),
+				jsonString(vm, "vm_code"),
+			)
+			if candidateVMCode != vmCode {
+				continue
+			}
+			serviceID := firstNonEmpty(jsonString(item, "service_id"), jsonString(item, "serviceId"))
+			if serviceID != "" {
+				return serviceID, nil
+			}
+		}
+		meta, _ := decoded["meta"].(map[string]any)
+		if hasNext, ok := meta["has_next"].(bool); ok && hasNext {
+			continue
+		}
+		break
+	}
+	return "", fmt.Errorf("doprax service_id not found for vm_code=%s", vmCode)
 }
 
 func (c *dopraxClient) login(ctx context.Context) (string, error) {
@@ -2680,6 +3686,21 @@ func urlQueryEscape(value string) string {
 	return url.QueryEscape(value)
 }
 
+func printActionReport(w io.Writer, report masterActionReport) {
+	status := "OK"
+	if !report.OK {
+		status = "FAILED"
+	}
+	fmt.Fprintf(w, "%s %s: %s\n", status, report.Action, report.Message)
+	for _, detail := range report.Details {
+		fmt.Fprintf(w, "- %s\n", detail)
+	}
+	if len(report.Data) > 0 {
+		data, _ := json.MarshalIndent(report.Data, "", "  ")
+		fmt.Fprintf(w, "%s\n", data)
+	}
+}
+
 func main() {
 	flag.Parse()
 	if *masterVersion {
@@ -2708,6 +3729,40 @@ func main() {
 	app := newMasterApp(cfg)
 	if err := app.loadState(); err != nil {
 		log.Fatalf("failed to load state: %v", err)
+	}
+	if *listNodesFlag {
+		app.printNodesTable(os.Stdout)
+		return
+	}
+	if *publishFlag {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		report := app.publishRouteMapReport(ctx)
+		cancel()
+		printActionReport(os.Stdout, report)
+		if !report.OK {
+			os.Exit(1)
+		}
+		return
+	}
+	if *syncNodesFlag {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		report := app.syncNodesReport(ctx)
+		cancel()
+		printActionReport(os.Stdout, report)
+		if !report.OK {
+			os.Exit(1)
+		}
+		return
+	}
+	if *resetFlag {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
+		report := app.resetFleetReport(ctx)
+		cancel()
+		printActionReport(os.Stdout, report)
+		if !report.OK {
+			os.Exit(1)
+		}
+		return
 	}
 	if cfg.StaticEgress.Enabled {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
